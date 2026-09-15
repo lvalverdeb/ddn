@@ -1,0 +1,56 @@
+{
+  "name": "ddn-lastmile",
+  "applies_to": [
+    "Documents"
+  ],
+  "problem_id": "ddn-lastmile",
+  "quantity": {
+    "dimension": "envelopes",
+    "fixed": 1
+  },
+  "service": {
+    "fixed_seconds": 600
+  },
+  "shift": {
+    "start": 28800,
+    "end": 57600
+  },
+  "route": {
+    "closed": true
+  },
+  "assignment": {
+    "depot": "nearest"
+  },
+  "declinable": {
+    "priority_tier": 2,
+    "prize": 1000
+  },
+  "fleet": [
+    {
+      "class": "MOTO",
+      "id": "MOTO-{n}",
+      "per_depot": 3,
+      "capacities": {
+        "envelopes": 35
+      },
+      "max_duration": 28800
+    }
+  ],
+  "run": {
+    "engine": "pyvrp",
+    "budget": 400,
+    "seed": 0,
+    "objective": {
+      "mode": "MIN_COST",
+      "vehicle_fixed_cost": 50000,
+      "cost_per_metre": 1,
+      "cost_per_second": 0
+    }
+  },
+  "windows": [
+    {
+      "start": 28800,
+      "end": 57600
+    }
+  ]
+}

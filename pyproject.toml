@@ -20,6 +20,12 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+# The platform is pinned by git tag rather than fetched from an index, and
+# hatchling refuses a direct reference unless told that is deliberate. It is:
+# there is no package index this repository could pull `vrp-platform` from.
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["ddn"]
 
