@@ -28,6 +28,7 @@ twice, and neither idea has to be weakened to fit.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 from vrp.model import TravelMatrix
@@ -51,9 +52,24 @@ def package(pid: str, **over) -> dict:
 
 def van(vid: str = "V1", **over) -> dict:
     return {"vehicle_id": vid, "type": "motorbike", "facility_id": "HUB",
-            "role": "delivery", "capacity_count": 35,
+            "role": "delivery", "capacity_envelopes": 35,
             "capacity_weight_g": 35_000,
             "shift_start": 28800, "shift_end": 57600, **over}
+
+
+def contract_fields(heading: str, until: str) -> list[str]:
+    """The field names one §9.1 table actually declares.
+
+    Read from the document rather than copied out of it, because a name copied
+    into a fixture stops tracking the contract the moment the contract moves.
+    """
+    doc = (Path(__file__).resolve().parents[1]
+           / "docs" / "vrp_problem_definition.md").read_text(encoding="utf-8")
+    block = doc.split(heading, 1)[1].split(until, 1)[0]
+    names = [line.strip("|").split("|")[0].strip()
+             for line in block.splitlines() if line.startswith("|")]
+    return [n for n in names
+            if n and n != "Field" and set(n) - set("-: ")]
 
 
 def matrix_for(n: int) -> TravelMatrix:
@@ -70,12 +86,13 @@ def build(packages, vehicles=None, **kw):
 
 
 # --------------------------------------------------------------------------
-# Triage: what never reaches the solver, and why (§3.3, §6.1, §9.2)
+# Triage: what never reaches the solver, and why (§3.2, §6.1, §9.2)
 # --------------------------------------------------------------------------
 
 def test_a_low_confidence_address_is_flagged_rather_than_routed():
-    """§3.3: "Packages with low confidence should be flagged rather than
-    routed, since an incorrect address is a known cause of postponement." """
+    """§3.2: "Where geocoding fails or returns low confidence, the envelope
+    is held and flagged rather than routed, since an incorrect location is a
+    leading cause of postponement." """
     routable, excluded = contract.triage(
         [package("P1"), package("P2", geocode_confidence="low")], today=TODAY)
 
@@ -210,6 +227,32 @@ def test_route_duration_is_a_hard_limit_and_not_merely_the_shift():
     problem, _ = build([package("P1")])
 
     assert problem.vehicles[0].max_duration == 57600 - 28800
+
+
+def test_the_reader_accepts_a_vehicle_written_to_the_document_s_field_names():
+    """§9.1's Vehicles table is the contract, so the reader must accept it.
+
+    `capacity_count` became `capacity_envelopes` when the definition went to
+    v0.10, and this reader kept reading the old name. Every test passed, because
+    every fixture carried the old name too -- the suite was checking the reader
+    against itself. Building the record from the table rather than from memory
+    is what makes the next rename fail here instead of in production.
+    """
+    fields = contract_fields("**Vehicles**", "**Facilities**")
+    assert "capacity_envelopes" in fields, (
+        "§9.1 no longer declares capacity_envelopes; this test is reading the "
+        "wrong table or the contract has moved again")
+
+    record: dict = {name: "X" for name in fields}
+    record.update(vehicle_id="BIKE-1", role="delivery",
+                  capacity_envelopes=35, capacity_mailbags=0,
+                  capacity_weight_g=35_000,
+                  shift_start=28_800, shift_end=57_600)
+
+    vehicle = contract._vehicle(record, "HUB")
+
+    assert vehicle.id == "BIKE-1"
+    assert vehicle.capacities[contract.COUNT] == 35
 
 
 def test_a_role_becomes_a_skill_so_earmarked_vehicles_stay_earmarked():

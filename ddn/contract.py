@@ -171,7 +171,7 @@ def _vehicle(record: dict[str, Any], facility_id: str) -> Vehicle:
                        end=int(record["shift_end"]))
     return Vehicle(
         id=record["vehicle_id"],
-        capacities={COUNT: int(record["capacity_count"]),
+        capacities={COUNT: int(record["capacity_envelopes"]),
                     WEIGHT: int(record["capacity_weight_g"])},
         shift=shift,
         # §7.4: "The solver must enforce route duration as a hard constraint."
@@ -188,7 +188,7 @@ def _vehicle(record: dict[str, Any], facility_id: str) -> Vehicle:
 def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
                vehicles: Sequence[dict[str, Any]], matrix: TravelMatrix, *,
                today: date, bands: Sequence[Band] = BANDS) -> Problem:
-    """One facility's last mile (§5.3), as a `Problem`.
+    """One facility's last mile (§5.4), as a `Problem`.
 
     Args:
         facility: a §3.1 row, carrying `id`, `lat`, `lon` and the shift.
