@@ -326,6 +326,16 @@ def test_the_reader_accepts_a_vehicle_written_to_the_document_s_field_names():
     assert vehicle.id == "BIKE-1"
     assert vehicle.capacities[contract.COUNT] == 35
 
+    # And the cross-check has to be reading the name the document publishes.
+    # Capacity moved to the model, so a renamed column no longer breaks the
+    # call -- `_capacities` reads it with `.get`, a miss skips silently, and
+    # the model's number wins unchallenged. That is the "one silently wins"
+    # the cross-check exists to prevent, so the contradiction is raised here
+    # from §9.1's own field name rather than from a literal.
+    contradicting = dict(record, capacity_envelopes=34)
+    with pytest.raises(ValueError, match="capacity_envelopes"):
+        contract._vehicle(contradicting, "HUB", contract.load_model())
+
 
 def test_a_role_becomes_a_skill_so_earmarked_vehicles_stay_earmarked():
     """§7.1: "Earmarked pickup vehicles are not assigned delivery stops." """
