@@ -4,12 +4,19 @@
     "Documents"
   ],
   "problem_id": "ddn-lastmile",
-  "quantity": {
-    "dimension": "envelopes",
-    "fixed": 1
-  },
+  "quantity": [
+    {
+      "dimension": "envelopes",
+      "fixed": 1
+    },
+    {
+      "dimension": "grams",
+      "from_field": "weight_g"
+    }
+  ],
   "service": {
-    "fixed_seconds": 600
+    "from_field": "service_time_min",
+    "scale_seconds": 60
   },
   "shift": {
     "start": 28800,
@@ -31,7 +38,8 @@
       "id": "MOTO-{n}",
       "per_depot": 3,
       "capacities": {
-        "envelopes": 35
+        "envelopes": 35,
+        "grams": 35000
       },
       "max_duration": 28800
     }

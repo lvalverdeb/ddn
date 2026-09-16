@@ -40,21 +40,15 @@ what survived, then `to_problem`.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
+from pathlib import Path
 from typing import Any
 
-from vrp.model import (
-    Location,
-    Lock,
-    Order,
-    Problem,
-    StopSpec,
-    TimeWindow,
-    TravelMatrix,
-    Vehicle,
-)
+from vrp import servicemodel
+from vrp.model import Lock, Problem, TimeWindow, TravelMatrix, Vehicle
 
 # §9.2's vocabulary for the unassigned list. Time and count are decided
 # downstream by the solver; "in dispute" has no state of its own in §5.2.6 and
@@ -69,6 +63,24 @@ REASONS = frozenset({LOW_GEOCODE_CONFIDENCE, SLA_EXPIRED, NOT_READY})
 # for delivery routing." Every other state in that lifecycle is either upstream
 # of readiness or past dispatch.
 READY = "Ready"
+
+MODELS = Path(__file__).resolve().parent.parent / "models"
+MODEL_NAME = "ddn-lastmile"
+
+# What this mapping may change on an order `servicemodel.build` already made.
+# Declared and checked rather than remembered: everything outside this set is
+# the model file's to decide, and a second opinion on it would be the "two
+# sources for one fact" that moving to `build` exists to remove.
+OVERLAID = frozenset({"priority_tier", "prize", "priority_source",
+                      "required_skills"})
+
+# §7.3 keeps an optional per-envelope window "for exceptional cases", and a
+# model's `windows` is a fixed list with no way to read one from a record. So
+# the window is overlaid when a package carries one -- narrowly, on the stop's
+# `time_windows` alone, because widening `OVERLAID` to the whole `delivery`
+# field would let this mapping quietly re-decide the service time the model
+# owns.
+OVERLAID_STOP = frozenset({"time_windows"})
 
 DEFAULT_WEIGHT_G = 200          # §4.1
 DEFAULT_SERVICE_MIN = 10        # §7.4
@@ -170,23 +182,54 @@ def _window(package: dict[str, Any], facility: dict[str, Any]) -> TimeWindow:
     return TimeWindow(start=int(start), end=int(end))
 
 
-def _order(package: dict[str, Any], facility: dict[str, Any], *,
-           today: date, bands: Sequence[Band]) -> Order:
+def load_model(name: str = MODEL_NAME) -> dict[str, Any]:
+    """This repository's own delivery model, read from its own `models/`.
+
+    Loaded by path rather than through `VRP_MODEL_PATH` because DDN ships the
+    file and knows where it is; the environment variable is how the platform's
+    own tooling finds models it did not ship.
+    """
+    return json.loads((MODELS / f"{name}.json").read_text())
+
+
+def as_depot(facility: dict[str, Any]) -> dict[str, Any]:
+    """A §3.1 facility row in the shape `servicemodel.build` expects."""
+    return {"id": facility["id"], "lat": facility["lat"], "lon": facility["lon"]}
+
+
+def as_record(package: dict[str, Any]) -> dict[str, Any]:
+    """A §9.1 package in the shape `servicemodel.build` expects.
+
+    The model addresses weight through `from_field`, which has no default of
+    its own -- a record without `weight_g` would raise rather than fall back.
+    §4.1 states the fallback, so it is applied here, where the operation's
+    defaults belong, rather than asking the platform for a feature.
+    """
+    return {"id": package["package_id"],
+            "lat": package["lat"], "lon": package["lon"],
+            "weight_g": int(package.get("weight_g", DEFAULT_WEIGHT_G)),
+            "service_time_min": int(package.get("service_time_min",
+                                                DEFAULT_SERVICE_MIN))}
+
+
+def _overlay(order, package: dict[str, Any], *, today: date,
+             bands: Sequence[Band]):
+    """What a model file cannot say about an order.
+
+    The band, the score and the SLA clock are decisions about *this* envelope
+    on *this* day; a model describes the operation. `required_skills` is here
+    for the same reason -- §7.1 keeps earmarked pickup vehicles off delivery
+    stops, and which vehicles those are is today's allocation.
+    """
     tier, prize, source = _tier_and_prize(package, today=today, bands=bands)
-    minutes = package.get("service_time_min", DEFAULT_SERVICE_MIN)
-    return Order(
-        id=package["package_id"],
-        kind="JOB",
-        quantities={COUNT: 1,
-                    WEIGHT: int(package.get("weight_g", DEFAULT_WEIGHT_G))},
-        priority_tier=tier,
-        prize=prize,
-        priority_source=source,
-        required_skills={"delivery"},
-        delivery=StopSpec(location_id=package["package_id"],
-                          time_windows=(_window(package, facility),),
-                          service_fixed=int(minutes) * 60),
-    )
+    order = replace(order, priority_tier=tier, prize=prize,
+                    priority_source=source, required_skills={"delivery"})
+    start, end = package.get("time_window_start"), package.get("time_window_end")
+    if start is not None and end is not None:
+        order = replace(order, delivery=replace(
+            order.delivery,
+            time_windows=(TimeWindow(start=int(start), end=int(end)),)))
+    return order
 
 
 def _vehicle(record: dict[str, Any], facility_id: str) -> Vehicle:
@@ -210,16 +253,30 @@ def _vehicle(record: dict[str, Any], facility_id: str) -> Vehicle:
 
 def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
                vehicles: Sequence[dict[str, Any]], matrix: TravelMatrix, *,
-               today: date, bands: Sequence[Band] = BANDS) -> Problem:
+               today: date, model: dict[str, Any] | None = None,
+               bands: Sequence[Band] = BANDS) -> Problem:
     """One facility's last mile (§5.4), as a `Problem`.
 
+    The structural facts -- what a stop costs, what an envelope counts as,
+    when the shift runs, whether the route closes -- come from the delivery
+    model through `servicemodel.build`, so the file in `models/` is what
+    decides them and `modelcheck` is what gates them. This function adds only
+    what a model cannot express: the priority decision, the delivery skill,
+    and operations' overrides.
+
+    The fleet is the exception, and the tradeoff is worth naming. §9.1 gives
+    each vehicle its own capacities, shift and role, so the day's vehicles are
+    data rather than model; the model's `fleet` section describes the class and
+    `build`'s generated vehicles are replaced with the records. Two sources
+    would be a defect if both were read, so only one is.
+
     Args:
-        facility: a §3.1 row, carrying `id`, `lat`, `lon` and the shift.
-        packages: records that survived `triage`, in the order the matrix was
-            built over.
+        facility: a §3.1 row carrying `id`, `lat`, `lon` and the shift.
+        packages: records that survived `triage`, in the matrix's order.
         vehicles: §9.1 vehicle records allocated to this facility.
         matrix: travel over `[facility, *packages]`, in that order.
         today: the planning date.
+        model: the delivery model; this repository's own by default.
         bands: the priority classes; see `BANDS`.
 
     Returns:
@@ -237,11 +294,9 @@ def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
             f"packages and one facility; it must span exactly {expected}, in "
             "that order, or arcs land on the wrong stops")
 
-    locations = [Location(id=facility["id"], lat=facility["lat"],
-                          lon=facility["lon"], matrix_index=0)]
-    locations += [Location(id=p["package_id"], lat=p["lat"], lon=p["lon"],
-                           matrix_index=i)
-                  for i, p in enumerate(packages, start=1)]
+    model = model if model is not None else load_model()
+    built = servicemodel.build(model, [as_depot(facility)],
+                               [as_record(p) for p in packages], matrix)
 
     locks = tuple(
         Lock(kind="PIN_ORDER_TO_VEHICLE", order_id=p["package_id"],
@@ -249,12 +304,11 @@ def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
         for p in packages if p.get("locked_vehicle_id")
     )
 
-    return Problem(
+    return replace(
+        built,
         id=f"ddn-{facility['id']}-{today.isoformat()}",
-        locations=tuple(locations),
-        orders=tuple(_order(p, facility, today=today, bands=bands)
-                     for p in packages),
+        orders=tuple(_overlay(order, package, today=today, bands=bands)
+                     for order, package in zip(built.orders, packages, strict=True)),
         vehicles=tuple(_vehicle(v, facility["id"]) for v in vehicles),
-        matrix=matrix,
         locks=locks,
     )

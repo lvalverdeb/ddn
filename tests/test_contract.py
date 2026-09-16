@@ -363,3 +363,98 @@ def test_a_matrix_that_does_not_span_the_stops_is_refused():
 
     with pytest.raises(ValueError, match="must span exactly 3"):
         contract.to_problem(HUB, routable, [van()], matrix_for(5), today=TODAY)
+
+
+# --------------------------------------------------------------------------
+# The model file is authoritative, not decorative
+# --------------------------------------------------------------------------
+# `models/ddn-lastmile.json` and this mapping both used to state what a stop
+# costs and what an envelope weighs. Two sources for one fact is the failure
+# this repository's platform refuses everywhere else: edit the model, and
+# nothing happened. The structural facts now come from the model through
+# `servicemodel.build`, and the mapping overlays only what a model file cannot
+# say -- which is the priority decision, the role, and the override.
+
+
+def test_the_model_decides_what_a_stop_costs():
+    """The test that makes the model real. Change it, and the Problem changes;
+    if this passes while the model is ignored, it is measuring nothing."""
+    model = dict(contract.load_model(), service={"fixed_seconds": 999})
+    routable, _ = contract.triage([package("P1")], today=TODAY)
+    problem = contract.to_problem(HUB, routable, [van()], matrix_for(2),
+                                  today=TODAY, model=model)
+
+    assert problem.orders[0].delivery.service_fixed == 999
+
+
+def test_the_model_decides_what_an_envelope_counts_as():
+    """§4.1 needs a count *and* a weight, and `quantity` carries a list."""
+    model = contract.load_model()
+    dimensions = {q["dimension"] for q in model["quantity"]}
+
+    assert dimensions == {contract.COUNT, contract.WEIGHT}
+
+
+def test_the_overlay_touches_only_the_fields_it_declares():
+    """The discipline that stops two builders drifting apart.
+
+    `servicemodel.build` owns the order; this mapping changes a named few
+    fields on top. Anything else it changed would be a fact stated twice
+    again, so the set is declared and checked rather than remembered.
+    """
+    from vrp import servicemodel
+
+    model = contract.load_model()
+    routable, _ = contract.triage([package("P1", priority=1800)], today=TODAY)
+    records = [contract.as_record(p) for p in routable]
+    before = servicemodel.build(model, [contract.as_depot(HUB)], records,
+                                matrix_for(2)).orders[0]
+    after = contract.to_problem(HUB, routable, [van()], matrix_for(2),
+                                today=TODAY, model=model).orders[0]
+
+    changed = {f for f in vars(before) if getattr(before, f) != getattr(after, f)}
+    assert changed <= contract.OVERLAID, (
+        f"the overlay changed {sorted(changed - contract.OVERLAID)}, which "
+        "`servicemodel.build` already decided from the model")
+
+
+def test_the_declared_overlay_is_not_wider_than_the_work():
+    """A declared set that lists fields nobody touches would pass the test
+    above while meaning nothing."""
+    assert contract.OVERLAID == {"priority_tier", "prize", "priority_source",
+                                 "required_skills"}
+
+
+def test_a_package_with_no_window_leaves_the_stop_entirely_to_the_model():
+    """The narrow half of the overlay. `delivery` carries the service time as
+    well as the window, so touching the whole field would let this mapping
+    re-decide what the model owns."""
+    from vrp import servicemodel
+
+    model = contract.load_model()
+    routable, _ = contract.triage([package("P1")], today=TODAY)
+    records = [contract.as_record(p) for p in routable]
+    before = servicemodel.build(model, [contract.as_depot(HUB)], records,
+                                matrix_for(2)).orders[0]
+    after = contract.to_problem(HUB, routable, [van()], matrix_for(2),
+                                today=TODAY, model=model).orders[0]
+
+    assert after.delivery == before.delivery
+
+
+def test_a_package_with_a_window_changes_the_window_and_nothing_else():
+    """§7.3's exceptional case, kept to the one field it is about."""
+    from vrp import servicemodel
+
+    model = contract.load_model()
+    windowed = package("P1", time_window_start=32400, time_window_end=39600)
+    routable, _ = contract.triage([windowed], today=TODAY)
+    records = [contract.as_record(p) for p in routable]
+    before = servicemodel.build(model, [contract.as_depot(HUB)], records,
+                                matrix_for(2)).orders[0].delivery
+    after = contract.to_problem(HUB, routable, [van()], matrix_for(2),
+                                today=TODAY, model=model).orders[0].delivery
+
+    changed = {f for f in vars(before) if getattr(before, f) != getattr(after, f)}
+    assert changed == contract.OVERLAID_STOP
+    assert after.service_fixed == before.service_fixed
