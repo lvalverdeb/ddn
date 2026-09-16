@@ -1,11 +1,13 @@
 """Open Question 5, answered by running each capability."""
 from dataclasses import replace
 from datetime import date
-from ddn import contract
-from vrp.model import Lock, TravelMatrix, TimeWindow
+
+from vrp.model import Lock, TimeWindow, TravelMatrix
+from vrp.quote import quote_insertion
 from vrp.solve.pyvrp_adapter import solve
 from vrp.verify import verify
-from vrp.quote import quote_insertion
+
+from ddn import contract
 
 TODAY = date(2026, 9, 16)
 HUB = {"id": "HUB", "lat": 9.94, "lon": -84.05, "shift_start": 28800, "shift_end": 57600}

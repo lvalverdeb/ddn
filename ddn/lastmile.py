@@ -1,0 +1,207 @@
+"""§5.4's last mile: one static batch per facility — `Stage 4`.
+
+v0.10's one-day lag is what makes this shape possible. Pickup, hub processing,
+sorting and line-haul all happen on day D; *all* delivery happens on D+1
+(§5, §3.1). So by the time these routes are planned the pool is closed and
+known, every envelope is already at the facility that will dispatch it, and
+the problem is a static capacitated VRP per facility rather than anything
+dynamic. §5.4 says so directly: "solved independently per facility".
+
+**Two stages, because the solver cannot do it in one.** §4.2 offers an
+integrated formulation where a vehicle's home facility is a decision variable;
+`docs/solver-capabilities.md` shows it cannot be expressed --
+`Vehicle.start_location_id` is fixed before the solve -- so the two-stage
+approach §4.2 recommends is the only one, and this module is that shape:
+allocate bikes to facilities, then route each facility independently.
+
+**Allocation is proportional to demand, not to priority-weighted demand.**
+§4.2 suggests either. Proportional-to-count is what `EFFECTIVE_PER_BIKE`
+supports: the binding constraint is shift time (§7.4), which a low-priority
+envelope consumes exactly as much of as an urgent one. Weighting by priority
+would allocate capacity to where the valuable work is and leave the cheap work
+unserved *in the same places every day*, which §7.2 already penalises through
+"postponed packages not retried on the next available day".
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
+
+from vrp.model import UNREACHABLE, Problem, Solution, TravelMatrix
+
+from ddn import contract
+
+# §7.4: "effective capacity will be closer to 20-30 envelopes per motorbike per
+# day depending on stop density". The midpoint, used only to divide the fleet
+# between facilities -- the routes themselves are bounded by shift time, and
+# what a bike actually manages is an output of this run rather than an input.
+EFFECTIVE_PER_BIKE = 25
+
+
+UNREACHABLE_ADDRESS = "unreachable address"
+
+
+def reachable_subset(matrix: TravelMatrix, size: int) -> list[int]:
+    """Stop indices mutually reachable with the facility and each other.
+
+    Real road data has genuinely unreachable pairs -- an address snapped onto a
+    disconnected fragment, a one-way system, an island. `MTX-5` keeps those as
+    an explicit sentinel rather than a large number, and `TravelMatrix.duration`
+    raises on one rather than returning a guess.
+
+    They must be removed *before* solving. The PyVRP adapter passes the
+    sentinel through unexamined, and because `UNREACHABLE` is -1 it is the
+    cheapest arc in the matrix, so the solver is actively drawn to unreachable
+    stops and visits them first. The verifier then refuses the plan, which is
+    the gate working, but it works too late to produce a day's routes.
+
+    Index 0 is the facility. Returns indices into the matrix, facility
+    included, so the caller can slice the packages that survive.
+    """
+    def linked(a: int, b: int) -> bool:
+        return (matrix.durations[a][b] != UNREACHABLE
+                and matrix.durations[b][a] != UNREACHABLE)
+
+    kept = [i for i in range(1, size) if linked(0, i)]
+    changed = True
+    while changed:
+        changed = False
+        for i in list(kept):
+            if any(not linked(i, j) for j in kept if j != i):
+                kept.remove(i)
+                changed = True
+                break
+    return [0, *kept]
+
+
+@dataclass(frozen=True)
+class FacilityPlan:
+    """One facility's day, and what it could not do."""
+
+    facility_id: str
+    bikes: int
+    offered: int
+    problem: Problem
+    solution: Solution
+    verified: bool
+
+    @property
+    def accepted(self) -> bool:
+        """Whether this plan may be counted at all.
+
+        `modelcheck` states the rule and the reason: "Only verifier-accepted
+        plans score. Asked to serve 120 envelopes with one courier, PyVRP
+        returns its best *infeasible* attempt with every arrival clamped to
+        noon, and a naive count reports 120 letters delivered by a rider who
+        could not have managed forty."
+
+        This module made that mistake on its first run and reported a capacity
+        finding from it. A stop on an infeasible route has not been served; it
+        is a stop the fleet could not reach, drawn as though it had.
+        """
+        return self.solution.status == "FEASIBLE" and self.verified
+
+    @property
+    def served(self) -> int:
+        if not self.accepted:
+            return 0
+        return len({step.order_id for route in self.solution.routes
+                    for step in route.steps if step.order_id})
+
+    @property
+    def unassigned(self) -> int:
+        return self.offered - self.served
+
+    @property
+    def bikes_used(self) -> int:
+        if not self.accepted:
+            return 0
+        return sum(1 for route in self.solution.routes
+                   if any(step.order_id for step in route.steps))
+
+
+def nearest_facility(package: dict[str, Any],
+                     facilities: Sequence[dict[str, Any]]) -> str:
+    """§3.3's rule, straight-line.
+
+    §3.3 prefers road distance "where the road network makes them differ
+    materially" and accepts straight-line "as a first approximation to be
+    validated against operations". Straight-line here because the alternative
+    is a 50,000 x 7 road matrix built before any routing has happened, to
+    decide something the facilities' geographic separation already decides.
+    Worth revisiting per §3.3 if two facilities ever sit across a river.
+    """
+    lat, lon = package["lat"], package["lon"]
+    scale = math.cos(math.radians(lat))
+    return min(facilities, key=lambda f: (f["lat"] - lat) ** 2
+               + ((f["lon"] - lon) * scale) ** 2)["id"]
+
+
+def allocate(pools: dict[str, int], bikes: int) -> dict[str, int]:
+    """§4.2's two-stage first half: divide a fixed fleet between facilities.
+
+    Largest-remainder, so the fleet is neither over- nor under-committed: the
+    obvious `round()` per facility can allocate more bikes than exist, which is
+    a plan nobody can run.
+
+    A facility with any demand at all gets at least one bike. Zero would leave
+    its envelopes unserved with bikes idle elsewhere, and §8's first objective
+    is delivered work rather than tidy arithmetic.
+    """
+    demand = sum(pools.values())
+    if not demand:
+        return {facility: 0 for facility in pools}
+
+    exact = {f: n / demand * bikes for f, n in pools.items()}
+    floors = {f: max(1, int(share)) if pools[f] else 0
+              for f, share in exact.items()}
+    spare = bikes - sum(floors.values())
+    for facility in sorted(exact, key=lambda f: exact[f] - int(exact[f]),
+                           reverse=True):
+        if spare <= 0:
+            break
+        if pools[facility]:
+            floors[facility] += 1
+            spare -= 1
+    return floors
+
+
+def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
+                  bikes: int, matrix: TravelMatrix, *, today: date,
+                  model: dict[str, Any], solve, verify) -> FacilityPlan:
+    """Route one facility's pool. The whole of §5.4 for one site.
+
+    Raises:
+        ValueError: if the matrix is degraded. `NFR-04` lets a partial matrix
+            through so a plan can still be made when the provider is failing,
+            and every arc it could not fetch stays `UNREACHABLE` -- which is
+            honest, and useless here. A day's routes built on one are not a
+            worse plan, they are a plan for a different road network: the
+            first attempt at this run silently dropped 1,271 of the hub's
+            stops as "no road path" when the truth was that the gateway had
+            shed 305 tiles to its own rate limit. Refusing is the only way
+            that surfaces as a fact rather than as a capacity finding.
+    """
+    if matrix.degraded:
+        raise ValueError(
+            f"{facility['id']}'s travel matrix is degraded and a plan built on "
+            f"it would describe a road network that does not exist: "
+            f"{matrix.degraded}")
+    vehicles = [{"vehicle_id": f"{facility['id']}-MOTO-{n}",
+                 "type": "motorbike", "facility_id": facility["id"],
+                 "role": "delivery", "capacity_envelopes": 35,
+                 "capacity_weight_g": 35_000,
+                 "shift_start": facility["shift_start"],
+                 "shift_end": facility["shift_end"]}
+                for n in range(1, bikes + 1)]
+    problem = contract.to_problem(facility, packages, vehicles, matrix,
+                                  today=today, model=model)
+    run = model["run"]
+    solution = solve(problem, run["budget"], run["seed"])
+    return FacilityPlan(facility_id=facility["id"], bikes=bikes,
+                        offered=len(packages), problem=problem,
+                        solution=solution, verified=verify(problem, solution).ok)

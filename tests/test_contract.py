@@ -246,9 +246,10 @@ def test_the_band_becomes_the_tier_and_the_score_becomes_the_prize():
                         package("L", priority=30)])
     urgent, standard, low = problem.orders
 
-    assert (urgent.priority_tier, urgent.prize) == (1, 1800)
-    assert (standard.priority_tier, standard.prize) == (2, 150)
-    assert (low.priority_tier, low.prize) == (3, 30)
+    S = contract.PRIZE_SCALE
+    assert (urgent.priority_tier, urgent.prize) == (1, 1800 * S)
+    assert (standard.priority_tier, standard.prize) == (2, 150 * S)
+    assert (low.priority_tier, low.prize) == (3, 30 * S)
 
 
 def test_the_tier_count_stays_far_inside_the_solver_s_ceiling():
@@ -570,3 +571,24 @@ def test_the_refusal_points_at_the_contract_rather_than_at_the_reader():
         build([package("P1")], vehicles=[record])
 
     assert "§9.1" in str(refusal.value)
+
+
+def test_the_lowest_priority_envelope_outweighs_a_long_detour():
+    """Why `PRIZE_SCALE` exists, as a property rather than a number.
+
+    Bounded above as well as below: scaled against the p99 instead of the
+    median, a prize outweighs the shift too, and the solver returns routes
+    running past the end of the day. See the constant for the measurement.
+
+    A priority score and a metre are different units and the objective adds
+    them. Measured over real Costa Rica road distances, serving one more
+    envelope costs about 12,400 at p99. Unscaled, §8.1's lowest band loses to
+    almost any detour and the solver declines work with bikes standing idle --
+    the opposite of §8's first objective. Scaled, §7.4's shift time is what
+    binds, which is what §7.4 says should bind.
+    """
+    MEDIAN_MARGINAL_COST = 2_349    # 2 x median nearest-neighbour road metres
+
+    problem, _ = build([package("L", priority=40)])
+
+    assert problem.orders[0].prize > MEDIAN_MARGINAL_COST

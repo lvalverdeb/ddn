@@ -82,6 +82,33 @@ OVERLAID = frozenset({"priority_tier", "prize", "priority_source",
 # owns.
 OVERLAID_STOP = frozenset({"time_windows"})
 
+# A priority score and a metre are not the same unit, and the objective adds
+# them. Measured on real Costa Rica road distances over 400 GAM stops, serving
+# one more envelope costs about 2,300 at the median and 12,400 at p99.
+#
+# Scaled against the *median*, not the p99. The first attempt used the p99 so
+# that no envelope would ever be declined for a detour, and that broke the
+# thing it was protecting: a prize large enough to outweigh any detour is large
+# enough to outweigh the shift, and PyVRP answered by returning routes that run
+# past the end of the day. Measured on D5 -- 186 envelopes, 5 bikes, real
+# Guanacaste roads:
+#
+#     scale        1     10    100   1,000   12,500
+#     status    FEAS   FEAS   FEAS   INFEAS  INFEAS
+#     served      43     65     69        0        0
+#
+# So the useful range is bounded above by feasibility, not by distance. At 100
+# a low-priority envelope (score 40 -> 4,000) beats the median marginal cost
+# and loses to an exceptional one, which is what prize-collecting is for: a
+# remote envelope needing a 6 km detour should be declined ahead of three
+# nearby ones, and §8's second objective is minimising unassigned, not
+# refusing to leave anything.
+#
+# Provisional until §8 supplies real cost figures. It is a ratio between two of
+# the document's own numbers plus a measured feasibility ceiling, not a
+# preference.
+PRIZE_SCALE = 100
+
 DEFAULT_WEIGHT_G = 200          # §4.1
 DEFAULT_SERVICE_MIN = 10        # §7.4
 COUNT, WEIGHT = "envelopes", "grams"
@@ -170,11 +197,11 @@ def _tier_and_prize(package: dict[str, Any], *, today: date,
         # §6.1's exception. Tier 0 is must-serve whatever it is worth, so the
         # urgency is expressed once -- as a constraint -- and the score is left
         # to rank it against the other must-serves rather than to carry it.
-        return 0, score, "SLA"
+        return 0, score * PRIZE_SCALE, "SLA"
     for band in bands:
         if score >= band.low:
-            return band.tier, score, "COMMERCIAL"
-    return bands[-1].tier, score, "COMMERCIAL"
+            return band.tier, score * PRIZE_SCALE, "COMMERCIAL"
+    return bands[-1].tier, score * PRIZE_SCALE, "COMMERCIAL"
 
 
 def _window(package: dict[str, Any], facility: dict[str, Any]) -> TimeWindow:
