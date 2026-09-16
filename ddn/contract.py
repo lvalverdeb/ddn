@@ -266,12 +266,26 @@ def _capacities(model: dict[str, Any], record: dict[str, Any]) -> dict[str, int]
     capacities = dict(declared[wanted])
     for dimension, field in ((COUNT, "capacity_envelopes"),
                              (WEIGHT, "capacity_weight_g")):
-        stated = record.get(field)
-        if stated is not None and int(stated) != capacities.get(dimension):
+        if dimension not in capacities:
+            continue
+        # Absent is refused rather than skipped. Reading the row with `.get`
+        # made a missing column -- or a renamed one, which is the same thing
+        # from here -- a silent pass in which the model's number won
+        # unchallenged, which is the outcome this cross-check exists to
+        # prevent. §9.1 marks what may be missing (`linehaul_release_at` is
+        # "datetime, optional"); the capacity columns are not among them.
+        if field not in record:
+            raise ValueError(
+                f"vehicle {record['vehicle_id']} carries no {field}; §9.1 "
+                "declares it for every vehicle and does not mark it optional, "
+                "so the row cannot be checked against "
+                f"{model['name']}'s {dimension} capacity")
+        stated = record[field]
+        if int(stated) != capacities[dimension]:
             raise ValueError(
                 f"vehicle {record['vehicle_id']} states {field} "
                 f"{int(stated)} and {model['name']} says "
-                f"{capacities.get(dimension)}; §4.1 gives one capacity per "
+                f"{capacities[dimension]}; §4.1 gives one capacity per "
                 "type, so one of the two is wrong")
     return capacities
 

@@ -540,3 +540,33 @@ def test_route_duration_comes_from_the_vehicle_s_own_shift():
 
     assert problem.vehicles[0].max_duration == 43200 - 28800
     assert "max_duration" not in contract.load_model()["fleet"][0]
+
+
+def test_a_vehicle_missing_a_capacity_the_contract_declares_is_refused():
+    """The hole the other session's rename exposed, closed at its source.
+
+    The cross-check read the row with `.get`, so a column that was absent --
+    or renamed, which is indistinguishable from absent at this level -- was a
+    silent skip, and the model's number won unchallenged. That is precisely
+    the "one of the two silently wins" the cross-check exists to prevent.
+
+    §9.1 is explicit about optionality: `linehaul_release_at` is marked
+    "datetime, optional" and the capacity columns are not. So a vehicle row
+    without one is malformed against the published contract, and saying so is
+    better than planning around it.
+    """
+    record = {k: v for k, v in van().items() if k != "capacity_envelopes"}
+
+    with pytest.raises(ValueError, match="capacity_envelopes"):
+        build([package("P1")], vehicles=[record])
+
+
+def test_the_refusal_points_at_the_contract_rather_than_at_the_reader():
+    """A field name in an error is only actionable if the reader knows where
+    it was supposed to come from."""
+    record = {k: v for k, v in van().items() if k != "capacity_weight_g"}
+
+    with pytest.raises(ValueError) as refusal:
+        build([package("P1")], vehicles=[record])
+
+    assert "§9.1" in str(refusal.value)
