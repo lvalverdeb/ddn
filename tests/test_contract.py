@@ -111,11 +111,81 @@ def test_a_package_past_its_sla_date_goes_to_the_return_run():
         ("P1", contract.SLA_EXPIRED)]
 
 
+@pytest.mark.parametrize("status", [
+    # §5.2.6's lifecycle, every state that is not Ready. The first five are
+    # short of readiness; the rest are past dispatch.
+    "Requested", "Collected", "Received at hub", "Reconciled", "Assembled",
+    "Sorted", "Dispatched", "Delivered", "Rejected", "Returned",
+])
+def test_an_envelope_that_is_not_ready_is_not_routed(status):
+    """§7.1: "Only ready envelopes are assigned to line-haul or delivery."
+
+    §5.2.6 is narrower still -- "only envelopes in Ready (at the hub or at a
+    depot) are solver inputs for delivery routing" -- so readiness is a state
+    and not a guess about one.
+    """
+    routable, excluded = contract.triage(
+        [package("P1", status="Ready"), package("P2", status=status)],
+        today=TODAY)
+
+    assert [p["package_id"] for p in routable] == ["P1"]
+    assert [(e.package_id, e.reason) for e in excluded] == [
+        ("P2", contract.NOT_READY)]
+
+
+def test_a_postponed_envelope_is_ready_again_and_is_retried():
+    """§6: a postponed envelope is "held at facility in Ready state", so it
+    comes back as Ready rather than as a state of its own, and is retried while
+    its SLA date has not passed."""
+    retry = package("P1", status="Ready", attempt_number=2,
+                    previous_outcome="Postponed")
+
+    routable, excluded = contract.triage([retry], today=TODAY)
+
+    assert [p["package_id"] for p in routable] == ["P1"]
+    assert excluded == []
+
+
+def test_a_pool_that_predates_the_status_field_is_left_alone():
+    """The field is how a caller opts into §7.1's gate. Refusing a record that
+    omits it would refuse every pool written before v0.10 named it."""
+    routable, excluded = contract.triage([package("P1")], today=TODAY)
+
+    assert [p["package_id"] for p in routable] == ["P1"]
+    assert excluded == []
+
+
+def test_an_envelope_both_stuck_and_expired_is_reported_as_expired():
+    """Both are true and only one is actionable: §6.1 sends an expired envelope
+    back to the customer on the return run, while an envelope short of Ready is
+    waiting on the hub. The reason a dispatcher can act on wins."""
+    stuck = package("P1", status="Reconciled", sla_date="2026-09-15")
+
+    _, excluded = contract.triage([stuck], today=TODAY)
+
+    assert [(e.package_id, e.reason) for e in excluded] == [
+        ("P1", contract.SLA_EXPIRED)]
+
+
 def test_a_reason_is_one_of_the_codes_the_output_contract_names():
     """§9.2's unassigned list has a fixed vocabulary. A reason invented here
-    would be a reason no consumer of that output knows how to read."""
-    assert contract.LOW_GEOCODE_CONFIDENCE in contract.REASONS
-    assert contract.SLA_EXPIRED in contract.REASONS
+    would be a reason no consumer of that output knows how to read.
+
+    Read out of §9.2 rather than restated, for the reason the vehicle fields
+    are: a constant compared against itself proves only that it was typed
+    twice the same way.
+    """
+    doc = (Path(__file__).resolve().parents[1]
+           / "docs" / "vrp_problem_definition.md").read_text(encoding="utf-8")
+    line = next(l for l in doc.splitlines()
+                if l.startswith("- **Unassigned envelopes:**"))
+    published = {part.strip()
+                 for part in line.split("(", 1)[1].rstrip(").").split("/")}
+
+    assert contract.REASONS <= published, (
+        f"reasons no consumer can read: {sorted(contract.REASONS - published)}")
+    assert {contract.LOW_GEOCODE_CONFIDENCE, contract.SLA_EXPIRED,
+            contract.NOT_READY} <= contract.REASONS
 
 
 # --------------------------------------------------------------------------

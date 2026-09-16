@@ -23,6 +23,14 @@ double-counts, and proposes "SLA date is today" as a hard constraint instead --
 `priority_source` separates COMMERCIAL from SLA, and tier 0 is must-serve
 whatever the prize. Neither idea has to be weakened to fit the other.
 
+**An absent `status` is not a refusal.** §7.1 makes "only ready envelopes are
+assigned to line-haul or delivery" a hard constraint, and §9.1 carries `status`
+to enforce it. A record that omits the field is from a caller that has not
+adopted it yet, and refusing the whole pool would be a worse answer than the one
+this module gave before the field existed -- so the field is how a caller opts
+into the gate, and its absence leaves the pool as it was. A record that carries
+it is held to it.
+
 **Triage happens before the matrix, not after.** A package refused for a bad
 address or an expired SLA is not a routing decision and must not occupy a
 matrix row -- `build_large_matrix` costs a round trip per tile, and the indices
@@ -48,12 +56,19 @@ from vrp.model import (
     Vehicle,
 )
 
-# §9.2's vocabulary for the unassigned list. The other three -- time, count and
-# cut-off missed -- are decided downstream, by the solver and by §5.2's
-# partition; these two are the ones known before any routing happens.
+# §9.2's vocabulary for the unassigned list. Time and count are decided
+# downstream by the solver; "in dispute" has no state of its own in §5.2.6 and
+# so cannot be told apart from the rest of the pipeline here. These three are
+# the ones known before any routing happens.
 LOW_GEOCODE_CONFIDENCE = "low geocode confidence"
 SLA_EXPIRED = "SLA expired"
-REASONS = frozenset({LOW_GEOCODE_CONFIDENCE, SLA_EXPIRED})
+NOT_READY = "not ready by cut-off"
+REASONS = frozenset({LOW_GEOCODE_CONFIDENCE, SLA_EXPIRED, NOT_READY})
+
+# §5.2.6: "Only envelopes in Ready (at the hub or at a depot) are solver inputs
+# for delivery routing." Every other state in that lifecycle is either upstream
+# of readiness or past dispatch.
+READY = "Ready"
 
 DEFAULT_WEIGHT_G = 200          # §4.1
 DEFAULT_SERVICE_MIN = 10        # §7.4
@@ -112,11 +127,19 @@ def triage(packages: Sequence[dict[str, Any]], *,
     routable, excluded = [], []
     for package in packages:
         sla = _sla(package)
+        status = package.get("status")
         if package.get("geocode_confidence") == "low":
             excluded.append(Excluded(package["package_id"],
                                      LOW_GEOCODE_CONFIDENCE))
         elif sla is not None and sla < today:
             excluded.append(Excluded(package["package_id"], SLA_EXPIRED))
+        # Last of the three, because the first two are terminal and this one is
+        # a wait: a re-geocode or a return run has to be arranged, while an
+        # envelope short of Ready needs only the hub to finish with it. An
+        # envelope that is both stuck and past its SLA is therefore reported as
+        # expired, which is the half somebody has to act on.
+        elif status is not None and status != READY:
+            excluded.append(Excluded(package["package_id"], NOT_READY))
         else:
             routable.append(package)
     return routable, excluded
