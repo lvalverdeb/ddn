@@ -1,7 +1,7 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.5
-**Date:** 14 September 2026
+**Status:** Draft v0.10
+**Date:** 16 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
 
@@ -13,17 +13,18 @@ This document defines the operational problem that the existing Vehicle Routing 
 
 **In scope (decided by the solver, or by a planning step immediately upstream of it):**
 - Daily allocation of the shared fleet across the hub and the six secondary depots.
-- Routing of customer pickups, which arrive throughout the day, using earmarked hub capacity.
-- Assignment of packages to vehicles at the consolidation centre and at each secondary depot.
+- Routing of mailbag pickups from customer sites, which arise throughout the day, using vans earmarked at the hub.
+- Assignment of ready envelopes to vehicles at the consolidation depot and at each secondary depot.
 - Sequencing of stops (routes) for each vehicle on a given day.
-- Clustering of distant packages into van loads for line-haul to secondary depots.
+- Clustering of distant envelopes into van loads for line-haul to secondary depots.
 - Routing of the end-of-day return-to-customer run.
-- Identification of packages that cannot be served with the available fleet on a given day.
+- Identification of envelopes that cannot be served with the available fleet on a given day.
 
 **Out of scope (handled by existing systems or people):**
-- Geocoding of addresses (done upstream; the solver receives coordinates).
-- Package filtering and prioritisation, including SLA proximity (done by the existing prioritisation algorithm; the solver receives a priority value per package).
-- SLA negotiation with customers (the solver receives the resulting latest delivery date per package).
+- Hub processing itself: manifest reconciliation, clean-room assembly and sorting. The solver only sees envelopes once they are *ready* (§5.2), but it needs their expected ready time.
+- Geocoding of delivery addresses (done upstream; the solver receives coordinates and their source).
+- Package filtering and prioritisation, including SLA proximity (done by the existing prioritisation algorithm; the solver receives a priority value per envelope).
+- SLA negotiation with customers.
 - Fleet sizing (total fleet is fixed; only its distribution varies).
 
 ---
@@ -32,50 +33,63 @@ This document defines the operational problem that the existing Vehicle Routing 
 
 | Term | Definition |
 |---|---|
-| **Package** | A single document envelope with one delivery address, weighing 200–1,000 g. The unit of assignment and delivery. |
-| **Pickup** | Collection of packages from a customer site, brought to the consolidation centre. Requested throughout the day; performed by earmarked hub vehicles. |
-| **Consolidation centre (hub)** | Central facility where all packages arrive, are georeferenced, consolidated and assigned. Also acts as a delivery depot for nearby packages and is the main processing point for new packages. |
-| **Secondary depot** | One of six regional facilities. Receives packages by van from the hub and dispatches them by motorbike. |
-| **Line-haul** | Van movement from the hub to a secondary depot carrying a clustered load of packages. |
-| **Last mile** | Motorbike delivery from the hub or a secondary depot to the end-user. |
-| **Service area** | The geographic region served by a given depot, defined implicitly by nearest-depot assignment. |
-| **Priority** | A value produced by the existing prioritisation algorithm indicating the relative importance of delivering a package today. Already incorporates SLA proximity. |
-| **SLA date** | The latest delivery date for a package, calculated from customer-negotiated delivery windows. After this date the package is returned to the customer. |
-| **Outcome** | The result of a delivery attempt: Delivered, Rejected, Returned, Postponed (see §6). |
-| **Delivery attempt** | One visit by a driver to a package's delivery address. |
-| **Return run** | End-of-day trip returning rejected, defective and SLA-expired packages to customers. |
-| **Earmarked capacity** | Vehicles or shift time at the hub reserved for pickups and not available for deliveries. |
+| **Envelope (package)** | A single document consignment with one delivery address, weighing 200–1,000 g. The unit of delivery and of the solver's assignment decisions. |
+| **Mailbag** | A sealed bag in which a customer accumulates envelopes during the day. The unit of pickup. Carries a manifest and a tamper-evident safety device. |
+| **Manifest** | The list of envelopes a mailbag contains, supplied by the customer with the bag. |
+| **Upload file** | Data file supplied by the customer per mailbag: package_id, customer_id, recipient_id, package_type, delivery address and coordinates (actual or zip-code centroid). |
+| **Pickup** | Collection of one or more sealed mailbags from a customer site and their transport to the consolidation depot, **by van only** for security reasons. Requested as bags become available during the day. |
+| **Consolidation depot (hub)** | Central facility where mailbags are opened, reconciled against manifests, envelopes assembled if needed, sorted by target depot and made ready. Also a delivery depot for nearby envelopes. |
+| **Reconciliation** | Tallying a mailbag's contents against its manifest; discrepancies are reported to the customer. |
+| **Assembly** | Clean-room process at the hub that turns unfinished customer material into a finished envelope. Applies only to certain package types. |
+| **Sorting** | Grouping ready envelopes by target facility (hub or D1–D6) by proximity of their coordinates. |
+| **Ready** | An envelope that has been reconciled, assembled if required, and sorted. Ready envelopes are line-hauled the same day (if depot-bound) and delivered the next day. |
+| **Secondary depot** | One of six regional facilities. Receives ready envelopes by van from the hub and dispatches them by motorbike. |
+| **Line-haul** | Van movement from the hub to a secondary depot carrying sorted envelopes. |
+| **Last mile** | Motorbike delivery from the hub or a secondary depot to the recipient. |
+| **Priority** | A numeric score from the existing prioritisation algorithm; already incorporates SLA proximity. |
+| **SLA date** | Latest delivery date for an envelope. After this date it is returned to the customer. |
+| **Outcome** | Result of a delivery attempt: Delivered, Rejected, Returned, Postponed (§6). |
+| **Return run** | End-of-day trip returning rejected, defective and SLA-expired envelopes to customers. |
+| **Earmarked capacity** | Hub vans reserved for pickups during the day and therefore not available for line-haul until released. |
 
 ---
 
-## 3. Network
+## 3. Network and data foundations
 
 ### 3.1 Facilities
 
-| ID | Name | Type | Coordinates (lat, lon) | Cut-off time | Transit from hub | Dispatch mode |
+| ID | Name | Type | Coordinates (lat, lon) | Morning route release | Transit from hub | Latest van departure from hub |
 |---|---|---|---|---|---|---|
-| HUB | Consolidation centre | Hub + delivery depot | [TBD] | [TBD] | — | Same day |
-| D1 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
-| D2 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
-| D3 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
-| D4 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
-| D5 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
-| D6 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [same day / next day] |
+| HUB | Consolidation depot | Hub + delivery depot | [TBD] | [TBD] | — | — |
+| D1 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
+| D2 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
+| D3 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
+| D4 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
+| D5 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
+| D6 | [TBD] | Secondary depot | [TBD] | [TBD] | [TBD] | [release − transit − unload] |
 
-The hub is the main processing point: all new packages are processed there first. Whether a given secondary depot can dispatch on the same day depends on whether the van arrives before that depot's cut-off, which in turn depends on transit time. The dispatch mode column should be filled once transit times are known; depots with transit of several hours will in practice operate next-day.
+The hub is the main processing point: every envelope passes through it before dispatch. **The daily rhythm is a one-day lag:** pickup, consolidation, sorting and transport to depots all happen on day D; delivery — from the hub and from every depot — happens on day D+1. Each depot's constraint is therefore that the van arrives before its morning route release, which for distant depots means an overnight run. The latest van departure from the hub is derived per depot from release time minus transit minus unloading.
 
-### 3.2 Depot assignment rule
+### 3.2 Coordinates and their source
 
-Each package is assigned to exactly one dispatching facility (HUB or D1–D6) using **nearest facility by road distance** from the delivery coordinates. No fixed service-area polygons are used.
+Each envelope arrives with coordinates from the customer's upload file, which are one of two kinds:
 
-- **Hub-direct:** packages whose nearest facility is the hub are delivered directly by motorbike from the hub.
-- **Depot-bound:** all other packages are assigned to their nearest secondary depot and transported there by van.
+| Source | Precision | Fit for depot assignment | Fit for last-mile routing |
+|---|---|---|---|
+| **Actual delivery coordinates** | Address level | Yes | Yes |
+| **Zip-code centroid** | Zip area (may be several km) | Yes, in most cases | No — must be geocoded from the delivery address first |
 
-*Note:* nearest-by-road should be preferred over straight-line distance where the road network makes them differ materially. If road distances are not available to the solver, straight-line is an acceptable first approximation to be validated against operations.
+Consequences:
+- **Sorting by target facility** can use zip centroids directly; the nearest-facility decision is coarse enough that zip precision is acceptable except for zips straddling two facilities' areas [flag these].
+- **Last-mile routing** needs address-level coordinates. Envelopes carrying only a zip centroid must pass through an address geocoding step at the hub before they are marked ready. Where geocoding fails or returns low confidence, the envelope is held and flagged rather than routed, since an incorrect location is a leading cause of postponement.
+- The solver input therefore carries a `coord_source` field (actual / geocoded-address / zip-centroid) and a confidence level.
 
-### 3.3 Georeferencing
+### 3.3 Facility assignment rule
 
-Addresses are geocoded upstream. Each package arrives at the solver with coordinates and a geocoding confidence level. Packages with low confidence [define threshold] should be flagged rather than routed, since an incorrect address is a known cause of postponement.
+Each envelope is assigned to exactly one dispatching facility (HUB or D1–D6) using **nearest facility by road distance** from its delivery coordinates (address-level where available, otherwise zip centroid). No fixed service-area polygons are used.
+
+- **Hub-direct:** nearest facility is the hub → delivered by motorbike from the hub.
+- **Depot-bound:** nearest facility is a secondary depot → transported there by van, then delivered by motorbike.
 
 ---
 
@@ -83,177 +97,257 @@ Addresses are geocoded upstream. Each package arrives at the solver with coordin
 
 ### 4.1 Vehicle types
 
-| Type | Capacity | Capacity unit | Roles |
+| Type | Delivery capacity | Pickup capacity | Roles |
 |---|---|---|---|
-| Motorbike | 35 envelopes | Count (each envelope 200–1,000 g, so max 35 kg) | Last-mile delivery; customer pickups; return run |
-| Van | 500 kg | Weight | Hub → depot line-haul; customer pickups; return run |
+| Motorbike | 35 envelopes (shift time usually binds first, §7.4) | — | Last-mile delivery; return run |
+| Van | 500 kg | [TBD] mailbags / 500 kg | Mailbag pickups; line-haul; return run |
 
-The solver carries both a count and a weight per package. Actual weight is used where recorded; otherwise a **default of 200 g** applies. At the default weight a van carries up to 2,500 envelopes, so in practice van weight capacity will rarely bind; the number of van trips per depot will be driven by depot cut-off times and van availability rather than by weight. Motorbike capacity is effectively bounded by shift time, not by count (§7.4).
+**Mailbags are collected by vans only**, for security: sealed bags are not carried on motorbikes. Motorbikes therefore do last-mile delivery exclusively (and the return run, subject to Open Question 13). Van pickup capacity is in **mailbags** (bags are collected whole) with the 500 kg weight limit as a secondary bound; a bag's weight is estimable from its manifest count. *[Open Question 1.]*
+
+This makes **vans the contested resource**: the same fleet must cover pickups throughout the day and line-haul in the afternoon and overnight. Van count and scheduling, not motorbike count, will determine whether bags reach the hub in time and envelopes reach depots before cut-off.
+
+Envelope weight: actual where recorded, default 200 g. At the default a van carries up to 2,500 envelopes on line-haul, so weight rarely binds there.
 
 ### 4.2 Shared fleet and daily allocation
 
-The fleet is a **single shared pool** distributed across facilities according to daily requirements, not a fixed complement per depot.
+The fleet is a **single shared pool** distributed across facilities according to daily requirements.
 
 | Type | Total fleet |
 |---|---|
 | Motorbikes | [TBD] |
 | Vans | [TBD] |
 
-This makes fleet allocation a planning decision that precedes routing. Each day (or at whatever frequency reallocation is practical — see Open Question 1), the plan must decide how many motorbikes go to each facility and how many hub vehicles are earmarked for pickups. Two approaches are possible:
-
-- **Two-stage:** an allocation step assigns vehicles to facilities based on forecast or known package counts per facility (e.g. proportional to priority-weighted demand, at ~25 envelopes per motorbike per day); the VRP solver then routes each facility independently. Simpler and matches how most VRP tools work.
-- **Integrated:** the solver treats all packages and all vehicles in one multi-depot problem where a vehicle's home facility is itself a decision variable. More optimal, but requires a solver that supports flexible vehicle-to-depot assignment, and relocation time must be modelled.
-
-The two-stage approach is recommended as the starting point. *[Confirm the solver's capabilities before deciding.]*
-
-**Relocation:** moving a motorbike to a distant depot takes time and the rider is unavailable for deliveries during transit. Allocation changes should therefore be made at a frequency where relocation cost is small relative to the benefit — probably weekly or on a rolling forecast, with daily adjustment only for nearby facilities. *[Open Question 1.]*
+Fleet allocation is a planning decision made before routing. A two-stage approach is recommended: an allocation step assigns motorbikes to facilities based on forecast or known ready-envelope counts per facility at ~25 envelopes per motorbike per day, and splits the vans between pickup and line-haul duty across the day; the VRP solver then routes each facility independently. Relocation between distant facilities has a time cost, so allocation should change at a frequency where that cost is small — likely weekly with daily adjustment for nearby facilities. *[Open Question 2.]*
 
 ### 4.3 Van usage
 
-Vans perform three roles: customer pickups (throughout the day), hub → depot line-haul (after consolidation) and the end-of-day return run. A van used for pickups is available for line-haul only after it has returned to the hub and been unloaded.
+Vans perform three roles: mailbag pickups (throughout the day, exclusively by van), hub → depot line-haul (once envelopes are ready), and the end-of-day return run. A van on pickups is available for line-haul only after it has returned to the hub and unloaded. Because all vans are hub-based, the daily plan must decide how many run pickups and how many are held for line-haul, and at what time pickup vans are released to line-haul. On high-inflow days these two demands collide in the afternoon; the pickup earmark and line-haul departure times must be planned together.
 
 ---
 
 ## 5. Daily flow
 
-The operation decomposes into four linked sub-problems.
+The operation decomposes into five stages. Stages 1, 3, 4 and 5 are routing problems; stage 2 is hub processing, which the solver does not perform but whose output timing it depends on.
 
-### 5.1 Pickups → Hub (dynamic, throughout the day)
+### 5.1 Stage 1 — Mailbag pickups (dynamic, throughout the day)
 
-Customers call to request pickup at any point during the day. Requests are not all known at the start of the shift, so this is a **dynamic VRP**: routes for the earmarked pickup vehicles are built incrementally as requests arrive.
+#### 5.1.1 How pickups arise
 
-- **Earmarked capacity:** a fixed number of hub motorbikes and vans [TBD] are reserved for pickups and excluded from the delivery pool. Vehicle choice per request depends on expected volume: large collections require a van.
-- **Solver mode:** the solver must support inserting new stops into active routes (re-optimisation on each new request, or at fixed intervals such as every 30 minutes). Pickup vehicles return to the hub when full or at consolidation cut-off.
-- **Cut-off:** packages collected after the consolidation cut-off are processed the next day.
-- **Fallback:** if the solver in use does not support dynamic insertion, pickups can be batched into fixed waves (e.g. 09:00, 12:00, 15:00), each solved as a static CVRP. This loses some responsiveness but keeps the tooling simple.
+Customers accumulate envelopes during the day in general mail bags, placing them in as they come. When a bag is ready the customer seals it with a tamper-evident safety device, attaches the manifest, and submits the upload file. Pickup requests therefore arrive continuously and refer to **specific sealed bags**, each with a known envelope count.
 
-### 5.2 Hub → Secondary depots (line-haul)
+The upload file **usually arrives before the mailbag**. This lets the hub start work before the bag is physically present: envelopes can be geocoded and pre-sorted to a target facility, assembly demand can be counted and scheduled in the clean room, and line-haul and next-day allocation can be forecast from confirmed inflow rather than estimates. On arrival, the bag only needs reconciliation against a manifest the hub already holds. Where the file is late or missing, the bag is processed in the slower order (open, key in, then geocode) and its envelopes are flagged as late-ready.
 
-Depot-bound packages are clustered by destination depot and loaded onto vans.
+#### 5.1.2 Request lifecycle
 
-- **Problem type:** Primarily an assignment problem. Each van serves one depot per trip.
-- **Inputs:** packages per depot, vans available after pickups, depot cut-off times, hub → depot transit times (minutes to several hours).
-- **Decision:** which van goes to which depot and when, and which depot-bound packages must be held to the next day if a van cannot reach the depot before cut-off.
-- **Constraint:** packages must arrive at the depot before its cut-off to be dispatched the same day; otherwise they are dispatched next day.
+| Stage | What happens | System of record |
+|---|---|---|
+| 1. Request | Customer indicates one or more bags are ready. Request records site, number of bags, envelope count per bag (from manifest), package types. | Call centre / customer portal [TBD] |
+| 2. Qualification | Site geocoded; request checked against the day's collection cut-off. | Same |
+| 3. Dispatch decision | Solver inserts the stop into an earmarked van's route (§5.1.4). | VRP solver |
+| 4. Collection | Driver collects sealed bags, scans bag IDs, confirms seal intact. Service time [TBD] minutes per stop. | Driver app |
+| 5. Return to hub | Van returns when bag capacity is reached, when its route ends, or at cut-off. Bags handed to hub processing (§5.2). | WMS |
 
-### 5.3 Last mile (Hub and each depot → end-user)
+#### 5.1.3 Earmarked capacity
 
-Each facility dispatches its assigned packages by motorbike.
+[TBD] vans are reserved for pickups each day. Earmarking no longer costs motorbike delivery capacity; its cost is **line-haul availability**: a van on pickups cannot depart for a depot until it is back and unloaded. The earmark should be sized from historical bag-request volume per weekday, and should taper during the afternoon so that vans are progressively released to line-haul as depot departure times approach.
 
-- **VRP variant:** Capacitated VRP with a route-duration limit, solved independently per facility. Time windows are not required by default.
-- **Inputs:** packages at the facility (coordinates, priority, SLA date), motorbikes allocated to the facility, shift window.
-- **Outputs:** one route per motorbike; list of unassigned packages with reason.
+#### 5.1.4 Vehicle assignment
 
-### 5.4 Return run (end of day)
+All pickups are by van. Assignment is therefore only a question of **which van**, decided by remaining bag capacity, remaining weight capacity and least additional route cost. A site with more bags than any single van can take is split across vans or served by a second visit.
 
-Once daily delivery routes are closed, rejected, defective and SLA-expired packages are returned to customers.
+Because manifests give exact envelope counts, the hub also knows the expected envelope inflow per hour, which feeds processing capacity planning (§5.2.5) and the timing of van release to line-haul.
 
-- **When:** after all delivery routes have completed; a distinct, late-shift problem.
-- **Vehicles:** any hub vehicles that have finished their delivery or pickup routes.
-- **VRP variant:** static CVRP from the hub to customer sites. Since it runs after routes close, it can be solved as a separate static problem each evening; no interaction with pickup routing is needed.
-- **Depot returns:** packages rejected at a secondary depot travel back to the hub on the van's return line-haul leg and enter the return run the following evening.
+#### 5.1.5 Route building and re-optimisation
 
-### 5.5 Daily timeline (indicative)
+The pickup fleet operates as a **dynamic VRP**:
+
+- Earmarked vans start the shift with empty routes, or with standing pickups for regular customers if these exist *[Open Question 3]*.
+- New requests are inserted into the route of whichever van can serve them at least additional cost, subject to bag and weight capacity, cut-off, and that van's scheduled release time to line-haul.
+- Re-optimisation runs at a fixed cadence (e.g. every 30 minutes); stops already visited are frozen.
+- A van returns to the hub when bag capacity is reached, when it could not otherwise get back before cut-off or its line-haul release time, or after [TBD] minutes idle. After unloading it either re-enters the pickup pool (multi-trip) or is released to line-haul.
+
+**Fallback (static batching):** if dynamic insertion is not supported, requests are collected into waves (e.g. 09:00, 12:00, 15:00), each solved as a static CVRP.
+
+#### 5.1.6 Timing and cut-off
+
+- Bags collected and delivered to the hub before the **processing cut-off** [TBD] can be made ready the same day.
+- Bags arriving after it are processed next day. Whether late requests are still collected the same day is to be confirmed.
+- Target responsiveness: request to collection within [TBD] hours (service metric, not a solver constraint).
+
+#### 5.1.7 Exceptions
+
+| Situation | Handling |
+|---|---|
+| Bag not ready / no bag on arrival | Record visit; no bag collected; re-request. |
+| Seal broken or missing on collection | Collect but flag; hub performs full reconciliation with customer notified. |
+| More bags than expected | Collect what fits; remainder assigned to another van or a second visit. |
+| Site closed | Failed pickup; re-request next day. |
+| Request cancelled after dispatch | Stop removed at next cycle. |
+
+### 5.2 Stage 2 — Hub processing (not routed, but timed)
+
+Every bag passes through the following steps at the consolidation depot. The solver does not perform them, but it must know **when each envelope will be ready**, since only ready envelopes can be assigned to line-haul or delivery.
+
+#### 5.2.1 Reconciliation
+
+The bag is opened and its contents tallied against the manifest. Discrepancies (missing, extra, or damaged envelopes; broken seal) are reported back to the customer. Envelopes that reconcile move on; envelopes in dispute are held and are not routable until resolved.
+
+#### 5.2.2 Geocoding (where needed)
+
+Envelopes whose upload file carried only a zip-code centroid have their delivery address geocoded. Because the file normally precedes the bag, this step runs **before arrival** in the usual case, so geocoding is off the critical path. Low-confidence results are held and flagged (§3.2).
+
+#### 5.2.3 Assembly (some package types only)
+
+Some customers supply envelopes that are not finished products. These go through an assembly process in a clean room at the hub before they can be sorted. Assembly is a **capacity-constrained step**: throughput is limited by clean-room staffing and hours, so on high-volume days assembly may be the bottleneck that determines how many envelopes are ready by cut-off. The `package_type` field identifies which envelopes require it, and since the upload file arrives early, the clean room knows its day's workload before the bags do — assembly slots can be scheduled and, where the queue exceeds capacity, prioritised by envelope priority and SLA date.
+
+#### 5.2.4 Sorting
+
+Reconciled (and assembled) envelopes are sorted by target facility using nearest-facility proximity (§3.3). Sorting produces per-facility groups: hub-direct and D1–D6.
+
+#### 5.2.5 Readiness and cut-offs
+
+An envelope is **ready** when it has cleared all applicable steps. The hub must publish, per envelope or per bag, an **expected ready time**, so that:
+
+- line-haul planning knows how many envelopes per depot will be ready by each van's latest departure;
+- next-day delivery routing at the hub and at each depot is built on the envelopes that will be there by morning;
+- allocation planning can forecast tomorrow's ready volume per facility.
+
+Processing throughput per hour for reconciliation, geocoding, assembly and sorting are needed to compute expected ready times. *[Open Question 4.]* With the upload file in hand before arrival, the expected ready time for each envelope can be computed at request time as: van's expected return to hub + reconciliation time + (assembly queue time if required) + sorting time. Envelopes not ready by a depot's latest van departure miss that day's line-haul and travel the following day; hub-direct envelopes not ready by end of processing join the following day's hub routes instead of tomorrow's. Assembled envelopes follow the same rule as any other: once ready and sorted they go on today's line-haul if depot-bound, or into tomorrow's hub routes if hub-direct.
+
+#### 5.2.6 Envelope status lifecycle
+
+```
+Requested (upload file received; geocoded and pre-sorted) → Collected → Received at hub → Reconciled → [Assembled] → Sorted → Ready
+   → (Line-haul → At depot) → Dispatched → {Delivered | Rejected | Returned | Postponed}
+   → Postponed: back to Ready for next attempt, until SLA date
+   → Rejected / Returned / SLA expired: Return run → Returned to customer
+```
+
+Only envelopes in **Ready** (at the hub or at a depot) are solver inputs for delivery routing.
+
+### 5.3 Stage 3 — Hub → Secondary depots (line-haul)
+
+Sorted, ready depot-bound envelopes are loaded onto vans.
+
+- **Problem type:** Primarily an assignment problem; each van serves one depot per trip.
+- **Inputs:** ready envelopes per depot and their ready times, vans available after pickups, depot cut-off times, hub → depot transit times (minutes to several hours).
+- **Decision:** which van goes to which depot and when. A van may wait for more envelopes to become ready if it can still reach the depot before its morning release; otherwise it departs with what is ready and later envelopes roll to the next day's line-haul.
+- **Constraint:** arrival at the depot before its morning route release, so its envelopes are delivered on day D+1. For distant depots this is an overnight run and the van (and driver) are unavailable until they return. A van that cannot make the release deadline should not depart; its load waits for the next day's line-haul.
+
+### 5.4 Stage 4 — Last mile (Hub and each depot → recipient)
+
+Each facility dispatches its ready envelopes by motorbike.
+
+- **VRP variant:** Capacitated VRP with a route-duration limit, solved independently per facility. Time windows not required by default.
+- **Inputs:** ready envelopes present at the facility at morning route release — made ready at the hub the previous day and, for depots, delivered by overnight or early line-haul — plus postponed envelopes held at the facility; address-level coordinates, priority, SLA date; motorbikes allocated; shift window.
+- **Outputs:** one route per motorbike; unassigned envelopes with reason.
+
+### 5.5 Stage 5 — Return run (end of day)
+
+Once delivery routes are closed, rejected, defective and SLA-expired envelopes are returned to customers.
+
+- **When:** after delivery routes complete; a distinct late-shift problem.
+- **Vehicles:** hub vehicles that have finished delivery, pickup or line-haul routes. *[Open Question 13: if the security rule for mailbags also applies to returns, the return run is van-only.]*
+- **VRP variant:** static CVRP from the hub to customer sites, solved each evening.
+- **Depot returns:** envelopes rejected at a secondary depot travel back to the hub on the van's return leg and join the following evening's return run.
+
+### 5.6 Daily timeline (indicative)
 
 | Time | Event |
 |---|---|
-| Shift start | Delivery routes released at hub and depots; earmarked pickup vehicles on standby |
-| Throughout | Pickup requests arrive; pickup routes re-optimised as they do |
-| [TBD] | Consolidation cut-off: pickups for today's processing returned to hub |
-| [TBD] | Georeferencing and prioritisation complete; solver input frozen for tomorrow |
-| [TBD] | Line-haul vans depart for depots (same-day depots) |
+| Morning release | Delivery routes start at hub and all depots, on envelopes made ready and transported the previous day (D−1) plus postponed envelopes held locally |
+| Throughout | Bag requests and upload files arrive; envelopes geocoded and pre-sorted on file receipt; pickup vans run and are re-optimised; bags flow into hub processing (reconciliation, assembly, sorting); envelopes become ready continuously |
+| Afternoon | Pickup vans progressively released to line-haul; vans to nearer depots depart as their latest-departure times approach |
+| [TBD] | Processing cut-off: bags received after this are processed next day |
 | [TBD] | Delivery shift ends; outcomes recorded |
 | [TBD] | Return run solved and dispatched |
-| Overnight | Line-haul to next-day depots; next-day allocation and routing solved |
+| Evening / overnight | Line-haul to distant depots; remaining processing; tomorrow's allocation and delivery routes solved on the pool that will be at each facility by morning |
 
 ---
 
 ## 6. Delivery outcomes and their consequences
 
-| Outcome | Definition | Package handling | Effect on next day's pool |
+| Outcome | Definition | Handling | Effect on next day's pool |
 |---|---|---|---|
-| **Delivered** | Accepted by the end-user. | Closed. | None. |
-| **Rejected** | End-user refuses the package. | Back to dispatching facility, then to customer via return run. | Removed from delivery pool. |
-| **Returned** | Package is defective or incomplete and must be reprocessed by the customer. | Back to dispatching facility, then to customer via return run. | Removed from delivery pool. Re-enters as a new package once the customer resubmits it. |
-| **Postponed** | Attempt not completed: end-user unavailable, incorrect address, driver out of time, etc. | Held at facility. | Re-enters pool for another attempt, provided the SLA date has not passed. Incorrect address → re-geocode before routing (may change facility). |
+| **Delivered** | Accepted by the recipient. | Closed. | None. |
+| **Rejected** | Recipient refuses. | Back to facility, then customer via return run. | Removed. |
+| **Returned** | Defective or incomplete; customer must reprocess. | Back to facility, then customer via return run. | Removed; re-enters as a new envelope if resubmitted. |
+| **Postponed** | Attempt not completed (recipient unavailable, incorrect address, driver out of time…). | Held at facility in Ready state. | Retried while SLA date not passed. Incorrect address → re-geocode (may change facility). |
 
 ### 6.1 Attempt limits and SLA
 
-There is no fixed maximum number of attempts. A package may be retried on any day up to and including its **SLA date**. Once the SLA date has passed without delivery, the package is returned to the customer via the return run.
+No fixed attempt maximum. An envelope may be retried until its **SLA date**; after that it is returned to the customer via the return run.
 
-The priority value from the existing algorithm **already incorporates SLA proximity**. The solver should therefore use priority as its sole ranking signal and must not apply a second SLA weighting on top of it, which would double-count. Two exceptions are worth exploring:
-
-- **SLA date as a hard deadline:** a package whose SLA date is today should be treated as must-deliver-today (hard constraint, subject to feasibility) rather than merely high priority. This is a constraint, not a weight, so it does not double-count.
-- **Solver-native SLA features:** if the solver has built-in due-date handling, it may be cleaner to feed it the raw SLA date and have the prioritisation algorithm stop including SLA proximity. This is a design choice to evaluate once the solver's capabilities are confirmed *[Open Question 3]*; whichever component handles SLA, only one should.
+The priority score **already incorporates SLA proximity**, so the solver uses priority as its sole ranking signal and applies no second SLA weighting. Two refinements:
+- **SLA date = today** is treated as a hard must-deliver-today constraint, subject to feasibility.
+- If the solver has native due-date handling, it may be cleaner to feed it the raw SLA date and remove SLA from the priority score. Whichever component handles SLA, only one should. *[Open Question 5.]*
 
 ---
 
 ## 7. Constraints
 
-### 7.1 Hard constraints (must never be violated)
+### 7.1 Hard constraints
 
 - A motorbike never carries more than 35 envelopes.
 - A van never carries more than 500 kg.
-- A vehicle's route starts and ends at its home facility for the day within its shift window (service time + travel time ≤ shift).
-- A package is assigned to at most one vehicle per day.
-- Depot-bound packages are only dispatched from a depot after they have physically arrived there.
-- A van does not depart on line-haul until it has returned from any pickup route and been unloaded.
-- A package is not dispatched for delivery after its SLA date.
-- Earmarked pickup vehicles are not assigned delivery stops.
+- A vehicle's route starts and ends at its home facility within its shift (service time + travel time ≤ shift).
+- An envelope is assigned to at most one vehicle per day.
+- Only **ready** envelopes are assigned to line-haul or delivery.
+- Depot-bound envelopes are dispatched from a depot only after physical arrival.
+- A van does not depart on line-haul until back from any pickup route and unloaded.
+- An envelope is not dispatched for delivery after its SLA date.
+- Mailbags are collected by vans only; motorbikes are never assigned pickup stops.
+- A van never carries more than [TBD] mailbags.
+- Sealed mailbags are collected whole; bags are never split at the customer site.
 
-### 7.2 Soft constraints (penalised, not forbidden)
+### 7.2 Soft constraints
 
 - Stop count per route above [TBD].
-- Postponed packages not retried on the next available day.
-- Packages approaching SLA date left unassigned.
-- Fleet reallocation between facilities on consecutive days (relocation cost).
+- Postponed envelopes not retried on the next available day.
+- Envelopes approaching SLA date left unassigned.
+- Fleet reallocation between facilities on consecutive days.
+- Line-haul departing with capacity to spare when more envelopes would be ready shortly.
 
 ### 7.3 Time windows
 
-Deliveries are "any time during the shift"; per-package time windows are not required by default. The data contract retains an optional time-window field for exceptional cases.
+Deliveries are "any time during the shift". Optional per-envelope windows are retained in the data contract for exceptions.
 
 ### 7.4 Service times
 
-- **Time per envelope delivered: 10 minutes.** The recipient must open the envelope, review the contents, ask questions and sign a receipt. Multiple envelopes to the same recipient on the same day are a rare exception and are not modelled separately; each envelope takes 10 minutes.
-- Time per pickup stop: [TBD] minutes.
-- Loading time at facility: [TBD] minutes.
+- **Delivery: 10 minutes per envelope.** Recipient opens, reviews, asks questions, signs. Multiple envelopes to one recipient on one day is rare and not modelled separately.
+- Pickup stop: [TBD] minutes (bag scan and seal check).
+- Facility loading/unloading: [TBD] minutes.
 
-**Implication for capacity.** A full load of 35 envelopes requires 350 minutes of service time before any travel. With an 8-hour shift that leaves roughly 2 hours for riding, which is unlikely to be enough for 35 dispersed stops. The **shift duration, not the 35-envelope limit, is the binding constraint**; effective capacity will be closer to 20–30 envelopes per motorbike per day depending on stop density. The solver must enforce route duration as a hard constraint.
-
-The 10-minute service time is the single largest lever on throughput: shortening it (pre-notifying recipients, digital receipts) has more effect on daily capacity than fleet changes.
+**Implication.** 35 envelopes require 350 minutes of service time. With an 8-hour shift, **shift duration, not envelope count, is the binding constraint**; effective capacity is ~20–30 envelopes per motorbike per day. Route duration must be a hard constraint. The 10-minute service time is the largest lever on throughput.
 
 ---
 
 ## 8. Objectives
 
-Daily volume ranges from **2,500 to 5,000 packages**. On peak days not all packages will be deliverable, so the solver must treat "which packages to leave unassigned" as a first-class decision.
+Daily volume is **2,500–5,000 envelopes**. On peak days not all ready envelopes will be deliverable; choosing which to leave unassigned is a first-class decision.
 
-Proposed objective hierarchy:
-
-1. **Maximise priority-weighted packages delivered.**
-2. **Minimise number of unassigned packages.**
+1. **Maximise priority-weighted envelopes delivered.**
+2. **Minimise unassigned envelopes.**
 3. **Minimise total route time / distance.**
 4. **Balance workload across vehicles** at the same facility.
 
 ### 8.1 Priority format
 
-The prioritisation algorithm can output either a numeric score or a categorical class. **The solver should receive a numeric score**, for three reasons:
+The solver receives a **numeric score**: weighted-sum objectives are universally supported, fine-grained ranking matters when capacity binds, and SLA-today envelopes are already protected by a hard constraint. If class-like behaviour is wanted ("never drop an Urgent for any number of Standards"), classes are encoded as widely spaced tiers within the score (e.g. Urgent 1,000–1,999, Standard 100–199, Low 1–99), which gives lexicographic behaviour from a plain weighted sum.
 
-- A weighted-sum objective (each delivered package earns its score) is supported by virtually every VRP tool; strict lexicographic objectives over classes often are not.
-- With shift time binding and peak days exceeding capacity, the solver is constantly choosing which packages to drop; a numeric score lets it rank within what would otherwise be a tie.
-- Truly urgent packages (SLA date = today) are already protected by a hard constraint (§6.1), so the weighted sum cannot sacrifice them.
-
-If class-like behaviour is still wanted ("never drop an Urgent package for any number of Standard ones"), encode classes as widely spaced tiers within the numeric score, e.g. Urgent 1,000–1,999, Standard 100–199, Low 1–99. One Urgent package then outweighs ten Standard ones, while the solver still ranks within each tier. This yields lexicographic behaviour from a plain weighted sum and avoids depending on solver support for tiered objectives.
-
-**Requirement for the prioritisation algorithm:** output a single numeric score per package; if categories are used, apply them as tier offsets within that score.
+**Requirement for the prioritisation algorithm:** one numeric score per envelope; categories, if used, applied as tier offsets.
 
 ### 8.2 Operational override
 
-Unassigned packages are selected by priority first. Operations may then override (force a package in or pull one out). The solver must support re-running with a set of **locked** assignments so that overrides are respected while the remainder is re-optimised.
+Operations may force an envelope in or out of the plan. The solver must support re-running with **locked** assignments.
 
-### 8.3 Structural capacity gap
+### 8.3 Structural capacity gaps
 
-At ~25 effective envelopes per motorbike per day, total daily capacity is roughly (total motorbikes minus earmarked pickup bikes) × 25. If this is below typical daily volume, the solver cannot prevent a growing backlog; it can only choose which packages wait. This figure should be checked against the 2,500–5,000 range before the solver is expected to meet SLA targets. Because the fleet is shared, the check applies to the fleet as a whole rather than per depot.
+Two capacity checks should be made before the solver is expected to meet SLA targets:
+
+- **Delivery:** total motorbikes × ~25 versus the 2,500–5,000 daily range.
+- **Vans:** van-hours available per day versus the sum of pickup route hours and line-haul round-trip hours (including transit of several hours to distant depots). This is now the most likely operational bottleneck after clean-room assembly.
+- **Processing:** hub throughput per day for reconciliation, geocoding, assembly and sorting versus the same range. If processing, and especially assembly, cannot make the day's inflow ready by cut-off, a backlog forms upstream of the solver and no routing quality will recover it.
 
 ---
 
@@ -261,38 +355,47 @@ At ~25 effective envelopes per motorbike per day, total daily capacity is roughl
 
 ### 9.1 Solver input
 
-**Packages**
+**Envelopes** (only Ready ones are routable; others carried for forecasting)
 | Field | Type | Notes |
 |---|---|---|
-| package_id | string | Unique |
-| lat, lon | float | From geocoder |
+| package_id | string | From customer upload file |
+| customer_id | string | From upload file; used for return run grouping |
+| recipient_id | string | From upload file |
+| package_type | enum | From upload file; determines whether assembly is required |
+| mailbag_id | string | Bag the envelope arrived in |
+| status | enum | Lifecycle state (§5.2.6) |
+| expected_ready_at | datetime | Computed at upload-file receipt; refined as the envelope progresses; actual time once Ready |
+| lat, lon | float | Delivery coordinates |
+| coord_source | enum | actual / geocoded_address / zip_centroid |
 | geocode_confidence | enum | high / medium / low |
-| facility_id | string | HUB or D1–D6, from nearest-facility rule |
-| priority | number | From prioritisation algorithm; includes SLA proximity; classes encoded as tiers (§8.1) |
-| weight_g | integer | Actual weight; default 200 if unknown |
-| sla_date | date | Latest delivery date; used as hard deadline when = today |
-| time_window_start / end | datetime, optional | Rarely used |
+| facility_id | string | HUB or D1–D6 from nearest-facility rule |
+| priority | number | From prioritisation algorithm; includes SLA proximity; tiers if categorical |
+| weight_g | integer | Actual; default 200 |
+| sla_date | date | Hard deadline when = today |
+| time_window_start / end | datetime, optional | Rare |
 | service_time_min | number | Default 10 |
-| attempt_number | integer | 1 for new packages |
+| attempt_number | integer | |
 | previous_outcome | enum, optional | Postponed + sub-reason |
-| locked_vehicle_id | string, optional | Set by operations override |
+| locked_vehicle_id | string, optional | Operations override |
 
-**Pickup requests** (arrive incrementally during the day)
+**Mailbags / pickup requests** (arrive incrementally)
 | Field | Type | Notes |
 |---|---|---|
-| pickup_id | string | |
-| requested_at | datetime | Time the request was received |
-| lat, lon | float | Customer site |
-| expected_count | integer | |
-| expected_weight_g | integer | |
+| mailbag_id | string | |
+| customer_id | string | |
+| site lat, lon | float | |
+| requested_at | datetime | |
+| envelope_count | integer | From manifest |
+| expected_weight_g | integer | count × actual or default weight |
+| assembly_required_count | integer | Envelopes needing clean-room assembly, from package_type |
 | pickup_window_start / end | datetime, optional | |
+| seal_id | string | Safety device identifier |
 
 **Return-run stops** (built at end of day)
 | Field | Type | Notes |
 |---|---|---|
-| customer_site_id | string | |
-| lat, lon | float | |
-| package_ids | list | Rejected / defective / SLA-expired packages for this customer |
+| customer_id, site lat, lon | | |
+| package_ids | list | Rejected / defective / SLA-expired |
 
 **Vehicles**
 | Field | Type | Notes |
@@ -300,52 +403,36 @@ At ~25 effective envelopes per motorbike per day, total daily capacity is roughl
 | vehicle_id | string | |
 | type | enum | motorbike / van |
 | facility_id | string | Facility allocated for the day |
-| role | enum | delivery / pickup / linehaul / return |
-| capacity_count | integer | 35 for motorbikes; null for vans |
+| role | enum | delivery / pickup / linehaul / return; pickup and linehaul are van-only |
+| linehaul_release_at | datetime, optional | Time a pickup van must be back at the hub for line-haul duty |
+| capacity_envelopes | integer | 35 for motorbikes |
+| capacity_mailbags | integer | Vans only |
 | capacity_weight_g | integer | 500,000 for vans; 35,000 for motorbikes |
 | shift_start / end | datetime | |
 
-**Facilities** — as in §3.1, plus `transit_from_hub_min` and `dispatch_mode`.
+**Facilities** — as §3.1, plus `transit_from_hub_min`, `route_release_time` and derived `latest_van_departure`.
 
 ### 9.2 Solver output
 
-**Fleet allocation** (if solved by the tool rather than upstream)
-| Field | Notes |
-|---|---|
-| vehicle_id, facility_id, role | Per day |
-
-**Routes**
-| Field | Notes |
-|---|---|
-| vehicle_id | |
-| stops | Ordered list of stop (package_id / pickup_id / customer_site_id) with ETA and stop type |
-| total_distance, total_time | |
-
-**Unassigned packages**
-| Field | Notes |
-|---|---|
-| package_id | |
-| reason | time / count / cut-off missed / low geocode confidence / SLA expired |
-
-**Line-haul plan**
-| Field | Notes |
-|---|---|
-| van_id, destination facility, package_ids, departure time, expected arrival | |
+- **Fleet allocation** (if solved by the tool): vehicle_id, facility_id, role per day.
+- **Routes:** vehicle_id; ordered stops (package_id / mailbag_id / customer site) with ETA and stop type; total distance and time.
+- **Unassigned envelopes:** package_id; reason (time / count / not ready by cut-off / low geocode confidence / SLA expired / in dispute).
+- **Line-haul plan:** van_id, destination, package_ids, departure time, expected arrival.
 
 ---
 
 ## 10. Worked example (illustrative — peak day)
 
-*Fleet numbers are placeholders.*
+*Fleet and throughput numbers are placeholders.*
 
-- Shared fleet: 120 motorbikes, 10 vans. Allocation for the day, based on forecast demand: HUB 48 (of which 8 earmarked for pickups), D1 24, D2 18, D3 14, D4 8, D5 6, D6 2.
-- 5,000 packages in the pool: 4,600 new plus 400 postponed. Nearest-facility split: HUB 1,800; D1 900; D2 700; D3 600; D4 450; D5 350; D6 200.
-- Hub delivery: 40 bikes × ~25 = 1,000 effective capacity → 800 hub-direct packages unassigned (reason: time), lowest priority first, all SLA-today packages included.
-- Pickups: 8 bikes and 3 vans handle ~60 pickup requests arriving through the day; routes re-optimised every 30 minutes.
-- Line-haul: 3,200 depot-bound packages at 200 g average ≈ 640 kg → weight is not binding; 7 vans make one trip each. D6 is 4 hours away and operates next-day; D1–D5 receive before cut-off.
-- D1: 24 bikes × 25 = 600 for 900 packages → 300 unassigned, rolled to tomorrow.
-- End of day: 3,400 delivered, 60 rejected, 40 defective, 250 postponed. Return run: 100 packages to 35 customer sites, solved as a static CVRP with 4 hub bikes and 1 van. Tomorrow's pool: 250 postponed + 1,100 unassigned + D6's 200 + new arrivals.
-- Tomorrow's allocation shifts 4 bikes from D4/D5 (which cleared their pools) to D1.
+- Shared fleet: 120 motorbikes, 10 vans. Motorbike allocation: HUB 48, D1 24, D2 18, D3 14, D4 8, D5 6, D6 2. Vans: 6 on pickups from shift start, tapering to 2 by mid-afternoon as 4 are released to line-haul; 4 held for line-haul from the outset.
+- Morning: delivery routes at all facilities run on the 3,100 envelopes made ready and transported yesterday (2,700 new + 400 postponed held locally).
+- During the day: 180 bag requests arrive from 70 customer sites, totalling 4,800 envelopes, 900 of which need assembly. The 6 pickup vans collect them over several trips each, carrying up to [TBD] bags per trip.
+- Hub processing: upload files arrive ahead of the bags, so the 1,300 zip-only envelopes are geocoded before collection (40 low-confidence, held) and the clean room schedules its 900 assembly jobs by priority; on arrival reconciliation flags 12 discrepancies (held); assembly clears 700 of the 900 by cut-off, and the 200 rolled to tomorrow are the lowest-priority ones. By cut-off 4,550 envelopes are Ready and sorted: HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180.
+- Line-haul: the 4 held vans plus 3 released from pickups depart for D1–D5 through the afternoon and evening, each timed to arrive before its depot's morning release; one late van takes late-ready envelopes to D1 and D2; D6's 180 go on an overnight run. The 4-hour D6 transit ties up one van and driver until the next day. All 4,550 ready envelopes — hub-direct and depot-bound, including the 700 assembled — are positioned for delivery tomorrow.
+- Delivery (today's routes, on the morning pool of 3,100): HUB 48 bikes × 25 = 1,200 vs 1,150 hub-direct → all assigned. D1 24 × 25 = 600 vs 620 → 20 unassigned. Other depots clear their pools.
+- End of day: 2,880 delivered, 50 rejected, 30 defective, 120 postponed. Return run: 80 envelopes to 30 customer sites, 2 vans.
+- Tomorrow's delivery pool: 4,550 positioned today + 20 unassigned + 120 postponed. This exceeds fleet capacity (120 × 25 = 3,000), so tomorrow's routes will leave ~1,700 envelopes unassigned by priority — see §8.3.
 
 ---
 
@@ -353,32 +440,36 @@ At ~25 effective envelopes per motorbike per day, total daily capacity is roughl
 
 | Metric | Definition | Target |
 |---|---|---|
-| First-attempt delivery rate | Delivered on attempt 1 / total dispatched | [TBD] |
+| Pickup responsiveness | Request to bag collection | [TBD] |
+| Same-day readiness | Envelopes Ready by cut-off / envelopes received before cut-off | [TBD] |
+| Reconciliation discrepancy rate | Disputed envelopes / received | [TBD] |
+| First-attempt delivery rate | Delivered on attempt 1 / dispatched | [TBD] |
 | Postponement rate | Postponed / dispatched | [TBD] |
-| Unassigned rate | Unassigned / packages in pool | [TBD] |
+| Unassigned rate | Unassigned / Ready pool | [TBD] |
 | SLA compliance | Delivered on or before SLA date / total | [TBD] |
-| SLA expiry rate | Returned to customer for SLA expiry / total | [TBD] |
-| Pickup responsiveness | Time from request to collection | [TBD] |
-| Distance per package | Total km / packages delivered | [TBD] |
+| SLA expiry rate | Returned for SLA expiry / total | [TBD] |
+| Distance per envelope | Total km / delivered | [TBD] |
 | Envelopes per motorbike per day | Delivered / motorbikes deployed | [TBD, expect 20–30] |
-| Solver run time | Wall-clock time per run | [TBD] |
+| Solver run time | Wall-clock per run | [TBD] |
 
 ---
 
 ## 12. Open questions
 
-Resolved in v0.4–0.5: numeric priority score with optional tiers; pickup model (dynamic, earmarked capacity); SLA already in priority; return run as end-of-day problem; hub as main processing point; shared fleet; default weight 200 g; no reduction for multiple envelopes.
-
-Remaining:
-
-1. **Fleet reallocation:** how often can vehicles be moved between facilities (daily / weekly), and how long does relocation take to each depot? Is it the rider who relocates, or is the bike transported?
-2. **Priority tiers:** if categories are to be encoded as tiers within the numeric score, what are the categories and the desired tier gaps?
-3. **Solver capabilities to confirm:** dynamic stop insertion for pickups; flexible vehicle-to-depot assignment; native due-date handling; locked assignments for overrides.
-4. **Earmarked pickup capacity:** how many hub motorbikes and vans should be reserved for pickups on a typical day? Does this vary by weekday?
-5. **Per-depot data:** shift windows, cut-off times, hub → depot transit time, and same-day vs next-day dispatch mode for D1–D6.
-6. **Total fleet size:** motorbikes and vans.
-7. **Service times:** per pickup stop and facility loading/unloading.
-8. **Return run staffing:** do return-run vehicles work an extended shift, or is the return run a separate crew?
+1. **Mailbag capacity per van:** how many sealed bags fit in a van?
+2. **Fleet reallocation:** frequency, relocation time to each depot, and whether rider or bike relocates.
+3. **Standing pickups:** do regular customers have fixed daily collection times that can be planned statically?
+4. **Hub processing throughput:** envelopes per hour for reconciliation, geocoding, assembly (clean-room) and sorting; clean-room operating hours; share of envelopes requiring assembly.
+5. **Solver capabilities to confirm:** dynamic stop insertion; flexible vehicle-to-depot assignment; native due-date handling; locked assignments; ready-time constraints on stops.
+6. **Upload file timing:** files usually precede the bag — how often do they arrive late or not at all, and is there a rule for processing bags without a file?
+7. **Earmarked pickup capacity:** vans reserved for pickups per weekday, and the rule for releasing them to line-haul during the afternoon.
+8. **Per-depot data:** morning route release time, shift windows and hub → depot transit time for D1–D6; whether overnight line-haul drivers are the same pool as daytime van drivers.
+9. **Total fleet size.**
+10. **Service times:** pickup stop; facility loading/unloading.
+11. **Priority tiers:** categories and gaps, if used.
+12. **Late requests:** collected same day and processed next day, or scheduled for next-day collection?
+13. **Return run:** does the van-only security rule also apply to envelopes returned to customers? Extended shift or separate crew?
+14. **Zip-centroid ambiguity:** how to treat zips whose centroid is near-equidistant from two facilities — hold for address geocoding before sorting?
 
 ---
 
@@ -387,7 +478,12 @@ Remaining:
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1 | 2026-09-14 | [TBD] | Initial draft |
-| 0.2 | 2026-09-14 | [TBD] | Incorporated answers to open questions 1–10; pickups in scope, dual capacity model, SLA rule, return-to-customer flow, override mechanism |
-| 0.3 | 2026-09-14 | [TBD] | 10-minute per-envelope service time; shift duration as binding constraint; capacity gap analysis |
-| 0.5 | 2026-09-14 | [TBD] | Priority format decided: numeric score, classes as tier offsets |
-| 0.4 | 2026-09-14 | [TBD] | Dynamic pickups with earmarked capacity; shared fleet with daily allocation; end-of-day return run; SLA handled by priority only; default weight 200 g; priority score vs classes explained |
+| 0.2 | 2026-09-14 | [TBD] | Answers to open questions 1–10; pickups in scope; dual capacity; SLA rule; return flow; overrides |
+| 0.3 | 2026-09-14 | [TBD] | 10-minute service time; shift as binding constraint; capacity gap |
+| 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
+| 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
+| 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.10 | 2026-09-16 | [TBD] | One-day lag confirmed: pickup, processing, sorting and line-haul on day D, all delivery on D+1; depot cut-off replaced by morning route release and latest van departure; assembled envelopes follow the same routing |
+| 0.9 | 2026-09-16 | [TBD] | Upload file precedes bag: pre-geocoding, pre-sorting, assembly scheduling, ready-time computed at request |
+| 0.8 | 2026-09-16 | [TBD] | Pickups van-only for security; motorbikes delivery-only; vans identified as the contested pickup/line-haul resource; release-to-line-haul scheduling |
+| 0.7 | 2026-09-16 | [TBD] | Mailbags as pickup unit; manifest and upload file; hub processing stage (reconciliation, geocoding, assembly, sorting, readiness); coordinate sources; envelope lifecycle; data contract and example reworked |
