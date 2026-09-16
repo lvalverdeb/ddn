@@ -314,12 +314,14 @@ def test_the_reader_accepts_a_vehicle_written_to_the_document_s_field_names():
         "wrong table or the contract has moved again")
 
     record: dict = {name: "X" for name in fields}
-    record.update(vehicle_id="BIKE-1", role="delivery",
+    record.update(vehicle_id="BIKE-1", type="motorbike", role="delivery",
                   capacity_envelopes=35, capacity_mailbags=0,
                   capacity_weight_g=35_000,
                   shift_start=28_800, shift_end=57_600)
 
-    vehicle = contract._vehicle(record, "HUB")
+    # `type` now carries weight: §4.1 gives capacity per type, so the model is
+    # what the reader consults and the row is what cross-checks it.
+    vehicle = contract._vehicle(record, "HUB", contract.load_model())
 
     assert vehicle.id == "BIKE-1"
     assert vehicle.capacities[contract.COUNT] == 35
@@ -458,3 +460,73 @@ def test_a_package_with_a_window_changes_the_window_and_nothing_else():
     changed = {f for f in vars(before) if getattr(before, f) != getattr(after, f)}
     assert changed == contract.OVERLAID_STOP
     assert after.service_fixed == before.service_fixed
+
+
+# --------------------------------------------------------------------------
+# Capacity belongs to the vehicle type (§4.1), so the model owns it
+# --------------------------------------------------------------------------
+# The model's `fleet` section carried 35 envelopes / 35,000 g and so did every
+# §9.1 vehicle record, and the mapping read the record. The model's numbers
+# were therefore decoration that looked authoritative -- the same silent no-op
+# the last refactor removed from the order side, still present on the fleet
+# side and harder to see because the two agreed.
+#
+# §4.1 settles it: "Motorbike | 35 envelopes", "Van | 500 kg". Capacity is a
+# fact about the *type*. The record repeats it per row because the published
+# contract has a column for it, which makes the record a cross-check rather
+# than a second source.
+
+
+def test_the_model_decides_what_a_motorbike_carries():
+    """Change the model, and the fleet changes. If this passes while the
+    mapping reads the record, it is measuring nothing."""
+    model = contract.load_model()
+    model["fleet"] = [dict(model["fleet"][0],
+                           capacities={"envelopes": 20, "grams": 20_000})]
+    routable, _ = contract.triage([package("P1")], today=TODAY)
+    problem = contract.to_problem(
+        HUB, routable,
+        [van(capacity_envelopes=20, capacity_weight_g=20_000)],
+        matrix_for(2), today=TODAY, model=model)
+
+    assert problem.vehicles[0].capacities == {"envelopes": 20, "grams": 20_000}
+
+
+def test_a_record_that_contradicts_the_model_is_refused_naming_both():
+    """The reason the record is not simply ignored.
+
+    Silently preferring either one turns a data error into a plan: a bike
+    loaded to 35 when its box holds 20, or vice versa. §4.1 gives one answer
+    per type, so a row that disagrees is wrong somewhere and a planner needs
+    to know where rather than have it chosen for them.
+    """
+    with pytest.raises(ValueError) as refusal:
+        build([package("P1")], vehicles=[van(capacity_envelopes=20)])
+
+    message = str(refusal.value)
+    assert "M1" in message or "V1" in message
+    assert "20" in message and "35" in message
+
+
+def test_a_record_that_agrees_with_the_model_is_accepted():
+    problem, _ = build([package("P1")])
+
+    assert problem.vehicles[0].capacities == {"envelopes": 35, "grams": 35_000}
+
+
+def test_a_vehicle_type_the_model_does_not_describe_is_refused():
+    """§4.1 has motorbikes doing last mile exclusively, so a van here is a
+    mistake worth naming rather than a capacity lookup that returns nothing."""
+    with pytest.raises(ValueError, match="van"):
+        build([package("P1")], vehicles=[van(type="van")])
+
+
+def test_route_duration_comes_from_the_vehicle_s_own_shift():
+    """Unlike capacity, a shift is per vehicle -- §9.1 gives every row its own
+    start and end -- so §7.4's hard route duration is the record's to decide
+    and the model says nothing about it."""
+    problem, _ = build([package("P1")],
+                       vehicles=[van(shift_start=28800, shift_end=43200)])
+
+    assert problem.vehicles[0].max_duration == 43200 - 28800
+    assert "max_duration" not in contract.load_model()["fleet"][0]

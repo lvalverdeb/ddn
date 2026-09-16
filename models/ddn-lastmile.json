@@ -40,8 +40,7 @@
       "capacities": {
         "envelopes": 35,
         "grams": 35000
-      },
-      "max_duration": 28800
+      }
     }
   ],
   "run": {

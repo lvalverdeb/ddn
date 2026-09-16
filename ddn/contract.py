@@ -86,6 +86,11 @@ DEFAULT_WEIGHT_G = 200          # §4.1
 DEFAULT_SERVICE_MIN = 10        # §7.4
 COUNT, WEIGHT = "envelopes", "grams"
 
+# §4.1 names the types; a delivery model names the classes. One mapping between
+# them, here, because §9.1 publishes `type` and the model is written in the
+# platform's vocabulary.
+CLASS_OF = {"motorbike": "MOTO", "van": "VAN"}
+
 
 @dataclass(frozen=True)
 class Band:
@@ -232,17 +237,56 @@ def _overlay(order, package: dict[str, Any], *, today: date,
     return order
 
 
-def _vehicle(record: dict[str, Any], facility_id: str) -> Vehicle:
+def _capacities(model: dict[str, Any], record: dict[str, Any]) -> dict[str, int]:
+    """What this vehicle carries: from the model, cross-checked against the row.
+
+    §4.1 gives capacity per *type* -- "Motorbike | 35 envelopes", "Van | 500 kg"
+    -- so the model owns it and `modelcheck` gates it. §9.1 repeats it per row
+    because the published contract has a column for it, which makes the record
+    a cross-check rather than a second source.
+
+    Neither is silently preferred. Taking the model's would load a bike to 35
+    when the row says its box holds 20; taking the row's would put the model's
+    reviewed number beyond reach. One of them is wrong, and which one is not
+    this function's to guess.
+
+    Raises:
+        ValueError: if the model describes no such class, or if the record
+            contradicts it -- naming the vehicle and both numbers.
+    """
+    wanted = CLASS_OF.get(record["type"])
+    declared = {spec["class"]: spec["capacities"] for spec in model["fleet"]}
+    if wanted not in declared:
+        raise ValueError(
+            f"vehicle {record['vehicle_id']} is a {record['type']}, which "
+            f"{model['name']} does not describe; it declares "
+            f"{', '.join(sorted(declared))}. §4.1 has motorbikes doing last "
+            "mile exclusively, so a van here is a mistake rather than a gap")
+
+    capacities = dict(declared[wanted])
+    for dimension, field in ((COUNT, "capacity_envelopes"),
+                             (WEIGHT, "capacity_weight_g")):
+        stated = record.get(field)
+        if stated is not None and int(stated) != capacities.get(dimension):
+            raise ValueError(
+                f"vehicle {record['vehicle_id']} states {field} "
+                f"{int(stated)} and {model['name']} says "
+                f"{capacities.get(dimension)}; §4.1 gives one capacity per "
+                "type, so one of the two is wrong")
+    return capacities
+
+
+def _vehicle(record: dict[str, Any], facility_id: str,
+             model: dict[str, Any]) -> Vehicle:
     shift = TimeWindow(start=int(record["shift_start"]),
                        end=int(record["shift_end"]))
     return Vehicle(
         id=record["vehicle_id"],
-        capacities={COUNT: int(record["capacity_envelopes"]),
-                    WEIGHT: int(record["capacity_weight_g"])},
+        capacities=_capacities(model, record),
         shift=shift,
         # §7.4: "The solver must enforce route duration as a hard constraint."
-        # A shift window alone bounds when a route may run, not how long it
-        # may take; `INV-6` makes this one hard.
+        # Per vehicle, not per model: §9.1 gives every row its own shift, so
+        # the model cannot know this one and no longer states it.
         max_duration=shift.end - shift.start,
         # §7.1: earmarked pickup vehicles are not assigned delivery stops.
         skills={record["role"]},
@@ -309,6 +353,6 @@ def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
         id=f"ddn-{facility['id']}-{today.isoformat()}",
         orders=tuple(_overlay(order, package, today=today, bands=bands)
                      for order, package in zip(built.orders, packages, strict=True)),
-        vehicles=tuple(_vehicle(v, facility["id"]) for v in vehicles),
+        vehicles=tuple(_vehicle(v, facility["id"], model) for v in vehicles),
         locks=locks,
     )
