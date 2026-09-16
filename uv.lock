@@ -138,7 +138,7 @@ dev = [
 requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.4" },
-    { name = "vrp-platform", extras = ["pyvrp"], git = "https://github.com/lvalverdeb/osrm-microservice?rev=v0.3.1" },
+    { name = "vrp-platform", extras = ["pyvrp"], git = "https://github.com/lvalverdeb/osrm-microservice?rev=v0.3.2" },
 ]
 provides-extras = ["dev"]
 
@@ -690,8 +690,8 @@ wheels = [
 
 [[package]]
 name = "vrp-platform"
-version = "0.3.1"
-source = { git = "https://github.com/lvalverdeb/osrm-microservice?rev=v0.3.1#fee301d5c4b9732adec9400864c551e9c6173ec5" }
+version = "0.3.2"
+source = { git = "https://github.com/lvalverdeb/osrm-microservice?rev=v0.3.2#014627bcb445b0bed391b1c63b18854335b92c98" }
 dependencies = [
     { name = "httpx" },
     { name = "starlette" },
