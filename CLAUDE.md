@@ -38,28 +38,41 @@ file; cite them the same way in docstrings, comments and commit messages.
   duration must stay a hard constraint. Relaxing it changes the problem, not the
   solver.
 
-## Working assumptions: unsupplied and named
+## Working assumptions
 
-Where the spec says `[TBD]`, **the value is an open input, not a default to
-invent.** Do not fill one in to make something run, and do not create a file of
-placeholder values: name what is missing and stop there. These are figures the
-problem definition has not supplied, and none of them can be settled in the
-solver:
+Where the spec says `[TBD]`, the value is an open input. Two rules follow, and
+they are not the same rule:
 
-- **§8's cost ratio** — what a delivered envelope is worth against a kilometre
-  ridden. The blocking one.
-- **§3.1's coordinates** — the real customer geography. Depot placement moves the
-  delivery answer more than any solver setting does.
-- **§7.1's van mailbag capacity**, **§7.4's** pickup and loading service times,
-  and **§7.2's** stop-count ceiling.
-- **§7.4** has no service time for a return stop; **§9.2** has no reason code for
-  an address with no road path. Both are in `capacity-finding.md` §4 with a
-  suggested fix.
-- **Open Questions 1, 7, 9 and 13** — mailbag capacity per van, the pickup taper,
-  total van fleet, and whether the return run is van-only.
+**Placeholders live in one place, labelled.** `docs/assumptions.md` carries every
+stand-in value with the gap it fills and where it came from — *document* (stated
+in §10, which the spec itself calls illustrative), *derived* (computed from
+figures the spec does supply), or *invented* (chosen with no source, sensitivity
+noted). `ddn/assumptions.py` mirrors that table and is what code reads;
+`tests/test_assumptions.py` fails if the two drift apart. **Never hard-code a
+`[TBD]` value in a module** — `returns.py:52`'s `SERVICE_SECONDS = 600` is the
+example of what that costs: an invented service time, invisible for two days,
+now documented as `RETURN_STOP_MIN` but not yet wired up.
 
-Closing any of these by tuning the solver is solving the wrong problem. A run
-made with stand-in values is the subject of the warning below.
+**Three gaps get no placeholder at all**, because filling them would do damage a
+label cannot undo:
+
+- **§8's objective weights** — what a delivered envelope is worth against a
+  kilometre ridden. Not tagged `[TBD]` anywhere, and the blocking unknown. A run
+  made with a stand-in ratio is what produced the figure the next section exists
+  to disown.
+- **§11's eleven metric targets.** A target is a commitment, not an input;
+  inventing "SLA compliance ≥ 98%" fabricates a customer promise.
+- **§9.2's reason code for an unreachable address.** Needs a spec change, not a
+  value. Currently invented at `lastmile.py:45`.
+
+Still open and still on operations, none of them settleable in the solver:
+**§3.1's real coordinates** (the placeholders are synthetic Costa Rican towns —
+depot placement moves the delivery answer more than any solver setting does),
+**§7.4's** service times, **§7.1's** van mailbag capacity, and **Open Questions
+1, 7, 9 and 13**. `capacity-finding.md` §4 carries two more with suggested fixes.
+
+Naming a value as a placeholder does not make a number measured on it a
+measurement. The next section is the standing case.
 
 ## Read before quoting a number
 
@@ -79,7 +92,7 @@ where the target says, and when you move a stage, move one boundary at a time.
 
 | target | today | § | what it owns | is the *stage* a solver problem? |
 |---|---|---|---|---|
-| `model/` | `ddn/contract.py` | 9.1, 5.2.6 | entities and lifecycle | — |
+| `model/` | `ddn/model/` | 9.1, 5.2.6 | entities and lifecycle | — |
 | `solver_adapter/` | `ddn/contract.py` | 9.1, 7.1 | operation records → `Problem`; priority as class plus score; constraint post-checks | — (a mapping) |
 | `allocation/` | — | 4.2 | daily fleet split across facilities and van duty, upstream of the solver | no |
 | `pickups/` | `ddn/pickups.py` | 5.1 | dynamic mailbag pickup routing, van-only; admission is the half that exists | no |
@@ -90,7 +103,8 @@ where the target says, and when you move a stage, move one boundary at a time.
 | `simulation/` | `ddn/run_day.py` | 5.6, 10, 11 | day simulator and metrics | — |
 
 `allocation/` and `processing/` have no code yet. `solver_adapter/`'s post-checks
-do not exist yet either — see §7.1 above.
+do not exist yet either — see §7.1 above. `ddn/model/` is the first target package
+built; `ddn/contract.py` still holds the mapping and is untouched by it.
 
 That last column is about the *stage*, not the module: **no module here calls a
 solver.** They build a `Problem` and the caller solves it. Two of the four
@@ -107,7 +121,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 82 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 412 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 
@@ -130,9 +144,10 @@ DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
   change, wait for approval. Note that `contract.py` is imported by most of the
   others, so this catches more changes than it looks like.
 - **Every module ships with tests.** The worked example in §10 is the integration
-  fixture; `tests/fixtures/peak_day.*` does not exist yet — when it is created,
-  keep it in sync with §10. Tests are currently four flat files under `tests/`
-  and must keep running without a gateway or routing data.
+  fixture: `tests/fixtures/peak_day.py` builds it deterministically from §10's
+  own figures — keep them in sync, and derive fixture values from the document
+  rather than from what the code emits. Tests must keep running without a
+  gateway or routing data.
 - **Prefer small, reviewable commits.** Do not refactor across modules in the
   same change as a feature.
 - **When the spec is ambiguous, quote the section, state the interpretation you
