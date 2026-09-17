@@ -145,9 +145,14 @@ Independent of both unknowns:
   built, and every routed plan passes a verifier that shares no code with the
   solver.
 - **The stages are not uniform**, which matters for whoever integrates them.
-  §5.1 is a dynamic VRP, §5.3 is an assignment problem needing no solver at
-  all, §5.4 and §5.5 are static CVRPs. Treating §5.3 as routing would invent a
-  route where there is a single leg.
+  §5.4 and §5.5 are static CVRPs and use the solver. §5.3 is an assignment
+  problem and uses none — treating it as routing would invent a route where
+  there is a single leg. §5.1 is a dynamic VRP *as a problem type*, but the
+  half built so far is admission — which van may take a bag — and that half
+  needs no solver either; insertion and the re-optimisation cadence do.
+
+  Stated as code rather than as a plan: of the four operational modules that
+  exist today, **two import no part of the routing library at all**.
 - **Travel matrices are not a constraint.** A hub-scale matrix — 1,601 stops,
   2.5M cells, 289 tiles — builds in **29.4 s**; a whole night across seven
   facilities is about **50 s**.
