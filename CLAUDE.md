@@ -100,7 +100,7 @@ assignment problem and routing it would invent a route where there is a single
 leg. Do not add a solver call to make the stages look uniform.
 
 **Stack:** Python 3.13; `vrp-platform[pyvrp]` pinned by git tag at
-`osrm-microservice@v0.3.3` (the solver is PyVRP, reached through the platform's
+`osrm-microservice@v0.4.0` (the solver is PyVRP, reached through the platform's
 adapter); pytest; ruff 0.16.4.
 
 ## Commands
