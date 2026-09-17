@@ -19,15 +19,58 @@ import time
 from datetime import date
 
 import httpx
-
-REPO = "/Users/lvalverdeb/TeamDev/osrm-microservice"
-SP = "/private/tmp/claude-501/-Users-lvalverdeb-TeamDev-osrm-microservice-examples/7d6c99b3-0c46-40fd-80b2-0e5510f5ffbf/scratchpad"
-sys.path.insert(0, REPO)
 from vrp.matrix import PairCache, build_large_matrix
 from vrp.solve.pyvrp_adapter import solve
 from vrp.verify import verify
 
 from ddn import contract, lastmile
+
+
+def _need(var: str, what: str) -> str:
+    """The value of environment variable `var`, or exit saying what it is for.
+
+    Args:
+        var: Name of the environment variable to read.
+        what: What the caller should point it at, quoted back in the error.
+
+    Returns:
+        The variable's value.
+    """
+    value = os.environ.get(var)
+    if not value:
+        sys.exit(f"{var} is unset -- {what}")
+    return value
+
+
+# This run needs two things that live in neither repository: the platform's
+# *compiled* gateway plus its corpus, and a built OSRM graph. Both are
+# machine-local and neither belongs in git, so they are named rather than
+# guessed. `vrp` itself is imported above as the installed distribution --
+# ddn depends on vrp-platform, so reaching into a checkout with sys.path would
+# contradict the dependency the package declares.
+REPO = _need(
+    "DDN_PLATFORM_REPO",
+    "path to an osrm-microservice checkout with a built gateway and corpus",
+)
+OSRM_GRAPH = _need(
+    "DDN_OSRM_GRAPH",
+    "base path of a built OSRM graph, e.g. /somewhere/costa-rica-latest.osrm",
+)
+
+GATEWAY = f"{REPO}/gateway/target/debug/osrm-api-gateway"
+CORPUS = f"{REPO}/data/deliveries_cr.json"
+
+# osrm-routed and the gateway are started with their output discarded, so a
+# missing input is otherwise a silent two-minute wait on a port that never
+# opens. `.cell_metrics` is the last file osrm-customize writes, which is what
+# "the graph is built" means -- the same test the platform's rc.d script makes.
+for _path, _hint in (
+    (GATEWAY, "cargo build --manifest-path gateway/Cargo.toml"),
+    (CORPUS, "make corpus"),
+    (f"{OSRM_GRAPH}.cell_metrics", "make process-osrm"),
+):
+    if not os.path.exists(_path):
+        sys.exit(f"missing {_path} -- build it with: {_hint}")
 
 TODAY = date(2026, 9, 16)
 POOL, BIKES = 4550, 120          # §10: positioned for delivery; shared fleet
@@ -47,9 +90,9 @@ def wait(u, n=240):
 
 op, ap = free(), free()
 osrm = subprocess.Popen(["osrm-routed","--algorithm","mld","--port",str(op),
-    "--max-table-size","1000",f"{SP}/osrm/costa-rica-latest.osrm"],
+    "--max-table-size","1000",OSRM_GRAPH],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-gw = subprocess.Popen([f"{REPO}/gateway/target/debug/osrm-api-gateway"],
+gw = subprocess.Popen([GATEWAY],
     env={**os.environ,"OSRM_BASE_URL":f"http://127.0.0.1:{op}","HOST":"127.0.0.1",
          "PORT":str(ap),"VRP_MAX_STOPS":"5000",
          **{f"RATE_LIMIT_{k}":"1000000/minute" for k in
@@ -61,7 +104,7 @@ try:
     assert wait(f"http://127.0.0.1:{op}/nearest/v1/driving/-84.08,9.93"), "osrm down"
     assert wait(f"{base}/health"), "gateway down"
 
-    with open(f"{REPO}/data/deliveries_cr.json") as handle:
+    with open(CORPUS) as handle:
         corpus = json.load(handle)
     facilities = [{"id": ("HUB" if i == 0 else f"D{i}"),
                    "lat": d["latitude"], "lon": d["longitude"],

@@ -92,10 +92,20 @@ not supplied, and they cannot be settled in the solver:
 Anyone picking this up and trying to close these by tuning the solver will be
 solving the wrong problem.
 
-## Rough edges
+## The day-one run
 
-`ddn/run_day.py` is the day-one runner — it spawns its own `osrm-routed` and
-gateway so travel times are real road distances. **It will not run as-is on
-another machine:** it hardcodes an absolute path to the platform checkout and a
-scratchpad directory, and it reaches the platform through `sys.path` rather than
-the installed package. The five modules and the tests have no such problem.
+`ddn/run_day.py` runs §5.4 across every facility on real geography. It spawns its
+own `osrm-routed` and the platform's compiled gateway, so travel times are road
+distances rather than a synthetic grid. It needs two things that live in neither
+repository and in no git history — a built gateway with its corpus, and a built
+OSRM graph — so it asks for them by name:
+
+```sh
+DDN_PLATFORM_REPO=/path/to/osrm-microservice \
+DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
+    uv run python -m ddn.run_day
+```
+
+Unset or missing inputs are reported immediately, with the command that builds
+each. Nothing else here needs either variable: the modules and the tests run
+against the installed `vrp-platform` and no routing data at all.
