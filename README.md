@@ -19,7 +19,7 @@ finding the number without that framing leads exactly the wrong way.
 platform by git tag:
 
 ```toml
-"vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.3.3"
+"vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.4.0"
 ```
 
 Without access to `osrm-microservice` you get a git authentication failure from
