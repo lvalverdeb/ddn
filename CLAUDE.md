@@ -1,0 +1,155 @@
+# Document Delivery VRP Integration
+
+## What this repo is
+
+Integration between our document delivery operation and an existing VRP solver:
+a consolidation hub and six secondary depots, a shared fleet of motorbikes and
+vans, 2,500–5,000 document envelopes a day at ten minutes of service each, and a
+daily decision about which packages cannot be served.
+
+The operational problem is fully defined in
+[`docs/vrp-problem-definition.md`](docs/vrp-problem-definition.md) (Draft v0.10).
+**Read it before any substantive task.** Section numbers below refer to that
+file; cite them the same way in docstrings, comments and commit messages.
+
+## Source of truth
+
+- **§2 Glossary** — use these terms in code, comments and tests. "Envelope" is
+  the delivery unit; "mailbag" is the pickup unit. §2 glosses the entity as
+  "Envelope (package)", so the two name the same concept in prose — but **not in
+  identifiers**: `package_id` is the customer-supplied key for an envelope and
+  nothing else. Do not rename it to `envelope_id`; §9.1 fixes the name.
+- **§7.1 Hard constraints** — invariants. Every solver output must be validated
+  against all of them before it is accepted. A violation is a failing test, never
+  a warning. (No post-check module exists yet; `ddn/contract.py` asserts some of
+  them at build time. Writing the check is work to do, not code to go find.)
+- **§9 Data contract** — the only schema definition. Do not add, rename or drop
+  fields without updating the spec first and saying so.
+- **§5.2.6 Envelope lifecycle** — the state machine, from `Requested` through
+  `Ready` to `{Delivered | Rejected | Returned | Postponed}`. Transitions not
+  listed there are illegal. Only **Ready** envelopes are solver inputs for
+  delivery routing.
+- **§8 Objectives** — priority is a numeric score with tier offsets (§8.1).
+  **Never apply an SLA weighting on top of it:** §6.1 makes priority the solver's
+  sole ranking signal because it already incorporates SLA proximity, and SLA date
+  = today is a hard constraint, not a weight.
+- **§7.4's implication** — 35 envelopes × 10 minutes is 350 minutes against an
+  8-hour shift, so **shift duration, not envelope count, binds**, and route
+  duration must stay a hard constraint. Relaxing it changes the problem, not the
+  solver.
+
+## Working assumptions: unsupplied and named
+
+Where the spec says `[TBD]`, **the value is an open input, not a default to
+invent.** Do not fill one in to make something run, and do not create a file of
+placeholder values: name what is missing and stop there. These are figures the
+problem definition has not supplied, and none of them can be settled in the
+solver:
+
+- **§8's cost ratio** — what a delivered envelope is worth against a kilometre
+  ridden. The blocking one.
+- **§3.1's coordinates** — the real customer geography. Depot placement moves the
+  delivery answer more than any solver setting does.
+- **§7.1's van mailbag capacity**, **§7.4's** pickup and loading service times,
+  and **§7.2's** stop-count ceiling.
+- **§7.4** has no service time for a return stop; **§9.2** has no reason code for
+  an address with no road path. Both are in `capacity-finding.md` §4 with a
+  suggested fix.
+- **Open Questions 1, 7, 9 and 13** — mailbag capacity per van, the pickup taper,
+  total van fleet, and whether the return run is van-only.
+
+Closing any of these by tuning the solver is solving the wrong problem. A run
+made with stand-in values is the subject of the warning below.
+
+## Read before quoting a number
+
+**[`docs/capacity-finding.md`](docs/capacity-finding.md) first.** The headline
+figure in this repository — 12.8 envelopes per deployed bike, against §7.4's
+expected 20–30 — **is not a capacity measurement and must not be used as one.**
+Nothing binds in that run; the solver declines on prices rather than time.
+Arriving at the modules and finding the number without that framing leads exactly
+the wrong way.
+
+## Architecture (§5)
+
+One module per stage, plus shared model and solver adapter. **The package layout
+below is a target; the repository is currently flat.** Both columns are listed so
+that ownership is unambiguous while the migration is incomplete — put new code
+where the target says, and when you move a stage, move one boundary at a time.
+
+| target | today | § | what it owns | is the *stage* a solver problem? |
+|---|---|---|---|---|
+| `model/` | `ddn/contract.py` | 9.1, 5.2.6 | entities and lifecycle | — |
+| `solver_adapter/` | `ddn/contract.py` | 9.1, 7.1 | operation records → `Problem`; priority as class plus score; constraint post-checks | — (a mapping) |
+| `allocation/` | — | 4.2 | daily fleet split across facilities and van duty, upstream of the solver | no |
+| `pickups/` | `ddn/pickups.py` | 5.1 | dynamic mailbag pickup routing, van-only; admission is the half that exists | no |
+| `processing/` | — | 5.2 | expected-ready-time computation **only** — not reconciliation or assembly themselves | no |
+| `linehaul/` | `ddn/linehaul.py` | 5.3 | van-to-depot assignment against morning release times | no |
+| `lastmile/` | `ddn/lastmile.py` | 5.4 | per-facility delivery routing; static batch, the one-day lag's gift | yes |
+| `returns/` | `ddn/returns.py` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
+| `simulation/` | `ddn/run_day.py` | 5.6, 10, 11 | day simulator and metrics | — |
+
+`allocation/` and `processing/` have no code yet. `solver_adapter/`'s post-checks
+do not exist yet either — see §7.1 above.
+
+That last column is about the *stage*, not the module: **no module here calls a
+solver.** They build a `Problem` and the caller solves it. Two of the four
+operational modules import no part of the routing library at all — `linehaul`
+imports nothing from `vrp`, `pickups` one name from `ddn.contract`. §5.3 is an
+assignment problem and routing it would invent a route where there is a single
+leg. Do not add a solver call to make the stages look uniform.
+
+**Stack:** Python 3.13; `vrp-platform[pyvrp]` pinned by git tag at
+`osrm-microservice@v0.3.3` (the solver is PyVRP, reached through the platform's
+adapter); pytest; ruff 0.16.4.
+
+## Commands
+
+```sh
+uv sync --extra dev
+uv run pytest tests/ -q      # 82 tests; no gateway, no routing data needed
+uv run ruff check .
+```
+
+`uv sync` needs read access to **two** private repositories: this one and
+`lvalverdeb/osrm-microservice`. Without it you get a git authentication failure
+that does not name the cause.
+
+`ddn/run_day.py` (§5.4 across every facility, on real geography) is the only
+thing here that needs routing data, and it asks for it by name:
+
+```sh
+DDN_PLATFORM_REPO=/path/to/osrm-microservice \
+DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
+    uv run python -m ddn.run_day
+```
+
+## How to work here
+
+- **Plan before code on anything touching more than one module**: propose the
+  change, wait for approval. Note that `contract.py` is imported by most of the
+  others, so this catches more changes than it looks like.
+- **Every module ships with tests.** The worked example in §10 is the integration
+  fixture; `tests/fixtures/peak_day.*` does not exist yet — when it is created,
+  keep it in sync with §10. Tests are currently four flat files under `tests/`
+  and must keep running without a gateway or routing data.
+- **Prefer small, reviewable commits.** Do not refactor across modules in the
+  same change as a feature.
+- **When the spec is ambiguous, quote the section, state the interpretation you
+  are taking, and continue.** Do not silently choose.
+- **Never invent solver capabilities.** If a required feature is not confirmed in
+  [`docs/solver-capabilities.md`](docs/solver-capabilities.md), implement the
+  documented fallback from the spec and flag it. Answered there (Open Question
+  5): dynamic stop insertion **yes**, native due-date handling **yes**, locked
+  assignments **yes**, ready-time constraints on stops **yes** —
+  **flexible vehicle-to-depot assignment no**, which settles §4.2 as a two-stage
+  problem with allocation upstream of the solver.
+- **DDN is downstream of the platform and the gateway; neither knows it exists.**
+  Nothing here may require a change in `vrp-platform` or in the OSRM gateway.
+  What lives here is what the platform deliberately does not model: the §6
+  outcome lifecycle across a day boundary, the §9.1 mapping, the §5.2 cut-off
+  partition, the §4.2 daily fleet distribution.
+- **Delivery models live in `models/`, not upstream**, because they describe
+  *this* operation. `contract.load_model` reads them **by path** — this
+  repository ships the files and knows where they are. `VRP_MODEL_PATH` is how
+  the platform's own tooling finds models it did not ship; a different problem.
