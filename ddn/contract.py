@@ -244,8 +244,8 @@ def as_record(package: dict[str, Any]) -> dict[str, Any]:
                                                 DEFAULT_SERVICE_MIN))}
 
 
-def _overlay(order, package: dict[str, Any], *, today: date,
-             bands: Sequence[Band]):
+def _overlay(order, package: dict[str, Any], facility: dict[str, Any], *,
+             today: date, bands: Sequence[Band]):
     """What a model file cannot say about an order.
 
     The band, the score and the SLA clock are decisions about *this* envelope
@@ -256,11 +256,17 @@ def _overlay(order, package: dict[str, Any], *, today: date,
     tier, prize, source = _tier_and_prize(package, today=today, bands=bands)
     order = replace(order, priority_tier=tier, prize=prize,
                     priority_source=source, required_skills={"delivery"})
+    # §7.3: "Deliveries are any time during the shift." The shift is
+    # per-facility data and a model cannot know it, so the model's declared
+    # `windows` -- which the platform requires a model to carry -- is
+    # superseded here. Leaving it in force cost a 06:00-14:00 facility two
+    # hours at each end against a model window of 08:00-16:00.
     start, end = package.get("time_window_start"), package.get("time_window_end")
-    if start is not None and end is not None:
-        order = replace(order, delivery=replace(
-            order.delivery,
-            time_windows=(TimeWindow(start=int(start), end=int(end)),)))
+    if start is None or end is None:
+        start, end = facility["shift_start"], facility["shift_end"]
+    order = replace(order, delivery=replace(
+        order.delivery,
+        time_windows=(TimeWindow(start=int(start), end=int(end)),)))
     return order
 
 
@@ -392,7 +398,7 @@ def to_problem(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
     return replace(
         built,
         id=f"ddn-{facility['id']}-{today.isoformat()}",
-        orders=tuple(_overlay(order, package, today=today, bands=bands)
+        orders=tuple(_overlay(order, package, facility, today=today, bands=bands)
                      for order, package in zip(built.orders, packages, strict=True)),
         vehicles=tuple(_vehicle(v, facility["id"], model) for v in vehicles),
         locks=locks,

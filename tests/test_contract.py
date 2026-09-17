@@ -438,10 +438,19 @@ def test_the_declared_overlay_is_not_wider_than_the_work():
                                  "required_skills"}
 
 
-def test_a_package_with_no_window_leaves_the_stop_entirely_to_the_model():
-    """The narrow half of the overlay. `delivery` carries the service time as
-    well as the window, so touching the whole field would let this mapping
-    re-decide what the model owns."""
+def test_a_package_with_no_window_still_leaves_the_service_time_to_the_model():
+    """The narrow half of the overlay.
+
+    `delivery` carries the service time as well as the window, and they are
+    owned by different things: §7.4's ten minutes is an operation fact the
+    model states, §7.3's "any time during the shift" is per-facility data it
+    cannot know. Touching the whole field would let this mapping re-decide the
+    first while fixing the second.
+
+    HUB's shift equals the model's declared window, so this fixture cannot tell
+    the two apart on the window alone -- which is why it asserts on
+    `service_fixed` and the shifted case below carries the window.
+    """
     from vrp import servicemodel
 
     model = contract.load_model()
@@ -452,7 +461,8 @@ def test_a_package_with_no_window_leaves_the_stop_entirely_to_the_model():
     after = contract.to_problem(HUB, routable, [van()], matrix_for(2),
                                 today=TODAY, model=model).orders[0]
 
-    assert after.delivery == before.delivery
+    assert after.delivery.service_fixed == before.delivery.service_fixed
+    assert after.delivery.location_id == before.delivery.location_id
 
 
 def test_a_package_with_a_window_changes_the_window_and_nothing_else():
@@ -592,3 +602,27 @@ def test_the_lowest_priority_envelope_outweighs_a_long_detour():
     problem, _ = build([package("L", priority=40)])
 
     assert problem.orders[0].prize > MEDIAN_MARGINAL_COST
+
+
+def test_the_delivery_window_follows_the_facility_shift():
+    """§7.3: "Deliveries are any time during the shift."
+
+    The shift is per-facility data (§9.1 gives every vehicle its own, and §3.1
+    every depot its own release), so a model cannot know it. Moving the
+    structural facts onto `servicemodel.build` let the model's declared
+    `windows` win instead, and a facility working 06:00-14:00 against a model
+    window of 08:00-16:00 lost two hours at each end — six usable hours of an
+    eight-hour shift, silently, in every route.
+
+    Found by measuring where a route's time went: spans clustered at 6.2 h and
+    the arithmetic said 8 h, which is also why capacity looked half what §7.4
+    expects.
+    """
+    early = dict(HUB, shift_start=21600, shift_end=50400)     # 06:00-14:00
+    routable, _ = contract.triage([package("P1")], today=TODAY)
+    problem = contract.to_problem(early, routable,
+                                  [van(shift_start=21600, shift_end=50400)],
+                                  matrix_for(2), today=TODAY)
+    window, = problem.orders[0].delivery.time_windows
+
+    assert (window.start, window.end) == (21600, 50400)
