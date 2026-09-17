@@ -153,3 +153,40 @@ DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
   *this* operation. `contract.load_model` reads them **by path** — this
   repository ships the files and knows where they are. `VRP_MODEL_PATH` is how
   the platform's own tooling finds models it did not ship; a different problem.
+
+## Disclosure
+
+This repository is private. `osrm-microservice` is **public**, and findings from
+this work get written up there — so a private repo is not sufficient care on its
+own. That is not hypothetical: a sentence of the problem definition reached the
+public repo verbatim and shipped in two tags before anyone checked visibility.
+
+**What is established.** Luis confirmed on **17 September 2026** that the
+customer has explicitly approved publication of work derived from the problem
+definition. Consent is not an open question and does not need re-litigating.
+
+**What is not established, and must not be invented.** Who granted that
+approval, when, and where it is written down. Nobody has supplied those, so
+nothing in this repository may cite them. If you need the detail, ask Luis; do
+not reconstruct it from this paragraph. The line above records a confirmation
+from him, which is weaker than the approval itself and should not be quoted as
+if it were the approval.
+
+> **To complete:** replace this block with the approver, the date, and where the
+> approval is recorded, once Luis supplies them.
+
+**The rule, which is narrower than the approval permits.** Before anything
+derived from this work reaches the public repo, remove what fingerprints the
+operation — facility counts, fleet counts, stop counts, the industry, and any
+sentence quoted from the problem definition. Keep the technical finding: none of
+them need the specifics to be true, and removing the provenance has so far
+improved the prose rather than weakened it.
+
+**Scrubbing one document does not scrub a term while a sibling still carries
+it.** Doc 40 had the industry removed while doc 41 kept it in a sentence about
+the same operation, and two "a consuming repository" mentions a month apart were
+enough to rejoin them. Check the objective, not the diff: grep the public tree
+for the term after editing, not just the lines you touched.
+
+**Scrub forward; do not rewrite public history.** A force-push announces the
+text far more loudly than leaving it does.
