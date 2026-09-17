@@ -60,8 +60,7 @@ routing calls.
 Delivery models live in `models/` rather than upstream, because they describe
 *this* operation. `contract.load_model` reads them **by path**, since this
 repository ships the files and knows where they are; `VRP_MODEL_PATH` is how the
-platform's own tooling finds models it did not ship. (`ddn/__init__.py` still
-says otherwise — it is stale on this point.)
+platform's own tooling finds models it did not ship.
 
 ## Where the answers are
 

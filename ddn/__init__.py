@@ -14,5 +14,7 @@ own data contract to a `Problem` (§9.1), the cut-off partition (§5.2) and the
 daily fleet distribution (§4.2).
 
 Delivery models live here too, not upstream: they describe *this* operation, and
-`vrp.servicemodel` finds them through `VRP_MODEL_PATH`.
+are read by path from `models/` -- this repository ships the files and knows
+where they are. `VRP_MODEL_PATH` is how the platform's own tooling finds models
+it did not ship, which is a different problem from this one.
 """
