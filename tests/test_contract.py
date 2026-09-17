@@ -64,7 +64,7 @@ def contract_fields(heading: str, until: str) -> list[str]:
     into a fixture stops tracking the contract the moment the contract moves.
     """
     doc = (Path(__file__).resolve().parents[1]
-           / "docs" / "vrp_problem_definition.md").read_text(encoding="utf-8")
+           / "docs" / "vrp-problem-definition.md").read_text(encoding="utf-8")
     block = doc.split(heading, 1)[1].split(until, 1)[0]
     names = [line.strip("|").split("|")[0].strip()
              for line in block.splitlines() if line.startswith("|")]
@@ -176,7 +176,7 @@ def test_a_reason_is_one_of_the_codes_the_output_contract_names():
     twice the same way.
     """
     doc = (Path(__file__).resolve().parents[1]
-           / "docs" / "vrp_problem_definition.md").read_text(encoding="utf-8")
+           / "docs" / "vrp-problem-definition.md").read_text(encoding="utf-8")
     line = next(l for l in doc.splitlines()
                 if l.startswith("- **Unassigned envelopes:**"))
     published = {part.strip()

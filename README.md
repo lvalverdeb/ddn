@@ -3,7 +3,7 @@
 A consolidation hub and six secondary depots, a shared fleet of motorbikes and
 vans, 2,500–5,000 document envelopes a day at ten minutes of service each, and a
 daily decision about which packages cannot be served. The operation is specified
-in [`docs/vrp_problem_definition.md`](docs/vrp_problem_definition.md) (v0.10);
+in [`docs/vrp-problem-definition.md`](docs/vrp-problem-definition.md) (v0.10);
 this repository is the attempt to express it.
 
 **Read [`docs/capacity-finding.md`](docs/capacity-finding.md) before drawing any

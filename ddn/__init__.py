@@ -1,6 +1,6 @@
 """The Document Delivery Network, planned on the `vrp` platform.
 
-The operation is specified in `docs/vrp_problem_definition.md`: a consolidation
+The operation is specified in `docs/vrp-problem-definition.md`: a consolidation
 hub and six secondary depots, a shared fleet of motorbikes and vans, 2,500-5,000
 document envelopes a day at ten minutes of service each, and a daily decision
 about which packages cannot be served.
