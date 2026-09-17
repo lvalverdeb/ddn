@@ -1,0 +1,102 @@
+# DDN — the Document Delivery Network, planned on the `vrp` platform
+
+A consolidation hub and six secondary depots, a shared fleet of motorbikes and
+vans, 2,500–5,000 document envelopes a day at ten minutes of service each, and a
+daily decision about which packages cannot be served. The operation is specified
+in [`docs/vrp_problem_definition.md`](docs/vrp_problem_definition.md) (v0.10);
+this repository is the attempt to express it.
+
+**Read [`docs/capacity-finding.md`](docs/capacity-finding.md) before drawing any
+conclusion from a number produced here.** Its first line is that the headline
+figure — 12.8 envelopes per deployed bike, against §7.4's expected 20–30 — **is
+not a capacity measurement and must not be used as one.** Nothing binds in that
+run; the solver declines on prices rather than time. Arriving at the modules and
+finding the number without that framing leads exactly the wrong way.
+
+## Getting it running
+
+**You need read access to two private repositories, not one.** `ddn` pins the
+platform by git tag:
+
+```toml
+"vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.3.3"
+```
+
+Without access to `osrm-microservice` you get a git authentication failure from
+`uv sync` rather than anything that names the cause. That is the first thing a
+new person hits.
+
+```sh
+uv sync --extra dev
+uv run pytest tests/ -q      # 82 tests
+uv run ruff check .
+```
+
+The tests need no gateway and no routing data. They cover the data contract, the
+line-haul assignment, pickup admission and the return run.
+
+## What is here
+
+| module | §  | what it does | is the *stage* a solver problem? |
+|---|---|---|---|
+| `contract.py` | 9.1 | operation records → `Problem`; priority as class plus score | — (a mapping) |
+| `pickups.py`  | 5.1 | admission: which van may take a bag | no |
+| `linehaul.py` | 5.3 | assignment against each depot's morning release | no |
+| `lastmile.py` | 5.4 | static per-facility batch, the one-day lag's gift | yes |
+| `returns.py`  | 5.5 | static CVRP, stops aggregated by customer site | yes |
+
+That last column is about the *stage*. No module here calls a solver itself —
+`contract.py`, `lastmile.py` and `returns.py` build a `Problem` and the caller
+solves it.
+
+**Two of the four operational modules import no part of the routing library at
+all.** `linehaul.py` imports nothing from `vrp`; `pickups.py` imports one name
+from `ddn.contract`. §5.3 is an assignment problem and treating it as routing
+would invent a route where there is a single leg; §5.1 is a dynamic VRP as a
+*problem type*, but the half built so far is admission, which needs no solver
+either. This matters for whoever integrates the stages and expects five uniform
+routing calls.
+
+Delivery models live in `models/` rather than upstream, because they describe
+*this* operation. `contract.load_model` reads them **by path**, since this
+repository ships the files and knows where they are; `VRP_MODEL_PATH` is how the
+platform's own tooling finds models it did not ship. (`ddn/__init__.py` still
+says otherwise — it is stale on this point.)
+
+## Where the answers are
+
+- **[`docs/capacity-finding.md`](docs/capacity-finding.md)** — §8.3's three
+  capacity checks. **The van check is answered: it binds, and harder than the
+  document assumes**, measured from three stages, none of which needed a cost
+  ratio. **The delivery check is not yet answerable** and the document explains
+  why that is a question about inputs rather than about solvers.
+- **[`docs/solver-capabilities.md`](docs/solver-capabilities.md)** — Open
+  Question 5, answered by running it. Four yes, one no. The no —
+  vehicle-to-depot is not a decision variable — settles §4.2 for two-stage,
+  which is the confirmation the document asks for.
+
+## What is open, and on whom
+
+These are **not unfinished code**. They are figures the problem definition has
+not supplied, and they cannot be settled in the solver:
+
+- **§8's cost ratio** — what a delivered envelope is worth against a kilometre
+  ridden. The blocking one.
+- **§3.1's coordinates** — the real customer geography. Depot placement moves
+  the delivery answer more than any solver setting does.
+- **§7.4** has no service time for a return stop; **§9.2** has no reason code
+  for an address with no road path. Both are described in `capacity-finding.md`
+  §4 with a suggested fix.
+- **Open Questions 1, 7, 9 and 13** — mailbag capacity per van, the pickup
+  taper, total van fleet, and whether the return run is van-only.
+
+Anyone picking this up and trying to close these by tuning the solver will be
+solving the wrong problem.
+
+## Rough edges
+
+`ddn/run_day.py` is the day-one runner — it spawns its own `osrm-routed` and
+gateway so travel times are real road distances. **It will not run as-is on
+another machine:** it hardcodes an absolute path to the platform checkout and a
+scratchpad directory, and it reaches the platform through `sys.path` rather than
+the installed package. The five modules and the tests have no such problem.
