@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 # the OSRM gateway; neither knows DDN exists, and nothing here may ask them to.
 # `[pyvrp]` because DDN solves: the adapter imports pyvrp at module level.
 dependencies = [
-    "vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.3.2",
+    "vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.3.3",
 ]
 
 [project.optional-dependencies]
