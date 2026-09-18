@@ -83,6 +83,26 @@ case, so it is off the critical path for readiness.
 | `REOPT_CADENCE_MIN` | 30 | §5.1.5 | document — §5.1.5's own "e.g. every 30 minutes" |
 | `EQUIDISTANT_MARGIN_M` | 2000 | §3.2 flags zips "straddling two facilities' areas"; Open Question 14 asks how | **invented.** Too small and nothing is flagged; too large and every envelope is |
 
+## Outcomes (§6, §11)
+
+Rates, not counts. §6 names the four outcomes and gives no frequencies; §10's
+worked day does, so these are read off it: of the 3,080 envelopes §10
+dispatches (its 3,100 morning pool less D1's 20 unassigned) it delivers 2,880,
+rejects 50, finds 30 defective and postpones 120.
+
+**That makes any simulated delivery total a restatement of §10, not a
+prediction.** A run that reproduces 2,880 has confirmed the stages are wired
+together, and nothing about the operation.
+
+| Key | Value | Spec gap | Provenance |
+|---|---|---|---|
+| `DELIVERED_PER_MILLE` | 935 | §6 gives no rates | document — §10's 2,880 of 3,080 |
+| `REJECTED_PER_MILLE` | 16 | §6 | document — §10's 50 |
+| `RETURNED_PER_MILLE` | 10 | §6 | document — §10's 30 defective |
+| `POSTPONED_PER_MILLE` | 39 | §6 | document — §10's 120 |
+| `POSTPONED_UNAVAILABLE_PER_MILLE` | 500 | §6 names three reasons and splits them nowhere | **invented** |
+| `POSTPONED_BAD_ADDRESS_PER_MILLE` | 200 | as above; the remainder is "driver out of time" | **invented.** §6 re-geocodes these, which can move an envelope to another facility |
+
 ## Returns and the taper
 
 | Key | Value | Spec gap | Provenance |

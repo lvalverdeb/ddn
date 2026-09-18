@@ -357,6 +357,60 @@ def build(seed: int = SEED) -> PeakDay:
     )
 
 
+#: §10's delivery morning: "today's routes, on the morning pool of 3,100"
+#: (2,700 made ready yesterday plus 400 postponed held locally).
+MORNING_POOL = 3100
+MORNING_NEW, MORNING_POSTPONED = 2700, 400
+#: §10 states two of the seven facility shares outright -- "HUB 48 bikes x 25 =
+#: 1,200 vs 1,150 hub-direct" and "D1 24 x 25 = 600 vs 620". The other five are
+#: scaled from §10's own positioned split so the total is its 3,100; they are a
+#: fixture construction, not a figure the document gives.
+MORNING_BY_FACILITY = {"HUB": 1150, "D1": 620, "D2": 412, "D3": 348,
+                       "D4": 253, "D5": 203, "D6": 114}
+
+
+def morning_pool(seed: int = SEED) -> tuple[Envelope, ...]:
+    """§10's morning pool: what today's delivery routes are built on.
+
+    A *different* pool from the day's inflow. §3.1's one-day lag means the
+    envelopes delivered this morning were made ready yesterday, while the
+    4,550 the fixture positions today are tomorrow's. §10 carries both and they
+    are not the same envelopes.
+
+    Every envelope is Ready at its facility, which is what §5.2.6 requires of a
+    delivery input, and a fortieth of them are due today so §6.1's hard
+    constraint has something to bind on.
+    """
+    rng = random.Random(seed + 2)
+    envelopes: list[Envelope] = []
+    for facility_id, count in MORNING_BY_FACILITY.items():
+        for _ in range(count):
+            index = len(envelopes)
+            low, high = TIERS[index % len(TIERS)]
+            near = next(f for f in _facilities() if f.facility_id == facility_id)
+            envelopes.append(Envelope(
+                package_id=f"MRN-{index + 1:05d}",
+                customer_id=f"CUST-{(index % SITES) + 1:03d}",
+                recipient_id=f"RCPT-M{index + 1:05d}",
+                package_type="finished",
+                mailbag_id=f"BAG-{(index % BAGS) + 1:04d}",
+                status=Status.READY,
+                expected_ready_at=datetime.combine(
+                    COLLECTION_DAY - timedelta(days=1),
+                    assumptions.PROCESSING_CUTOFF),
+                lat=near.lat + rng.uniform(-0.12, 0.12),
+                lon=near.lon + rng.uniform(-0.12, 0.12),
+                coord_source=CoordSource.ACTUAL,
+                geocode_confidence=GeocodeConfidence.HIGH,
+                facility_id=facility_id,
+                priority=float(rng.randrange(low, high + 1)),
+                sla_date=(DELIVERY_DAY if index % 40 == 0
+                          else DELIVERY_DAY + timedelta(days=3)),
+                # §10's 400 postponed are held locally for another attempt.
+                attempt_number=1 if index % 8 == 0 else 0))
+    return tuple(envelopes)
+
+
 def returns_pool(seed: int = SEED) -> tuple[Envelope, ...]:
     """§10's return run: 80 envelopes to 30 customer sites.
 

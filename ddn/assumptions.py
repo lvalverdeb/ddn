@@ -51,6 +51,23 @@ FACILITY_UNLOAD_MIN = 30
 # here so that it stops being invisible.
 RETURN_STOP_MIN = 10
 
+# §6's four outcomes as rates, read off §10's own end of day: of the 3,080
+# envelopes it dispatches (3,100 in the morning pool less D1's 20 unassigned),
+# 2,880 are delivered, 50 rejected, 30 defective and 120 postponed. Per mille so
+# that they are integers and sum to 1,000.
+DELIVERED_PER_MILLE = 935
+REJECTED_PER_MILLE = 16
+RETURNED_PER_MILLE = 10
+POSTPONED_PER_MILLE = 39
+
+# §6 names three reasons an attempt is not completed -- "recipient unavailable,
+# incorrect address, driver out of time" -- and gives no split. Invented; the
+# remainder after these two is "driver out of time". The middle one matters
+# beyond bookkeeping: §6 sends an incorrect address back for re-geocoding,
+# which may move the envelope to a different facility.
+POSTPONED_UNAVAILABLE_PER_MILLE = 500
+POSTPONED_BAD_ADDRESS_PER_MILLE = 200
+
 # §5.5 and Open Question 13: "does the van-only security rule also apply to
 # envelopes returned to customers?" Nobody has answered, so the return run is
 # planned with vans -- the cautious reading, since it is the one that cannot
