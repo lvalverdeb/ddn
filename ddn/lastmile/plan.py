@@ -38,9 +38,6 @@ from ddn import contract
 # day depending on stop density". The midpoint, used only to divide the fleet
 # between facilities -- the routes themselves are bounded by shift time, and
 # what a bike actually manages is an output of this run rather than an input.
-EFFECTIVE_PER_BIKE = 25
-
-
 UNREACHABLE_ADDRESS = "unreachable address"
 
 
@@ -121,35 +118,6 @@ class FacilityPlan:
             return 0
         return sum(1 for route in self.solution.routes
                    if any(step.order_id for step in route.steps))
-
-
-def allocate(pools: dict[str, int], bikes: int) -> dict[str, int]:
-    """§4.2's two-stage first half: divide a fixed fleet between facilities.
-
-    Largest-remainder, so the fleet is neither over- nor under-committed: the
-    obvious `round()` per facility can allocate more bikes than exist, which is
-    a plan nobody can run.
-
-    A facility with any demand at all gets at least one bike. Zero would leave
-    its envelopes unserved with bikes idle elsewhere, and §8's first objective
-    is delivered work rather than tidy arithmetic.
-    """
-    demand = sum(pools.values())
-    if not demand:
-        return {facility: 0 for facility in pools}
-
-    exact = {f: n / demand * bikes for f, n in pools.items()}
-    floors = {f: max(1, int(share)) if pools[f] else 0
-              for f, share in exact.items()}
-    spare = bikes - sum(floors.values())
-    for facility in sorted(exact, key=lambda f: exact[f] - int(exact[f]),
-                           reverse=True):
-        if spare <= 0:
-            break
-        if pools[facility]:
-            floors[facility] += 1
-            spare -= 1
-    return floors
 
 
 def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],

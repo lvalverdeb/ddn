@@ -30,6 +30,7 @@ Three provenances are used, and they are not equally trustworthy:
 
 | Key | Value | Spec gap | Provenance |
 |---|---|---|---|
+| `ENVELOPES_PER_BIKE` | 25 | §4.2's allocation figure | document — §4.2's "~25 envelopes per motorbike per day", from §7.4's arithmetic |
 | `MAILBAGS_PER_VAN` | 40 | §4.1, §7.1, §10 all say `[TBD]` | **invented.** Binds only if bags per trip falls below demand; at the 200 g default weight the 500 kg limit never binds first |
 | `STOPS_PER_ROUTE_SOFT_MAX` | 25 | §7.2 | derived: §7.4's 480 min ÷ 10 min = 48 stops before travel, and §4.2's ~25 per bike is the same figure |
 

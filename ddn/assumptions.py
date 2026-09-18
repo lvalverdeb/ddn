@@ -31,6 +31,10 @@ VANS_TOTAL = 10
 PICKUP_VANS_EARMARKED = 6
 PICKUP_VANS_AFTER_TAPER = 2
 
+# §4.2's own planning figure: "~25 envelopes per motorbike per day", which
+# §7.4 derives from the ten-minute service time against an 8-hour shift.
+ENVELOPES_PER_BIKE = 25
+
 # §4.1, §7.1 and §10 all leave this [TBD]. Invented: binds only if bags per
 # trip falls below demand; at the 200 g default the 500 kg limit never binds.
 MAILBAGS_PER_VAN = 40

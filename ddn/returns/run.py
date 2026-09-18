@@ -39,7 +39,7 @@ from vrp.model import Problem, TravelMatrix, Vehicle
 
 from ddn.contract import CLASS_OF, DEFAULT_WEIGHT_G, as_depot
 
-MODELS = Path(__file__).resolve().parent.parent / "models"
+MODELS = Path(__file__).resolve().parent.parent.parent / "models"
 MODEL_NAME = "ddn-return"
 
 # §6's two return outcomes. Postponed is held, Delivered is closed.
