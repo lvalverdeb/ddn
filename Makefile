@@ -66,7 +66,7 @@ export DOCKER_CONTEXT
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help install test lint fmt check notebooks bootstrap up down logs ps \
+.PHONY: help install test lint fmt check notebooks nb-clean bootstrap up down logs ps \
 	shell api worker redis rebuild clean config \
 	creds-help guard-docker
 
@@ -90,6 +90,9 @@ fmt: install  ## Ruff, fixing what it can
 	$(UV) run ruff check --fix .
 
 check: lint test  ## What CI would run, if there were CI
+
+nb-clean: install  ## Strip stored outputs from the notebooks before committing
+	$(UV) run python notebooks/clear_outputs.py
 
 notebooks:  ## Open the notebooks in `notebooks/`
 	@command -v $(UV) >/dev/null || { echo "uv is not installed"; exit 1; }

@@ -107,8 +107,17 @@ and the same work over §13's API. The suite executes all three, because a
 notebook nobody runs is documentation that agrees with itself.
 
 ```sh
-make notebooks
+make notebooks     # open them
+make nb-clean      # strip saved outputs before committing
 ```
+
+## CI
+
+`.github/workflows/check.yml` runs `make check` — ruff, then the suite — on
+every push and pull request. It needs one repository secret, `DEPS_TOKEN`: a
+fine-grained token with `Contents: read` on `lvalverdeb/osrm-microservice`,
+because `GITHUB_TOKEN` is scoped to this repository and `uv sync` clones that
+one. Without it the workflow stops on its first step and says so.
 
 ## Where the answers are
 

@@ -202,10 +202,15 @@ DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
 - **Plan before code on anything touching more than one module**: propose the
   change, wait for approval. Note that `contract.py` is imported by most of the
   others, so this catches more changes than it looks like.
+- **CI runs `make check`** on every push and pull request
+  (`.github/workflows/check.yml`). It needs the repository secret `DEPS_TOKEN`
+  — a token with read access to `osrm-microservice`, because `GITHUB_TOKEN`
+  cannot reach a second private repository and `uv sync` clones one.
 - **`notebooks/` is executed by the suite.** Three worked examples calling the
   same functions the API does. They ship without stored outputs, and nothing
   asserts what they print — what is caught is one that no longer runs, which is
-  what actually goes wrong with a notebook.
+  what actually goes wrong with a notebook. Run them freely; `make nb-clean`
+  strips the outputs Jupyter saves, and the test that fails says so.
 - **Every module ships with tests.** The worked example in §10 is the integration
   fixture: `tests/fixtures/peak_day.py` builds it deterministically from §10's
   own figures — keep them in sync, and derive fixture values from the document

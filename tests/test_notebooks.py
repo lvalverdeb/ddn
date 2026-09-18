@@ -44,5 +44,9 @@ def test_the_notebook_ships_without_outputs(path: Path):
     book = nbformat.read(path, as_version=4)
     for number, cell in enumerate(book.cells, start=1):
         if cell.cell_type == "code":
-            assert not cell.get("outputs"), f"cell {number} has stored output"
-            assert cell.get("execution_count") is None
+            assert not cell.get("outputs"), (
+                f"cell {number} of {path.name} has stored output. "
+                "Run `make nb-clean` before committing.")
+            assert cell.get("execution_count") is None, (
+                f"cell {number} of {path.name} was executed and saved. "
+                "Run `make nb-clean` before committing.")
