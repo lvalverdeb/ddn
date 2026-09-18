@@ -22,8 +22,10 @@ from tests.api_harness import make_app, make_pool
 
 SPEC = (Path(__file__).resolve().parent.parent
         / "docs" / "vrp-problem-definition.md").read_text(encoding="utf-8")
-# The document numbers §13's subsections 14.1-14.4, so a naive split on
-# "## 14." lands inside "### 14.1 Principles". Split on the heading itself.
+# Split on the whole heading rather than on "## 14.", which also matches the
+# first characters of a "### 14.x" subsection heading. §13's subsections were
+# numbered that way until the spec was corrected, and the next section added
+# below §13 could reintroduce it.
 SECTION_13 = (SPEC.split("## 13. Service interface")[1]
               .split("\n## 14. Revision history")[0])
 
@@ -127,3 +129,18 @@ def test_coord_source_keeps_the_schema_spelling_not_the_prose_one():
     """§9.1 underscores them; §3.2's hyphenated prose describes the same values."""
     assert {c.value for c in CoordSource} == {
         "actual", "geocoded_address", "zip_centroid"}
+
+
+def test_section_13s_subsections_are_numbered_13_not_14():
+    """They were 14.1-14.4, colliding with §14 Revision history.
+
+    A copy-paste when §13 was inserted ahead of the old §13. It is the kind of
+    defect that survives because nothing executes a heading — every reader
+    understood which section they were in, and only a test that splits the file
+    on section boundaries ever tripped over it.
+    """
+    for n, title in enumerate(("Principles", "Resources",
+                               "Scheduled orchestration",
+                               "Out of scope for the API"), start=1):
+        assert f"### 13.{n} {title}" in SECTION_13
+        assert f"### 14.{n} " not in SPEC, "§14 has no subsections"

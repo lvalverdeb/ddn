@@ -477,7 +477,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 
 The workflow is exposed as an HTTP API built with FastAPI. The API is a thin layer: it accepts inputs, starts jobs, reports status and returns results. Stage logic lives in the modules of §5 and is never implemented inside request handlers.
 
-### 14.1 Principles
+### 13.1 Principles
 
 - **Jobs, not synchronous calls.** Any endpoint that invokes the solver returns `202 Accepted` with a job id; callers poll `GET …/{id}` or register a webhook. Jobs run on a dedicated queue with retry and visibility, not in-process background tasks.
 - **Schemas are the data contract.** Request and response models are generated from §9 and shared with the internal model; the OpenAPI document is the published form of §9.
@@ -486,7 +486,7 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 - **Constraint visibility.** Every routing result carries its §7.1 violation list (empty on success).
 - **Audit.** Overrides (§8.2) and outcome events record the actor and time.
 
-### 14.2 Resources
+### 13.2 Resources
 
 | Resource | Endpoints | Spec |
 |---|---|---|
@@ -501,14 +501,14 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 | Metrics | `GET /metrics?day=` | §11 |
 | Health | `GET /health`; `GET /solver/capabilities` | §12 Q5 |
 
-### 14.3 Scheduled orchestration
+### 13.3 Scheduled orchestration
 
 Two processes run on a schedule and call the same internal functions as the endpoints; they do not call the API over HTTP:
 
 - **Pickup re-optimisation** every [TBD, default 30] minutes during the collection window, publishing the plan read by `GET /pickups/plan`.
 - **Nightly cycle**: allocation → line-haul plan → next-day delivery routes for every facility, on the pool that will be positioned by morning release.
 
-### 14.4 Out of scope for the API
+### 13.4 Out of scope for the API
 
 Reconciliation, assembly and sorting are physical hub processes; the API only receives their events. Customer-facing pickup booking and the driver app are separate clients of this API, not part of it.
 

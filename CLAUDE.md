@@ -145,15 +145,11 @@ something is a handler doing another module's job.
 - The two §13.3 scheduled processes call the same internal functions as the
   handlers. They do not call the API over HTTP.
 
-§13's subsections are numbered 14.1–14.4 in the document, colliding with §14
-Revision history — a copy-paste when §13 was inserted. They are cited here as
-§13.1–§13.4; worth fixing in the spec.
-
 ## Commands
 
 ```sh
 uv sync --extra dev --extra api
-uv run pytest tests/ -q      # 586 tests; no gateway, no Redis, no routing data
+uv run pytest tests/ -q      # 587 tests; no gateway, no Redis, no routing data
 uv run ruff check .
 uv run uvicorn ddn.api.app:create_app --factory   # §13, needs a real Redis
 ```

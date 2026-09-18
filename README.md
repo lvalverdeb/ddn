@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 uv sync --extra dev --extra api
-uv run pytest tests/ -q      # 586 tests
+uv run pytest tests/ -q      # 587 tests
 uv run ruff check .
 ```
 
