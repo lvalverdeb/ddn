@@ -187,3 +187,20 @@ def test_a_return_cannot_be_declined():
 
     assert problem.orders[0].prize == 0
     assert must_be_served(problem.orders[0])
+
+
+def test_a_vans_envelope_capacity_is_section_4_1s_arithmetic():
+    """A van is bounded by weight, not by a motorbike's box.
+
+    `models/ddn-return.json` gave the VAN class `envelopes: 35` — the
+    motorbike's number. §4.1 gives the van 500 kg and no envelope count, and
+    states the conversion itself: "at the default a van carries up to 2,500
+    envelopes on line-haul". The wrong figure made §10's own return run
+    infeasible — 80 envelopes, two vans, a 35-envelope cap — which is how it
+    was found.
+    """
+    model = returns.load_model()
+    declared = {spec["class"]: spec["capacities"] for spec in model["fleet"]}
+    assert declared["VAN"]["grams"] == 500_000
+    assert declared["VAN"]["envelopes"] == 500_000 // 200 == 2500
+    assert declared["MOTO"]["envelopes"] == 35, "the bike's box is 35 (§7.1)"

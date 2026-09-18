@@ -33,6 +33,8 @@ from typing import Any
 from vrp.model import UNREACHABLE, Problem, Solution, TravelMatrix
 
 from ddn import contract
+from ddn.contract import Excluded
+from ddn.solver_adapter.output import NO_CAPACITY
 
 # §7.4: "effective capacity will be closer to 20-30 envelopes per motorbike per
 # day depending on stop density". The midpoint, used only to divide the fleet
@@ -118,6 +120,64 @@ class FacilityPlan:
             return 0
         return sum(1 for route in self.solution.routes
                    if any(step.order_id for step in route.steps))
+
+
+def select(packages: Sequence[dict[str, Any]], *, capacity: int,
+           today: date) -> tuple[list[dict[str, Any]], tuple[Excluded, ...]]:
+    """§8's first-class decision: which envelopes are not served today.
+
+    §8 opens by saying it outright -- "on peak days not all ready envelopes
+    will be deliverable; choosing which to leave unassigned is a first-class
+    decision" -- and §8.3 expects the gap to be structural rather than
+    occasional. This makes the choice explicitly, before the solver sees the
+    pool, for two reasons.
+
+    It is **explainable**. §8.1's prize mechanism lets the solver decline work,
+    but it declines on prize against distance, so which envelopes fall out
+    depends on where they happen to be. A planner asked why an envelope was not
+    attempted should hear "it was the lowest-priority one on a facility short
+    of twenty bikes", not an objective value.
+
+    And it is **cheaper**: §5.4's own §10 arithmetic is bikes times ~25, so a
+    facility offered a fifth more than it can carry does not need those stops
+    priced into a matrix first.
+
+    Two groups are never trimmed. §6.1 makes "SLA date = today" a hard
+    must-deliver-today constraint rather than a weight, and §8.2 lets
+    operations force an envelope into the plan with `locked_vehicle_id`. If
+    those alone exceed capacity they all still go: they are constraints, and
+    what the fleet genuinely cannot reach comes back from the solver as a
+    time-based refusal instead.
+
+    Args:
+        packages: the facility's morning pool, §9.1 records.
+        capacity: how many envelopes the facility's bikes can serve --
+            typically `bikes * EFFECTIVE_PER_BIKE`.
+        today: the delivery date, for the SLA test.
+
+    Returns:
+        The pool to offer the solver, in its original order so a matrix built
+        over it keeps its indices, and the envelopes declined for want of
+        capacity with §9.2's "count" reason.
+    """
+    forced, optional = [], []
+    for package in packages:
+        sla = package.get("sla_date")
+        if (package.get("locked_vehicle_id")
+                or (sla and date.fromisoformat(sla) == today)):
+            forced.append(package)
+        else:
+            optional.append(package)
+
+    # Highest priority first; package id breaks ties so that two runs of one
+    # day decline the same twenty envelopes.
+    optional.sort(key=lambda p: (-float(p.get("priority", 0)), p["package_id"]))
+    room = max(capacity - len(forced), 0)
+    kept = {p["package_id"] for p in (*forced, *optional[:room])}
+
+    return ([p for p in packages if p["package_id"] in kept],
+            tuple(Excluded(p["package_id"], NO_CAPACITY)
+                  for p in optional[room:]))
 
 
 def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],

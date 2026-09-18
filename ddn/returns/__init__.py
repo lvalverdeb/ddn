@@ -6,10 +6,11 @@ from ddn.returns.run import (
     SERVICE_SECONDS,
     ReturnStop,
     eligible,
+    fleet,
     load_model,
     sites,
     to_problem,
 )
 
 __all__ = ["MODEL_NAME", "RETURNED", "SERVICE_SECONDS", "ReturnStop",
-           "eligible", "load_model", "sites", "to_problem"]
+           "eligible", "fleet", "load_model", "sites", "to_problem"]

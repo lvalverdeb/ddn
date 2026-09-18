@@ -9,7 +9,7 @@ invented ones carry their sensitivity.
 
 **No value here may be quoted as an operational figure.** The facility
 coordinates in particular are synthetic towns on the Costa Rican graph that
-`run_day.py` happens to use; they are not the operation's geography, and
+`simulation/on_road.py` happens to use; they are not the operation's geography, and
 `capacity-finding.md` is the standing warning about what follows from measuring
 on placeholders.
 
@@ -50,6 +50,16 @@ FACILITY_UNLOAD_MIN = 30
 # Not tagged [TBD] anywhere -- already hard-coded at returns.py:52. Recorded
 # here so that it stops being invisible.
 RETURN_STOP_MIN = 10
+
+# §5.5 and Open Question 13: "does the van-only security rule also apply to
+# envelopes returned to customers?" Nobody has answered, so the return run is
+# planned with vans -- the cautious reading, since it is the one that cannot
+# breach a security rule that turns out to apply.
+RETURN_VEHICLE_TYPE = "van"
+
+# §5.1.3's taper: the earmark "should taper during the afternoon so that vans
+# are progressively released to line-haul". §10 releases four of six.
+PICKUP_TAPER_FROM = time(12, 0)
 
 # §3.1. Invented. Delivery runs on D+1, so this is tomorrow's clock and
 # line-haul departs the day before it.
@@ -94,7 +104,7 @@ class FacilityPlaceholder(NamedTuple):
 
 
 # §3.1's table is entirely [TBD]. These are Costa Rican towns chosen to sit on
-# the graph run_day.py uses. D6's 240 minutes is the one figure with a source:
+# the graph simulation/on_road.py uses. D6's 240 minutes is the one figure with a source:
 # §10 calls it "the 4-hour D6 transit".
 FACILITIES: tuple[FacilityPlaceholder, ...] = (
     FacilityPlaceholder("HUB", "San José", 9.9333, -84.0833, 0),

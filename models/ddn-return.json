@@ -43,7 +43,7 @@
       "id": "VAN-{n}",
       "per_depot": 2,
       "capacities": {
-        "envelopes": 35,
+        "envelopes": 2500,
         "grams": 500000
       }
     },

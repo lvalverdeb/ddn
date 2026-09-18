@@ -42,6 +42,7 @@ from ddn.model import (
     FacilityType,
     GeocodeConfidence,
     Mailbag,
+    Outcome,
     PickupRequest,
     Status,
     Vehicle,
@@ -92,6 +93,15 @@ READY = sum(READY_BY_FACILITY.values())
 
 #: §8.1's worked tiers: "Urgent 1,000-1,999, Standard 100-199, Low 1-99".
 TIERS = ((1000, 1999), (100, 199), (1, 99))
+
+# §10's end of day. **A different pool from everything above:** these are the
+# outcomes of *today's* delivery on the morning pool of 3,100, while the inflow
+# above is what was collected today for delivery tomorrow. §10 carries both and
+# they do not add up to each other.
+DELIVERED, REJECTED, DEFECTIVE, POSTPONED = 2880, 50, 30, 120
+#: "Return run: 80 envelopes to 30 customer sites, 2 vans."
+RETURN_SITES, RETURN_VANS = 30, 2
+RETURN_POOL = REJECTED + DEFECTIVE
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +355,50 @@ def build(seed: int = SEED) -> PeakDay:
         requests=requests,
         envelopes=tuple(envelopes),
     )
+
+
+def returns_pool(seed: int = SEED) -> tuple[Envelope, ...]:
+    """§10's return run: 80 envelopes to 30 customer sites.
+
+    §6 sends two outcomes back to the customer -- Rejected, where the recipient
+    refused, and Returned, where the envelope was defective -- and §5.5 adds
+    SLA-expired envelopes to the same run. §10's "50 rejected, 30 defective"
+    is exactly the 80 it then returns, so no expired ones are in this day.
+
+    Customer ids are the fixture's own first thirty, so a caller can find each
+    site's coordinates in `PeakDay.requests`.
+    """
+    rng = random.Random(seed + 1)
+    # 80 envelopes over 30 sites: twenty sites send three back, ten send two.
+    per_site = [3] * 20 + [2] * 10
+    statuses = ([Status.REJECTED] * REJECTED) + ([Status.RETURNED] * DEFECTIVE)
+
+    envelopes: list[Envelope] = []
+    for site, count in enumerate(per_site):
+        for _ in range(count):
+            index = len(envelopes)
+            low, high = TIERS[index % len(TIERS)]
+            envelopes.append(Envelope(
+                package_id=f"RET-{index + 1:04d}",
+                customer_id=f"CUST-{site + 1:03d}",
+                recipient_id=f"RCPT-R{index + 1:04d}",
+                package_type="finished",
+                mailbag_id=f"BAG-{(index % BAGS) + 1:04d}",
+                status=statuses[index],
+                expected_ready_at=None,
+                lat=9.9333 + rng.uniform(-0.2, 0.2),
+                lon=-84.0833 + rng.uniform(-0.2, 0.2),
+                coord_source=CoordSource.ACTUAL,
+                geocode_confidence=GeocodeConfidence.HIGH,
+                facility_id="HUB",
+                priority=float(rng.randrange(low, high + 1)),
+                sla_date=DELIVERY_DAY + timedelta(days=1),
+                # §9.1 carries the outcome as well as the status, and
+                # `ddn.returns` keys on the outcome. Both are set, because a
+                # real record has both.
+                previous_outcome=Outcome(statuses[index].value),
+                attempt_number=1))
+    return tuple(envelopes)
 
 
 @lru_cache(maxsize=1)

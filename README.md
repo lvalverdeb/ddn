@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 481 tests
+uv run pytest tests/ -q      # 508 tests
 uv run ruff check .
 ```
 
@@ -39,6 +39,7 @@ line-haul assignment, pickup admission and the return run.
 
 | module | §  | what it does | is the *stage* a solver problem? |
 |---|---|---|---|
+| `allocation/` | 4.2 | bikes per facility, van duty and its taper | no |
 | `contract.py` | 9.1 | operation records → `Problem`; priority as class plus score | — (a mapping) |
 | `pickups/`    | 5.1 | admission, and the day run on a re-optimisation cadence | no |
 | `processing/` | 5.2 | expected ready times; pre-sort at file receipt | no |
@@ -96,7 +97,7 @@ solving the wrong problem.
 
 ## The day-one run
 
-`ddn/run_day.py` runs §5.4 across every facility on real geography. It spawns its
+`ddn/simulation/on_road.py` runs §5.4 across every facility on real geography. It spawns its
 own `osrm-routed` and the platform's compiled gateway, so travel times are road
 distances rather than a synthetic grid. It needs two things that live in neither
 repository and in no git history — a built gateway with its corpus, and a built
@@ -105,7 +106,7 @@ OSRM graph — so it asks for them by name:
 ```sh
 DDN_PLATFORM_REPO=/path/to/osrm-microservice \
 DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
-    uv run python -m ddn.run_day
+    uv run python -m ddn.simulation.on_road
 ```
 
 Unset or missing inputs are reported immediately, with the command that builds

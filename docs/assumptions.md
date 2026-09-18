@@ -83,12 +83,19 @@ case, so it is off the critical path for readiness.
 | `REOPT_CADENCE_MIN` | 30 | §5.1.5 | document — §5.1.5's own "e.g. every 30 minutes" |
 | `EQUIDISTANT_MARGIN_M` | 2000 | §3.2 flags zips "straddling two facilities' areas"; Open Question 14 asks how | **invented.** Too small and nothing is flagged; too large and every envelope is |
 
+## Returns and the taper
+
+| Key | Value | Spec gap | Provenance |
+|---|---|---|---|
+| `RETURN_VEHICLE_TYPE` | van | §5.5, Open Question 13: does the van-only security rule apply to returns? | **invented**, cautiously: a van cannot breach a security rule that turns out to apply, a motorbike can |
+| `PICKUP_TAPER_FROM` | 12:00 | §5.1.3 says the earmark "should taper during the afternoon" and gives no hour | **invented** |
+
 ## Facility placeholders (§3.1)
 
 **Synthetic.** The real geography is unsupplied, and `capacity-finding.md` is
 clear that depot placement moves the delivery answer more than any solver
 setting does. These sit on Costa Rican towns because the OSRM graph
-`run_day.py` uses is Costa Rica; they are **not** the operation's facilities,
+`simulation/on_road.py` uses is Costa Rica; they are **not** the operation's facilities,
 and no figure measured on them describes the operation.
 
 | ID | Placeholder locality | lat | lon | Transit from hub (min) | Provenance |

@@ -5,7 +5,8 @@ from ddn.lastmile.plan import (
     FacilityPlan,
     plan_facility,
     reachable_subset,
+    select,
 )
 
 __all__ = ["UNREACHABLE_ADDRESS", "FacilityPlan", "plan_facility",
-           "reachable_subset"]
+           "reachable_subset", "select"]

@@ -97,18 +97,18 @@ where the target says, and when you move a stage, move one boundary at a time.
 |---|---|---|---|---|
 | `model/` | `ddn/model/` | 9.1, 5.2.6, 3.3 | entities, lifecycle, nearest-facility | — |
 | `solver_adapter/` | `ddn/solver_adapter/`, `ddn/contract.py` | 9.1, 7.1, 9.2 | operation records → `Problem`; priority as class plus score; §9.2 output; §7.1 post-checks | — (a mapping) |
-| `allocation/` | `ddn/allocation/` | 4.2 | daily fleet split across facilities and van duty, upstream of the solver | no |
+| `allocation/` | `ddn/allocation/` | 4.2, 4.3 | bikes per facility, §7.2's relocation cost, the van pickup/line-haul split and its taper | no |
 | `pickups/` | `ddn/pickups/` | 5.1 | admission, and the day on §5.1.5's cadence with §5.1.7's exceptions | no |
 | `processing/` | `ddn/processing/` | 5.2 | expected-ready-time computation and §5.2.4's pre-sort **only** — not reconciliation or assembly themselves | no |
 | `linehaul/` | `ddn/linehaul/` | 5.3 | van-to-depot assignment against morning release times | no |
-| `lastmile/` | `ddn/lastmile/` | 5.4 | per-facility delivery routing; static batch, the one-day lag's gift | yes |
+| `lastmile/` | `ddn/lastmile/` | 5.4, 8 | per-facility delivery routing, and which envelopes are left when capacity is short | yes |
 | `returns/` | `ddn/returns/` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
-| `simulation/` | `ddn/run_day.py` | 5.6, 10, 11 | day simulator and metrics | — |
+| `simulation/` | `ddn/simulation/` | 5.6, 10, 11 | the day end to end, its metrics and §8.3's checks | — |
 
 Every target package now exists. `ddn/contract.py` still holds §5.4's mapping
 and `solver_adapter.last_mile` delegates to it rather than restating it, so
 those two are one boundary until the move; `ddn/simulation/` is still
-`ddn/run_day.py`.
+`ddn/simulation/on_road.py`.
 
 That last column is about the *stage*, not the module: **no module here calls a
 solver.** They build a `Problem` and the caller solves it. Two of the four
@@ -125,7 +125,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 481 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 508 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 
@@ -133,13 +133,13 @@ uv run ruff check .
 `lvalverdeb/osrm-microservice`. Without it you get a git authentication failure
 that does not name the cause.
 
-`ddn/run_day.py` (§5.4 across every facility, on real geography) is the only
+`ddn/simulation/on_road.py` (§5.4 across every facility, on real geography) is the only
 thing here that needs routing data, and it asks for it by name:
 
 ```sh
 DDN_PLATFORM_REPO=/path/to/osrm-microservice \
 DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
-    uv run python -m ddn.run_day
+    uv run python -m ddn.simulation.on_road
 ```
 
 ## How to work here

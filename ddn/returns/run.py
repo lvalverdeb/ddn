@@ -37,6 +37,7 @@ from typing import Any
 from vrp import servicemodel
 from vrp.model import Problem, TravelMatrix, Vehicle
 
+from ddn import assumptions
 from ddn.contract import CLASS_OF, DEFAULT_WEIGHT_G, as_depot
 
 MODELS = Path(__file__).resolve().parent.parent.parent / "models"
@@ -107,6 +108,23 @@ def sites(envelopes: Sequence[dict[str, Any]]) -> list[ReturnStop]:
         )
         for customer, batch in grouped.items()
     ]
+
+
+def fleet(vehicle_ids: Sequence[str], *, shift_start: int, shift_end: int,
+          vehicle_type: str = assumptions.RETURN_VEHICLE_TYPE
+          ) -> list[dict[str, Any]]:
+    """§9.1 vehicle records for tonight's return run.
+
+    Open Question 13 asks "does the van-only security rule also apply to
+    envelopes returned to customers?" and nobody has answered. The default is
+    the van, from `docs/assumptions.md`, on the cautious reading: a van cannot
+    breach a rule that turns out to apply, and a motorbike can. `to_problem`
+    still takes whatever fleet the caller hands it, so answering the question
+    later is a change to one placeholder rather than to this module.
+    """
+    return [{"vehicle_id": vehicle_id, "type": vehicle_type, "role": "return",
+             "shift_start": shift_start, "shift_end": shift_end}
+            for vehicle_id in vehicle_ids]
 
 
 def _vehicle(record: dict[str, Any], model: dict[str, Any]) -> Vehicle:
