@@ -43,9 +43,13 @@ endif
 # them here means `make` passes them on and `make config` can say which one it
 # will use, rather than leaving you to infer it from a connection error.
 #
-#   make bootstrap DOCKER_HOST=ssh://ops@buildbox
-#   DOCKER_HOST=tcp://10.211.55.28:2375 make up
-#   make up DOCKER_CONTEXT=colima
+#   export DOCKER_HOST=ssh://user@host      # or an ~/.ssh/config alias
+#   export DOCKER_CONTEXT=colima
+#
+# Prefer `ssh://` over `tcp://`: a daemon reached over ssh needs no open
+# 2375, which is an unauthenticated root-equivalent socket. This example was
+# a literal `tcp://` address until the host behind it moved and the comment
+# went on pointing at nothing.
 #
 # Unset, Docker uses the current context — usually the local socket. Only
 # exported when set, because an empty DOCKER_HOST is not the same as no
