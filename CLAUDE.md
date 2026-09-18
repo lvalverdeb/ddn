@@ -173,9 +173,7 @@ something the host does in a second. The api and worker share one build block
 through a YAML anchor, because two would drift and the symptom would be a
 worker that cannot load the jobs the API enqueues.
 
-Building the image needs `GH_TOKEN` (or a loaded ssh-agent): it clones the
-second private repository, and `make bootstrap` says so by name rather than
-letting the build fail with a git error that mentions neither. `DOCKER_HOST`
+`DOCKER_HOST`
 and `DOCKER_CONTEXT` select the daemon — often not the local one — and
 `make config` prints every variable in force and which daemon it points at.
 Configuration is environment variables rather than `make` arguments, so one
@@ -184,9 +182,11 @@ them and compose reads `.env` by itself. Both failures are guarded and both
 guards name the thing that is missing, which is the same courtesy
 `simulation/on_road.py` extends about its two inputs.
 
-`uv sync` needs read access to **two** private repositories: this one and
-`lvalverdeb/osrm-microservice`. Without it you get a git authentication failure
-that does not name the cause.
+`vrp-platform` is pinned from `lvalverdeb/osrm-microservice`, which is
+**public** — the same repository the Disclosure section below is about. No
+credential is needed to build or to run CI. This file and the README both
+claimed for a long time that you needed access to two *private* repositories,
+while the Disclosure section said the opposite three screens further down.
 
 `ddn/simulation/on_road.py` (§5.4 across every facility, on real geography) is the only
 thing here that needs routing data, and it asks for it by name:
@@ -203,9 +203,7 @@ DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
   change, wait for approval. Note that `contract.py` is imported by most of the
   others, so this catches more changes than it looks like.
 - **CI runs `make check`** on every push and pull request
-  (`.github/workflows/check.yml`). It needs the repository secret `DEPS_TOKEN`
-  — a token with read access to `osrm-microservice`, because `GITHUB_TOKEN`
-  cannot reach a second private repository and `uv sync` clones one.
+  (`.github/workflows/check.yml`), with no secrets.
 - **`notebooks/` is executed by the suite.** Three worked examples calling the
   same functions the API does. They ship without stored outputs, and nothing
   asserts what they print — what is caught is one that no longer runs, which is

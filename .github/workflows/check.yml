@@ -1,18 +1,8 @@
-# `make check` — ruff, then 615 tests.
+# `make check` — ruff, then the suite.
 #
-# The suite needs no gateway, no Redis and no routing data, which is what makes
-# this workflow six steps. What it does need is read access to a *second*
-# private repository: `pyproject.toml` pins the platform by git tag, so
-# `uv sync` clones `lvalverdeb/osrm-microservice`.
-#
-# `GITHUB_TOKEN` cannot do that. It is scoped to this repository, so the clone
-# fails with a git authentication error naming neither repo -- the same failure
-# the Makefile guards against locally. Hence `DEPS_TOKEN`, and hence the step
-# that stops with an explanation when it is missing rather than letting the
-# clone produce one that explains nothing.
-#
-# To set it up: a fine-grained personal access token with `Contents: read` on
-# lvalverdeb/osrm-microservice, stored as the repository secret `DEPS_TOKEN`.
+# Four steps, because the suite needs nothing: no gateway, no Redis, no routing
+# data, and no credentials. `vrp-platform` is pinned from a public repository,
+# so `uv sync` clones it anonymously.
 
 name: check
 
@@ -39,25 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Require the dependency token
-        env:
-          DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
-        run: |
-          if [ -z "$DEPS_TOKEN" ]; then
-            echo "::error::DEPS_TOKEN is not set."
-            echo "uv sync clones github.com/lvalverdeb/osrm-microservice for"
-            echo "vrp-platform. GITHUB_TOKEN is scoped to this repository and"
-            echo "cannot read it, so the clone would fail with a git"
-            echo "authentication error naming neither repository."
-            echo
-            echo "Add a fine-grained PAT with Contents: read on that"
-            echo "repository as the secret DEPS_TOKEN."
-            exit 1
-          fi
-
       - uses: astral-sh/setup-uv@v5
         with:
-          # pyvrp compiles, and the platform is fetched from git rather than an
+          # pyvrp compiles and the platform is fetched from git rather than an
           # index, so a cold resolve is the slowest thing here by far.
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -68,10 +42,4 @@ jobs:
           # here a pyproject change that nobody locked should fail rather than
           # be silently resolved into a build no one else can reproduce.
           UV_FROZEN: "1"
-          # Scoped to this step and never written to the runner's git config,
-          # so the token does not outlive the command that needs it. Same
-          # mechanism the Dockerfile uses, for the same reason.
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.DEPS_TOKEN }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_0: https://github.com/
         run: make check

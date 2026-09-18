@@ -26,12 +26,6 @@ DDN_REDIS_DSN  ?= redis://localhost:6379/0
 COMPOSE        ?= docker compose
 UV             ?= uv
 
-# The build needs one of two credentials, and the Dockerfile accepts either.
-# Defined once and used inline: as a prerequisite target it printed its own
-# make error on top of the message, and the actionable line scrolled away.
-CREDS_OK = [ -n "$$GH_TOKEN" ] || ssh-add -l >/dev/null 2>&1
-NEED_CREDS = $(CREDS_OK) || { $(MAKE) --no-print-directory creds-help; exit 1; }
-HAVE_IMAGE = docker image inspect $(DDN_IMAGE) >/dev/null 2>&1
 
 # Exported only when *you* set them. Exporting make's own default would put
 # `DDN_API_PORT=8000` in compose's environment, where it outranks `.env` --
@@ -68,7 +62,7 @@ endif
 .DEFAULT_GOAL := help
 .PHONY: help install test lint fmt check notebooks nb-clean bootstrap up down logs ps \
 	shell api worker redis rebuild clean config \
-	creds-help guard-docker
+	guard-docker
 
 help:  ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -102,7 +96,6 @@ notebooks:  ## Open the notebooks in `notebooks/`
 # ------------------------------------------------------------------- services
 
 bootstrap: guard-docker  ## Build the images and start the stack
-	@$(NEED_CREDS)
 	$(COMPOSE) build
 	$(COMPOSE) up -d --wait
 	@port=$$($(COMPOSE) port api 8000 2>/dev/null | sed 's/.*://'); \
@@ -114,7 +107,6 @@ bootstrap: guard-docker  ## Build the images and start the stack
 	echo
 
 up: guard-docker  ## Start the stack without rebuilding
-	@$(HAVE_IMAGE) || $(NEED_CREDS)
 	$(COMPOSE) up -d
 
 down:  ## Stop the stack, keeping the queue's data
@@ -141,7 +133,6 @@ worker: redis  ## Run an Arq worker on the host (§13.1)
 		$(UV) run arq ddn.api.jobs.WorkerSettings
 
 rebuild: guard-docker  ## Rebuild from scratch
-	@$(NEED_CREDS)
 	$(COMPOSE) build --no-cache
 
 clean:  ## Stop everything and drop the queue's volume
@@ -167,35 +158,6 @@ config:  ## Print every variable in force, and which daemon they point at
 		|| true
 
 # --------------------------------------------------------------------- guards
-
-# The build clones a *second* private repository, and the Dockerfile accepts
-# either credential for it: a token, or an ssh-agent with a key loaded. This
-# guard has to accept both, or it refuses a path the build supports -- which it
-# did, until `make up` turned somebody away who had keys and no token.
-#
-# Only reached when something is actually going to be built. `make up` on an
-# image that already exists needs no credential at all, which is what "without
-# rebuilding" means.
-creds-help:
-	@if [ -n "$$GH_TOKEN" ]; then exit 0; fi; \
-	if ssh-add -l >/dev/null 2>&1; then exit 0; fi; \
-	echo "No credential for the private dependency, and no image to start."; \
-	echo; \
-	echo "  The image build installs vrp-platform from"; \
-	echo "  github.com/lvalverdeb/osrm-microservice, which is private."; \
-	echo "  Without one of these, 'uv sync' fails inside the build with a git"; \
-	echo "  authentication error that names neither repository."; \
-	echo; \
-	echo "  Either:"; \
-	echo "    export GH_TOKEN=\$$(gh auth token)"; \
-	echo "  or load a key the agent can offer:"; \
-	echo "    ssh-add ~/.ssh/id_ed25519      # 'ssh-add -l' to check"; \
-	echo; \
-	echo "  'make up' builds when there is no image yet, which is why it asks."; \
-	echo "  Once one exists, starting it needs neither. Nor does 'make test',"; \
-	echo "  which needs no daemon at all."; \
-	true
-
 
 # Reaching no daemon is the other failure that arrives as a wall of Go stack
 # rather than a sentence. Say which endpoint was tried, and how to point

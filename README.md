@@ -15,16 +15,16 @@ finding the number without that framing leads exactly the wrong way.
 
 ## Getting it running
 
-**You need read access to two private repositories, not one.** `ddn` pins the
-platform by git tag:
+`ddn` pins the platform by git tag, from a public repository:
 
 ```toml
 "vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice@v0.4.0"
 ```
 
-Without access to `osrm-microservice` you get a git authentication failure from
-`uv sync` rather than anything that names the cause. That is the first thing a
-new person hits.
+Nothing else is needed to clone it. This README said for a long time that you
+needed read access to *two private repositories* — `osrm-microservice` is
+public, as the Disclosure section of `CLAUDE.md` says in so many words, and the
+two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
@@ -38,12 +38,8 @@ no routing data. That is the whole of what it takes to work on the modules.
 To run the §13 service, which does need a queue:
 
 ```sh
-export GH_TOKEN=$(gh auth token)   # the build clones the *other* private repo
-make bootstrap                     # redis, the API on :8000, an Arq worker
+make bootstrap     # redis, the API on :8000, an Arq worker
 ```
-
-An ssh-agent with a key loaded works instead of the token — the build accepts
-either. Neither is needed to `make up` an image that already exists.
 
 The token is the same second-repository problem as above, moved into the image
 build. `make bootstrap` stops with that explanation rather than letting `uv
@@ -55,7 +51,7 @@ Compose reads `.env` from the repository root by itself, and `make` picks the
 same names up from your shell:
 
 ```sh
-cp .env.example .env     # DDN_API_PORT, DDN_IMAGE, GH_TOKEN, DOCKER_HOST…
+cp .env.example .env     # DDN_API_PORT, DDN_IMAGE, DOCKER_HOST…
 make config              # what is in force, and which daemon it points at
 ```
 
@@ -114,10 +110,8 @@ make nb-clean      # strip saved outputs before committing
 ## CI
 
 `.github/workflows/check.yml` runs `make check` — ruff, then the suite — on
-every push and pull request. It needs one repository secret, `DEPS_TOKEN`: a
-fine-grained token with `Contents: read` on `lvalverdeb/osrm-microservice`,
-because `GITHUB_TOKEN` is scoped to this repository and `uv sync` clones that
-one. Without it the workflow stops on its first step and says so.
+every push and pull request. No secrets: the suite needs no gateway, no Redis,
+no routing data and no credentials.
 
 ## Where the answers are
 

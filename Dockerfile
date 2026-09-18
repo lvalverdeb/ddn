@@ -1,17 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
-# DDN in a container. Two stages, because the build needs credentials the
-# runtime must never see.
+# DDN in a container. Two stages, so the build tooling and the compiler stay
+# out of the image that ships.
 #
-# **This image cannot be built without access to a second private repository.**
-# `pyproject.toml` pins the platform by git tag:
-#   vrp-platform[pyvrp] @ git+https://github.com/lvalverdeb/osrm-microservice
-# so `uv sync` clones it. That is the first thing a new person hits, and it
-# fails with a git authentication error that names neither repository.
-#
-# The token is passed as a BuildKit secret and read into git's environment for
-# one RUN, never written to a file. `git config --global` would have put it in
-# a layer, where `docker history` would show it.
+# `pyproject.toml` pins the platform by git tag from a public repository, so
+# the clone needs no credential. This file used to carry a BuildKit secret and
+# an ssh fallback for it, on the strength of a README line that said otherwise.
 
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS build
 
@@ -28,19 +22,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # The dependencies alone, so that editing source does not re-resolve them.
-RUN --mount=type=secret,id=gh_token,required=false \
-    --mount=type=ssh \
-    if [ -s /run/secrets/gh_token ]; then \
-        GIT_CONFIG_COUNT=1 \
-        GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/gh_token)@github.com/.insteadOf" \
-        GIT_CONFIG_VALUE_0="https://github.com/" \
-        uv sync --frozen --no-install-project --extra api; \
-    else \
-        GIT_CONFIG_COUNT=1 \
-        GIT_CONFIG_KEY_0="url.git@github.com:.insteadOf" \
-        GIT_CONFIG_VALUE_0="https://github.com/" \
-        uv sync --frozen --no-install-project --extra api; \
-    fi
+RUN uv sync --frozen --no-install-project --extra api
 
 # `models/` sits beside `ddn/` on purpose: `contract.load_model` reads the
 # delivery models by path relative to the package, because this repository
@@ -52,8 +34,7 @@ RUN --mount=type=secret,id=gh_token,required=false \
 # duplicate something cheaper elsewhere.
 COPY ddn/ ./ddn/
 COPY models/ ./models/
-RUN --mount=type=secret,id=gh_token,required=false \
-    uv sync --frozen --extra api --no-editable
+RUN uv sync --frozen --extra api --no-editable
 
 # The suite is not in this image, so nothing at runtime would notice `models/`
 # missing until the first routing run failed. `contract.load_model` reads it by

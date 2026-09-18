@@ -19,8 +19,6 @@ x-image: &image
   image: ${DDN_IMAGE:-ddn-api:latest}
   build:
     context: .
-    secrets: [gh_token]
-    ssh: [default]
   environment:
     DDN_REDIS_DSN: redis://redis:6379/0
   depends_on:
@@ -61,9 +59,3 @@ services:
 volumes:
   redis-data:
 
-secrets:
-  gh_token:
-    # Read access to lvalverdeb/osrm-microservice. Without it -- or an
-    # ssh-agent -- `uv sync` fails during the build with a git authentication
-    # error that names no repository.
-    environment: GH_TOKEN
