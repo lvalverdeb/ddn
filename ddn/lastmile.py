@@ -25,7 +25,6 @@ unserved *in the same places every day*, which §7.2 already penalises through
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -122,23 +121,6 @@ class FacilityPlan:
             return 0
         return sum(1 for route in self.solution.routes
                    if any(step.order_id for step in route.steps))
-
-
-def nearest_facility(package: dict[str, Any],
-                     facilities: Sequence[dict[str, Any]]) -> str:
-    """§3.3's rule, straight-line.
-
-    §3.3 prefers road distance "where the road network makes them differ
-    materially" and accepts straight-line "as a first approximation to be
-    validated against operations". Straight-line here because the alternative
-    is a 50,000 x 7 road matrix built before any routing has happened, to
-    decide something the facilities' geographic separation already decides.
-    Worth revisiting per §3.3 if two facilities ever sit across a river.
-    """
-    lat, lon = package["lat"], package["lon"]
-    scale = math.cos(math.radians(lat))
-    return min(facilities, key=lambda f: (f["lat"] - lat) ** 2
-               + ((f["lon"] - lon) * scale) ** 2)["id"]
 
 
 def allocate(pools: dict[str, int], bikes: int) -> dict[str, int]:

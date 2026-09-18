@@ -24,6 +24,7 @@ from vrp.solve.pyvrp_adapter import solve
 from vrp.verify import verify
 
 from ddn import contract, lastmile
+from ddn.model.facility import nearest_facility
 
 
 def _need(var: str, what: str) -> str:
@@ -125,7 +126,7 @@ try:
     routable, excluded = contract.triage(packages, today=TODAY)
     by_facility: dict[str, list] = {f["id"]: [] for f in facilities}
     for pkg in routable:
-        by_facility[lastmile.nearest_facility(pkg, facilities)].append(pkg)
+        by_facility[nearest_facility(pkg, facilities)].append(pkg)
 
     pools = {f: len(v) for f, v in by_facility.items()}
     bikes = lastmile.allocate(pools, BIKES)
