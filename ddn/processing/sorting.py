@@ -19,6 +19,11 @@ The flag applies only to envelopes still carrying a zip centroid. An address
 that has been geocoded is precise enough that near-equidistance is a real fact
 about the geography rather than an artefact of the centroid, and §3.2's concern
 is the artefact.
+
+**Distances are road distances**, from a matrix the caller supplies — §3.3
+assigns "by road distance" and a straddle margin measured any other way is a
+margin in the wrong units. §5.2.4 sorts at upload-file receipt, so the caller is
+whoever holds a gateway at that point.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from vrp.model import TravelMatrix
 
 from ddn import assumptions
 from ddn.model.facility import ranked
@@ -41,6 +48,7 @@ class Sorted:
     package_id: str
     facility_id: str
     runner_up: str | None
+    #: Road metres between the nearest facility and the next nearest.
     margin_m: float
     #: §3.2's "[flag these]" -- not a decision, a flag. Open Question 14.
     straddles: bool = False
@@ -48,15 +56,18 @@ class Sorted:
 
 def presort(
     envelopes: Sequence[Mapping[str, Any]],
-    facilities: Sequence[Mapping[str, Any]], *,
+    facilities: Sequence[Mapping[str, Any]],
+    matrix: TravelMatrix,
+    index: Mapping[str, int], *,
     margin_m: float = assumptions.EQUIDISTANT_MARGIN_M,
 ) -> tuple[Sorted, ...]:
     """§3.3's nearest-facility rule over a pool, with §3.2's straddle flag.
 
     Args:
-        envelopes: §9.1 records carrying `package_id`, `lat`, `lon` and
-            `coord_source`.
-        facilities: §3.1 rows carrying `id`, `lat`, `lon`.
+        envelopes: §9.1 records carrying `package_id` and `coord_source`.
+        facilities: §3.1 rows carrying `id`.
+        matrix: road travel spanning every envelope and every facility.
+        index: id -> matrix row, for each of them.
         margin_m: how close the second-nearest facility must be for a
             zip-centroid envelope to be flagged. Defaults to the placeholder in
             `docs/assumptions.md`; §3.2 gives no figure.
@@ -74,7 +85,7 @@ def presort(
 
     results: list[Sorted] = []
     for envelope in envelopes:
-        order = ranked(envelope, facilities)
+        order = ranked(envelope, facilities, matrix, index)
         nearest, distance = order[0]
         runner_up, second = order[1] if len(order) > 1 else (None, None)
         margin = float("inf") if second is None else second - distance

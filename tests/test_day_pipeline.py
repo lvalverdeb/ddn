@@ -19,11 +19,12 @@ from ddn import assumptions, contract
 from ddn import solver_adapter as sa
 from ddn.linehaul import DAY, latest_departure, plan
 from ddn.model import Status, VehicleRole, VehicleType
-from ddn.model.facility import metres_between
+from ddn.model import travel as road
 from ddn.pickups import run as run_pickups
 from ddn.processing import schedule
 from ddn.solver_adapter import postcheck
 from tests.fixtures import peak_day
+from tests.matrices import fake_matrix
 
 HOUR = 3600
 UNLOAD = assumptions.FACILITY_UNLOAD_MIN * 60
@@ -153,13 +154,12 @@ def test_the_pickup_day_collects_bags_or_accounts_for_them(day):
             for v in day.vehicles
             if v.type is VehicleType.VAN and v.role is VehicleRole.PICKUP]
 
-    def travel(lat, lon, other_lat, other_lon):
-        return int(metres_between(lat, lon, other_lat, other_lon) / (40_000 / 3600))
-
+    hub = {"id": "HUB", "lat": day.facilities[0].lat,
+           "lon": day.facilities[0].lon}
+    points = [hub, *requests]
     dispatch = run_pickups(
-        requests, vans, {"id": "HUB", "lat": day.facilities[0].lat,
-                         "lon": day.facilities[0].lon},
-        travel=travel,
+        requests, vans, hub,
+        travel=road.over(fake_matrix(points), road.index_of(points)),
         cut_off=(assumptions.PROCESSING_CUTOFF.hour * HOUR
                  + assumptions.PROCESSING_CUTOFF.minute * 60))
 

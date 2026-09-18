@@ -36,6 +36,13 @@ file; cite them the same way in docstrings, comments and commit messages.
   **Never apply an SLA weighting on top of it:** §6.1 makes priority the solver's
   sole ranking signal because it already incorporates SLA proximity, and SLA date
   = today is a hard constraint, not a weight.
+- **§3.3 is road distance.** "Nearest facility by road distance" — not straight
+  line. `model/facility.py` ranks from a matrix the caller supplies, as every
+  other stage does, and offers no straight-line fallback: one silently wrong
+  answer per envelope is worse than a refusal, because it puts an envelope at a
+  depot that is nearer on paper and further by road and nothing downstream can
+  tell. The suite's stand-ins live in `tests/matrices.py` and are named
+  `fake_matrix` for that reason.
 - **§7.4's implication** — 35 envelopes × 10 minutes is 350 minutes against an
   8-hour shift, so **shift duration, not envelope count, binds**, and route
   duration must stay a hard constraint. Relaxing it changes the problem, not the
@@ -152,7 +159,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 617 tests; no gateway, no Redis, no routing data
+make test                    # 619 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```

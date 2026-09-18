@@ -1,55 +1,77 @@
-"""§3.3's facility assignment rule.
+"""§3.3's facility assignment rule, on road distance.
 
-Sorting (§5.2.4) and last-mile routing (§5.4) both need to know which facility
-an envelope belongs to, and §3.2 puts the decision at upload-file receipt --
-before the bag arrives, and long before anything is routed. It lives here
-rather than in either stage for that reason: it is a fact about the network,
-not about a route.
+§3.3 is unambiguous: an envelope goes to its "nearest facility **by road
+distance**". This module used to rank by straight line, justified by a
+docstring quoting §3.3 as accepting straight-line "as a first approximation to
+be validated against operations". That sentence was real — in the spec as it
+stood before v0.10. The v0.10 rewrite removed it and hardened the rule, and the
+code went on citing a permission the document had withdrawn, which is why the
+deviation survived being read.
+
+**The matrix comes from the caller**, as it does for every other stage. §5.2.4
+sorts at upload-file receipt, so the caller is whoever has a gateway then; this
+module will not reach for one, any more than `lastmile` or `returns` do. A
+straight line is not offered as a fallback: one silently wrong answer per
+envelope is worse than a refusal, because it moves an envelope to a depot that
+is nearer on paper and further by road, and nothing downstream can tell.
 """
 
 from __future__ import annotations
 
-import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-EARTH_RADIUS_M = 6_371_000
+from vrp.model import TravelMatrix, UnreachableArc
 
 
-def metres_between(lat: float, lon: float,
-                   other_lat: float, other_lon: float) -> float:
-    """Straight-line metres, equirectangular.
+class NoRoadPath(ValueError):
+    """No facility is reachable by road from this envelope's coordinates.
 
-    The same approximation `nearest_facility` has always ranked by, now in a
-    unit a margin can be expressed in: §3.2 asks for zips "straddling two
-    facilities' areas" to be flagged, and "straddling" needs a distance rather
-    than an ordering.
+    §9.2 has no reason code for it — `capacity-finding.md` §4 records that gap
+    — so it is raised rather than resolved into an arbitrary facility.
     """
-    scale = math.cos(math.radians((lat + other_lat) / 2))
-    dy = math.radians(other_lat - lat)
-    dx = math.radians(other_lon - lon) * scale
-    return EARTH_RADIUS_M * math.hypot(dx, dy)
 
 
-def ranked(package: dict[str, Any],
-           facilities: Sequence[dict[str, Any]]) -> tuple[tuple[str, float], ...]:
-    """Every facility by straight-line metres from the package, nearest first."""
-    lat, lon = package["lat"], package["lon"]
-    return tuple(sorted(
-        ((f["id"], metres_between(lat, lon, f["lat"], f["lon"]))
-         for f in facilities),
-        key=lambda pair: (pair[1], pair[0])))
+def ranked(package: Mapping[str, Any], facilities: Sequence[Mapping[str, Any]],
+           matrix: TravelMatrix, index: Mapping[str, int]) -> tuple[
+               tuple[str, int], ...]:
+    """Every facility by road metres from the package, nearest first.
 
+    Args:
+        package: a §9.1 record; `package_id` identifies its row in `index`.
+        facilities: §3.1 rows, each with an `id` in `index`.
+        matrix: road travel spanning at least the package and the facilities.
+        index: id -> matrix row, for the package and every facility.
 
-def nearest_facility(package: dict[str, Any],
-                     facilities: Sequence[dict[str, Any]]) -> str:
-    """§3.3's rule, straight-line.
-
-    §3.3 prefers road distance "where the road network makes them differ
-    materially" and accepts straight-line "as a first approximation to be
-    validated against operations". Straight-line here because the alternative
-    is a 50,000 x 7 road matrix built before any routing has happened, to
-    decide something the facilities' geographic separation already decides.
-    Worth revisiting per §3.3 if two facilities ever sit across a river.
+    Raises:
+        KeyError: if the package or a facility has no row. A missing row is a
+            caller that built the matrix over a different set, and guessing
+            which row was meant is how travel lands on the wrong stop.
+        NoRoadPath: if no facility is reachable from the package.
     """
-    return ranked(package, facilities)[0][0]
+    origin = index[package["package_id"]]
+    reachable = []
+    for facility in facilities:
+        try:
+            metres = matrix.distance(origin, index[facility["id"]])
+        except UnreachableArc:
+            # The platform raises rather than returning its -1 sentinel, so an
+            # unreachable facility cannot be compared as though it were near.
+            # `MTX-5` and `lastmile.reachable_subset` exist for the same reason.
+            continue
+        reachable.append((facility["id"], metres))
+
+    if not reachable:
+        raise NoRoadPath(
+            f"{package['package_id']} has no road path to any of "
+            f"{', '.join(f['id'] for f in facilities)}; §3.3 assigns by road "
+            "distance and this address reaches none of them")
+    return tuple(sorted(reachable, key=lambda pair: (pair[1], pair[0])))
+
+
+def nearest_facility(package: Mapping[str, Any],
+                     facilities: Sequence[Mapping[str, Any]],
+                     matrix: TravelMatrix,
+                     index: Mapping[str, int]) -> str:
+    """§3.3: "nearest facility by road distance"."""
+    return ranked(package, facilities, matrix, index)[0][0]

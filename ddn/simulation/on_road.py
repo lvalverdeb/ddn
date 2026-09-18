@@ -123,10 +123,29 @@ try:
                          "weight_g": int(r["weight_kg"] * 1000),
                          "attempt_number": 1})
 
+    # One cache across the whole run: MTX-10 expects ≥90% pair reuse, and the
+    # sort matrix below covers every pair a facility matrix will ask for again.
+    cache = PairCache()
+
     routable, excluded = contract.triage(packages, today=TODAY)
+
+    # §3.3 assigns "by road distance", so sorting needs a matrix before any
+    # facility has one of its own: the facilities and the whole routable pool
+    # in one table. It is the largest build of the run and buys the thing that
+    # cannot be corrected later -- an envelope sorted to a depot that is nearer
+    # on paper and further by road is simply at the wrong depot all day.
+    sort_points = [*facilities, *routable]
+    sort_matrix, _ = build_large_matrix(
+        base, [(p["lat"], p["lon"]) for p in sort_points],
+        cache=cache, timeout=600.0)
+    sort_index = {p.get("id", p.get("package_id")): row
+                  for row, p in enumerate(sort_points)}
+    print(f"sort matrix {sort_matrix.size} locations")
+
     by_facility: dict[str, list] = {f["id"]: [] for f in facilities}
     for pkg in routable:
-        by_facility[nearest_facility(pkg, facilities)].append(pkg)
+        by_facility[nearest_facility(pkg, facilities, sort_matrix,
+                                     sort_index)].append(pkg)
 
     pools = {f: len(v) for f, v in by_facility.items()}
     bikes = lastmile.allocate(pools, BIKES)
@@ -144,7 +163,7 @@ try:
         if not pkgs:
             continue
         pts = [(f["lat"], f["lon"])] + [(p["lat"], p["lon"]) for p in pkgs]
-        matrix, _ = build_large_matrix(base, pts, cache=PairCache(), timeout=180.0)
+        matrix, _ = build_large_matrix(base, pts, cache=cache, timeout=180.0)
         keep = lastmile.reachable_subset(matrix, len(pts))
         dropped = len(pts) - len(keep)
         if dropped:

@@ -24,10 +24,10 @@ from ddn.api.store import Store
 from ddn.model import VehicleType
 from tests.api_harness import drain, make_app, make_pool
 from tests.fixtures import peak_day
+from tests.matrices import fake_matrix
 
 HOUR = 3600
 SEED = 7
-SPEED_KPH = 40.0
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +56,6 @@ def payload(day):
     return {
         "day": day.delivery_day.isoformat(),
         "seed": SEED,
-        "speed_kph": SPEED_KPH,
         "allocation": dict(peak_day.BIKE_ALLOCATION),
         "pools": pools,
         "facilities": [
@@ -92,6 +91,20 @@ def payload(day):
     }
 
 
+@pytest.fixture(scope="module")
+def payload_with_travel(payload, day):
+    """§3.3 and §5.1 are road distance, so the caller supplies a matrix.
+
+    A fake one — `tests/matrices.py` — spanning exactly the hub and the bag
+    sites, which is where §5.1's legs run.
+    """
+    hub = next(f for f in payload["facilities"] if f["id"] == "HUB")
+    points = [hub, *payload["requests"]]
+    matrix = fake_matrix(points)
+    return dict(payload, matrix={"durations": [list(r) for r in matrix.durations],
+                                 "distances": [list(r) for r in matrix.distances]})
+
+
 @pytest.fixture
 def pool():
     return make_pool()
@@ -110,7 +123,8 @@ async def client(pool, store):
 
 
 async def test_the_peak_day_through_the_api_matches_task_5(
-        client, pool, store, day, payload):
+        client, pool, store, day, payload_with_travel):
+    payload = payload_with_travel
     """The whole chain, and then the same numbers."""
     # ---- ingest (§5.1.1): the upload file precedes the bag.
     sample = [{"package_id": e["package_id"], "customer_id": e["customer_id"],
@@ -230,12 +244,16 @@ async def test_the_return_run_goes_over_the_queue(client, pool, day):
 async def test_the_pickup_worker_publishes_the_plan_the_endpoint_reads(
         client, store, payload):
     """§13.3's first process, feeding `GET /pickups/plan` (§13.2)."""
+    hub = {"id": "HUB", "lat": 9.9333, "lon": -84.0833}
+    requests = payload["requests"][:20]
+    matrix = fake_matrix([hub, *requests])
     plan = workers.reoptimise_pickups(store, {
         "cycle": 1,
-        "requests": payload["requests"][:20],
+        "requests": requests,
         "vans": [v for v in payload["vans"] if v["role"] == "pickup"],
-        "hub": {"id": "HUB", "lat": 9.9333, "lon": -84.0833},
-        "speed_kph": SPEED_KPH})
+        "hub": hub,
+        "matrix": {"durations": [list(r) for r in matrix.durations],
+                   "distances": [list(r) for r in matrix.distances]}})
     assert plan["visits"] > 0
 
     published = (await client.get("/pickups/plan")).json()

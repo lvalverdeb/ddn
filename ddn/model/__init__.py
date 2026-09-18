@@ -6,6 +6,7 @@ Geography (§3.3's nearest-facility rule), allocation (§4.2) and every stage of
 §5 live elsewhere.
 """
 
+from ddn.model.facility import NoRoadPath, nearest_facility, ranked
 from ddn.model.lifecycle import (
     ROUTABLE,
     TERMINAL,
@@ -45,6 +46,7 @@ __all__ = [
     "GeocodeConfidence",
     "IllegalTransition",
     "Mailbag",
+    "NoRoadPath",
     "Outcome",
     "PickupRequest",
     "ReturnStop",
@@ -54,4 +56,6 @@ __all__ = [
     "VehicleType",
     "advance",
     "may",
+    "nearest_facility",
+    "ranked",
 ]

@@ -14,19 +14,18 @@ import pytest
 
 from ddn import assumptions
 from ddn.allocation import EFFECTIVE_PER_BIKE
-from ddn.model.facility import metres_between
+from ddn.model import travel as road
 from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Tally, measure
 from tests.fixtures import peak_day
+from tests.matrices import fake_matrix
 
 HOUR = 3600
 FLEET = peak_day.MOTORBIKES
 
 
-def travel(lat: float, lon: float, other_lat: float, other_lon: float) -> int:
-    """40 km/h. A test's stand-in for the gateway, never a default."""
-    return int(metres_between(lat, lon, other_lat, other_lon) / (40_000 / 3600))
+
 
 
 @pytest.fixture(scope="module")
@@ -74,8 +73,13 @@ def inputs():
             for v in day.vehicles if v.type.value == "van"]
     bikes = [v.vehicle_id for v in day.vehicles if v.type.value == "motorbike"]
 
+    # §5.1's legs run hub-to-site, so the matrix spans exactly those. A fake:
+    # `tests/matrices.py` says why the suite has no gateway, and what that
+    # costs — nothing here measures geography.
+    points = [facilities[0], *requests]
     return {"facilities": facilities, "bikes": bikes, "vans": vans,
-            "requests": requests, "inflow": inflow, "travel": travel,
+            "requests": requests, "inflow": inflow,
+            "travel": road.over(fake_matrix(points), road.index_of(points)),
             "allocation": peak_day.BIKE_ALLOCATION,
             "_pools": {f: tuple(p) for f, p in pools.items()},
             "_day": day}

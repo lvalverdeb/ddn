@@ -28,7 +28,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 617 tests, no services needed
+make test       # 619 tests, no services needed
 make check      # lint and tests
 ```
 

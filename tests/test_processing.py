@@ -7,6 +7,7 @@ import pytest
 from ddn import assumptions
 from ddn.processing import Readiness, presort, requires_assembly, schedule
 from ddn.processing.readiness import ASSEMBLY_TYPES
+from tests.matrices import fake_matrix, rows
 
 HOUR = 3600
 FACILITIES = [{"id": "HUB", "lat": 9.9333, "lon": -84.0833},
@@ -98,12 +99,23 @@ def test_readiness_is_ordered_by_when_the_hub_finishes():
 
 
 # ------------------------------------------------------------------- sorting
+#
+# §3.3 assigns by *road* distance, so these pass a matrix like every other
+# stage. It is a fake — see `tests/matrices.py`; the suite has no gateway — and
+# `detour` shapes it like roads rather than pretending it is one.
 
-def test_presort_assigns_each_envelope_to_its_nearest_facility():
-    """§3.3, applied at upload-file receipt rather than after collection."""
+
+def sorted_over(envelopes, facilities=FACILITIES, **kwargs):
+    points = [*facilities, *envelopes]
+    return presort(envelopes, facilities, fake_matrix(points, detour=1.3),
+                   rows(points), **kwargs)
+
+
+def test_presort_assigns_each_envelope_to_its_nearest_facility_by_road():
+    """§3.3: "nearest facility by road distance"."""
     near_hub = envelope("P1", lat=9.9333, lon=-84.0833)
     near_d1 = envelope("P2", lat=9.9981, lon=-84.1197)
-    assert [s.facility_id for s in presort([near_hub, near_d1], FACILITIES)] == [
+    assert [s.facility_id for s in sorted_over([near_hub, near_d1])] == [
         "HUB", "D1"]
 
 
@@ -111,28 +123,58 @@ def test_a_zip_centroid_between_two_facilities_is_flagged_not_held():
     """§3.2's "[flag these]"; Open Question 14 has not said what to do."""
     midpoint = envelope("P1", lat=9.9657, lon=-84.1015,
                         coord_source="zip_centroid")
-    sorted_one = presort([midpoint], FACILITIES)[0]
-    assert sorted_one.straddles is True
-    assert sorted_one.facility_id in {"HUB", "D1"}, "it is still sorted"
-    assert sorted_one.runner_up in {"HUB", "D1"}
-    assert sorted_one.facility_id != sorted_one.runner_up
+    one = sorted_over([midpoint])[0]
+    assert one.straddles is True
+    assert one.facility_id in {"HUB", "D1"}, "it is still sorted"
+    assert one.runner_up in {"HUB", "D1"}
+    assert one.facility_id != one.runner_up
 
 
 def test_a_geocoded_address_between_two_facilities_is_not_flagged():
     """§3.2's concern is the centroid's artefact, not the geography."""
     midpoint = envelope("P1", lat=9.9657, lon=-84.1015,
                         coord_source="geocoded_address")
-    assert presort([midpoint], FACILITIES)[0].straddles is False
+    assert sorted_over([midpoint])[0].straddles is False
 
 
 def test_an_envelope_beside_one_facility_is_not_flagged():
     beside = envelope("P1", lat=9.9333, lon=-84.0833,
                       coord_source="zip_centroid")
-    result = presort([beside], FACILITIES)[0]
+    result = sorted_over([beside])[0]
     assert result.straddles is False
     assert result.margin_m > assumptions.EQUIDISTANT_MARGIN_M
 
 
+def test_the_margin_is_measured_in_road_metres():
+    """A detour factor moves the margin, which a straight line would not."""
+    between = envelope("P1", lat=9.9657, lon=-84.1015,
+                       coord_source="zip_centroid")
+    points = [*FACILITIES, between]
+    direct = presort([between], FACILITIES, fake_matrix(points),
+                     rows(points))[0]
+    winding = presort([between], FACILITIES, fake_matrix(points, detour=2.0),
+                      rows(points))[0]
+    assert winding.margin_m == pytest.approx(direct.margin_m * 2.0, rel=0.01)
+
+
+def test_an_envelope_with_no_road_path_is_refused():
+    """§9.2 has no reason code for it, so it is raised rather than invented."""
+    from vrp.model import UNREACHABLE, TravelMatrix
+
+    from ddn.model import NoRoadPath
+
+    cut_off = TravelMatrix(
+        version="island",
+        durations=((0, 1, UNREACHABLE), (1, 0, UNREACHABLE),
+                   (UNREACHABLE, UNREACHABLE, 0)),
+        distances=((0, 1, UNREACHABLE), (1, 0, UNREACHABLE),
+                   (UNREACHABLE, UNREACHABLE, 0)))
+    stranded = envelope("P1")
+    with pytest.raises(NoRoadPath, match="no road path"):
+        presort([stranded], FACILITIES, cut_off,
+                rows([*FACILITIES, stranded]))
+
+
 def test_sorting_into_no_facilities_is_refused():
     with pytest.raises(ValueError, match="HUB or D1-D6"):
-        presort([envelope("P1")], [])
+        sorted_over([envelope("P1")], facilities=[])
