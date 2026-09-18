@@ -9,9 +9,13 @@ vehicle-to-depot assignment, and it settles §4.2 — the **two-stage** approach
 the document already recommends is the only one available, so that
 recommendation can stop being provisional.
 
-Measured against `vrp-platform` 0.3.2 as pinned by this repository, through
-this repository's own `ddn.contract` mapping. Every line below is real output,
-not a reading of the source.
+First measured against `vrp-platform` 0.3.2, and **re-run unchanged against
+`v0.4.0`** — the version this repository now pins — on 17 September 2026. All
+five answers reproduce exactly; the bump touches no library code
+(`git diff --stat v0.3.3..v0.4.0 -- vrp/ gateway/` is empty), so this is a
+confirmation rather than a new measurement. Both runs go through this
+repository's own `ddn.contract` mapping, and every line below is real output
+from `docs/solver-capabilities.py`, not a reading of the source.
 
 | # | Capability | Answer |
 |---|---|---|
