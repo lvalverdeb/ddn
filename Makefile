@@ -66,7 +66,7 @@ export DOCKER_CONTEXT
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help install test lint fmt check bootstrap up down logs ps \
+.PHONY: help install test lint fmt check notebooks bootstrap up down logs ps \
 	shell api worker redis rebuild clean config \
 	creds-help guard-docker
 
@@ -90,6 +90,11 @@ fmt: install  ## Ruff, fixing what it can
 	$(UV) run ruff check --fix .
 
 check: lint test  ## What CI would run, if there were CI
+
+notebooks:  ## Open the notebooks in `notebooks/`
+	@command -v $(UV) >/dev/null || { echo "uv is not installed"; exit 1; }
+	$(UV) sync --extra dev --extra api --extra notebooks
+	$(UV) run jupyter lab notebooks/
 
 # ------------------------------------------------------------------- services
 

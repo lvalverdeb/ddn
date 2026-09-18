@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 make            # what there is
-make test       # 608 tests, no services needed
+make test       # 615 tests, no services needed
 make check      # lint and tests
 ```
 
@@ -99,6 +99,16 @@ Delivery models live in `models/` rather than upstream, because they describe
 *this* operation. `contract.load_model` reads them **by path**, since this
 repository ships the files and knows where they are; `VRP_MODEL_PATH` is how the
 platform's own tooling finds models it did not ship.
+
+## Worked examples
+
+[`notebooks/`](notebooks/) has three: a complete day, the stages one at a time,
+and the same work over §13's API. The suite executes all three, because a
+notebook nobody runs is documentation that agrees with itself.
+
+```sh
+make notebooks
+```
 
 ## Where the answers are
 

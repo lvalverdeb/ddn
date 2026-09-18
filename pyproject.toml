@@ -19,8 +19,19 @@ api = [
     "fastapi>=0.115",
     "arq>=0.26",
 ]
+# For opening the notebooks in `notebooks/`. Not needed to run them in the
+# suite -- `nbclient` and `ipykernel` below do that -- so nobody installs a
+# lab to run the tests.
+notebooks = [
+    "jupyterlab>=4.3",
+]
 dev = [
     "pytest>=8.0.0",
+    # So `tests/test_notebooks.py` can execute every notebook. A notebook that
+    # is not run is documentation that agrees with itself.
+    "nbclient>=0.10",
+    "nbformat>=5.10",
+    "ipykernel>=6.29",
     "pytest-asyncio>=0.24",
     "ruff==0.16.4",
     # So the suite still needs no external service. CLAUDE.md's commands

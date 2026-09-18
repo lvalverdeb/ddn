@@ -152,7 +152,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 608 tests; no gateway, no Redis, no routing data
+make test                    # 615 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```
@@ -202,6 +202,10 @@ DDN_OSRM_GRAPH=/path/to/costa-rica-latest.osrm \
 - **Plan before code on anything touching more than one module**: propose the
   change, wait for approval. Note that `contract.py` is imported by most of the
   others, so this catches more changes than it looks like.
+- **`notebooks/` is executed by the suite.** Three worked examples calling the
+  same functions the API does. They ship without stored outputs, and nothing
+  asserts what they print — what is caught is one that no longer runs, which is
+  what actually goes wrong with a notebook.
 - **Every module ships with tests.** The worked example in §10 is the integration
   fixture: `tests/fixtures/peak_day.py` builds it deterministically from §10's
   own figures — keep them in sync, and derive fixture values from the document
