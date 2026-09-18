@@ -41,8 +41,12 @@ file; cite them the same way in docstrings, comments and commit messages.
   other stage does, and offers no straight-line fallback: one silently wrong
   answer per envelope is worse than a refusal, because it puts an envelope at a
   depot that is nearer on paper and further by road and nothing downstream can
-  tell. The suite's stand-ins live in `tests/matrices.py` and are named
-  `fake_matrix` for that reason.
+  tell. **The suite routes on real roads too**: `tests/matrices.py` replays a
+  table recorded once against OSRM over the Costa Rica extract, so no test
+  computes a distance. Straight-line travel understates by about 40% here —
+  hub to D1 is 11,551 m by road against 8,235 as the crow flies — and it was
+  hiding §8.3's answer: van-hours read 108 of 110 and passed, where the road
+  figure is 121 of 110 and binds hardest.
 - **§7.4's implication** — 35 envelopes × 10 minutes is 350 minutes against an
   8-hour shift, so **shift duration, not envelope count, binds**, and route
   duration must stay a hard constraint. Relaxing it changes the problem, not the
@@ -159,7 +163,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 619 tests; no gateway, no Redis, no routing data
+make test                    # 620 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```

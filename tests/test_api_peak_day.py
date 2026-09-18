@@ -24,7 +24,7 @@ from ddn.api.store import Store
 from ddn.model import VehicleType
 from tests.api_harness import drain, make_app, make_pool
 from tests.fixtures import peak_day
-from tests.matrices import fake_matrix
+from tests.matrices import road_matrix
 
 HOUR = 3600
 SEED = 7
@@ -100,7 +100,7 @@ def payload_with_travel(payload, day):
     """
     hub = next(f for f in payload["facilities"] if f["id"] == "HUB")
     points = [hub, *payload["requests"]]
-    matrix = fake_matrix(points)
+    matrix = road_matrix(points)
     return dict(payload, matrix={"durations": [list(r) for r in matrix.durations],
                                  "distances": [list(r) for r in matrix.distances]})
 
@@ -197,11 +197,16 @@ async def test_the_peak_day_through_the_api_matches_task_5(
     assert tally["dispatched"] == 2910
     assert tally["delivered"] == 2717
     assert tally["unassigned"] == 190
-    assert report["positioned"] == dict(peak_day.READY_BY_FACILITY)
-    assert sum(report["positioned"].values()) == peak_day.READY == 4550
+    # §10 positions all 4,550; on the recorded road table 4,140 arrive,
+    # because §5.1.6's cut-off meets legs that are 1.4x the crow-flies
+    # distance. `tests/test_simulation.py` carries the same numbers from the
+    # module side — the point of asserting them here is that HTTP does not
+    # change them.
+    assert sum(report["positioned"].values()) == 4140
     assert report["rolled"] == {}
-    assert state["result"]["tomorrow_pool"] == 4850
-    assert report["binding"] == "delivery"
+    assert state["result"]["tomorrow_pool"] == 4440
+    assert report["binding"] == "van-hours", (
+        "§8.3's prediction, visible only once travel is road travel")
     assert report["moves"] == 0
 
     # ---- outcomes (§6) reached the return run (§5.5).
@@ -246,7 +251,7 @@ async def test_the_pickup_worker_publishes_the_plan_the_endpoint_reads(
     """§13.3's first process, feeding `GET /pickups/plan` (§13.2)."""
     hub = {"id": "HUB", "lat": 9.9333, "lon": -84.0833}
     requests = payload["requests"][:20]
-    matrix = fake_matrix([hub, *requests])
+    matrix = road_matrix([hub, *requests])
     plan = workers.reoptimise_pickups(store, {
         "cycle": 1,
         "requests": requests,

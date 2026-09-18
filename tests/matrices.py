@@ -1,60 +1,91 @@
-"""Stand-in travel for tests. **Not road distance.**
+"""Travel for tests: **real road distances, replayed from a recording.**
 
-Production code takes road travel from a gateway-built matrix and offers no
-straight-line fallback — §3.3 assigns by road distance and §5.1 routes on it.
-The suite has no gateway and no graph, by design: `make test` runs anywhere
-with no infrastructure, and that promise is worth more than measuring real
-geography in a unit test.
+`tests/fixtures/road.json.gz` holds a table measured once against OSRM v26.8.0
+over the Costa Rica extract, car profile. `road_matrix` builds a `TravelMatrix`
+for any subset of those points, so the suite routes on real roads while still
+needing no gateway, no graph and no network.
 
-So tests build matrices here, and these functions are named to make it
-impossible to mistake one for the real thing. A figure measured on a
-`fake_matrix` describes the fake. `docs/capacity-finding.md` is what happens
-when that distinction slips.
+This replaced a `fake_matrix` that computed straight lines. Straight-line
+travel is not a neutral approximation, it is a systematic understatement: hub
+to D1 is 11,551 m by road against 8,235 m as the crow flies, a factor of 1.40.
+Every figure derived from the short version -- route durations, van-hours,
+§8.3's checks -- came out optimistic, in a repository whose main risk is a
+number that looks like a measurement and is not.
+
+**The network is real; the places are not.** The coordinates are the fixture's
+own, jittered around the placeholder towns in `docs/assumptions.md`. So these
+distances have the shape of Costa Rican roads and say nothing about the
+operation's geography, which §3.1 still does not supply.
+
+To add a coordinate, put it in `tests/fixtures/record_road.py` and re-record
+against a live OSRM. A point that is missing fails loudly rather than falling
+back to arithmetic.
 """
 
 from __future__ import annotations
 
-import math
+import gzip
+import json
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from vrp.model import TravelMatrix
 
-EARTH_RADIUS_M = 6_371_000
+ROAD = Path(__file__).resolve().parent / "fixtures" / "road.json.gz"
+PRECISION = 6
 
 
-def _metres(a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
-    """Equirectangular, and only ever used to shape a fake."""
-    scale = math.cos(math.radians((a["lat"] + b["lat"]) / 2))
-    dy = math.radians(b["lat"] - a["lat"])
-    dx = math.radians(b["lon"] - a["lon"]) * scale
-    return EARTH_RADIUS_M * math.hypot(dx, dy)
+@lru_cache(maxsize=1)
+def recording() -> dict[str, Any]:
+    """The recorded road table, read once."""
+    with gzip.open(ROAD, "rt", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
-def fake_matrix(points: Sequence[Mapping[str, Any]], *, kph: float = 40.0,
-                detour: float = 1.0) -> TravelMatrix:
-    """A matrix shaped like roads but made of straight lines.
+def _key(lat: float, lon: float) -> str:
+    return f"{round(float(lat), PRECISION)},{round(float(lon), PRECISION)}"
 
-    `detour` multiplies the straight-line distance: real roads run longer than
-    the crow flies, typically 1.2-1.4x, so a test that wants to feel road-like
-    can say so explicitly rather than pretend.
+
+def road_matrix(points: Sequence[Mapping[str, Any]]) -> TravelMatrix:
+    """Real road travel over `points`, in their order.
+
+    Raises:
+        KeyError: for a coordinate that was never recorded, naming it and how
+            to add it. Falling back to a computed distance is what this module
+            exists to stop.
     """
-    distances, durations = [], []
-    for a in points:
-        row_d, row_t = [], []
-        for b in points:
-            metres = 0.0 if a is b else _metres(a, b) * detour
-            row_d.append(int(metres))
-            row_t.append(int(metres / (kph * 1000 / 3600)))
-        distances.append(tuple(row_d))
-        durations.append(tuple(row_t))
-    return TravelMatrix(version="fake", durations=tuple(durations),
-                        distances=tuple(distances))
+    table = recording()
+    index = table["index"]
+
+    try:
+        rows_wanted = [index[_key(p["lat"], p["lon"])] for p in points]
+    except KeyError as missing:
+        raise KeyError(
+            f"no recorded road travel for {missing.args[0]}. Add the "
+            "coordinate to tests/fixtures/record_road.py and re-record against "
+            "a live OSRM; this module will not compute a distance instead."
+        ) from None
+
+    durations = table["durations"]
+    distances = table["distances"]
+    return TravelMatrix(
+        version=f"road:{table['source']}",
+        durations=tuple(tuple(durations[a][b] for b in rows_wanted)
+                        for a in rows_wanted),
+        distances=tuple(tuple(distances[a][b] for b in rows_wanted)
+                        for a in rows_wanted))
 
 
 def flat_matrix(size: int, *, seconds: int = 180,
                 metres: int = 700) -> TravelMatrix:
-    """Every pair the same. For tests about structure rather than geography."""
+    """Every pair identical. Not geography at all, and not pretending to be.
+
+    For tests about structure -- does a route start at its facility, is a bullet
+    reported -- where the distance is irrelevant and a uniform constant is
+    clearer than real travel that happens to vary.
+    """
     return TravelMatrix(
         version="flat",
         durations=tuple(tuple(0 if i == j else seconds for j in range(size))

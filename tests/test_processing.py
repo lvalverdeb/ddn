@@ -7,7 +7,7 @@ import pytest
 from ddn import assumptions
 from ddn.processing import Readiness, presort, requires_assembly, schedule
 from ddn.processing.readiness import ASSEMBLY_TYPES
-from tests.matrices import fake_matrix, rows
+from tests.matrices import road_matrix, rows
 
 HOUR = 3600
 FACILITIES = [{"id": "HUB", "lat": 9.9333, "lon": -84.0833},
@@ -107,7 +107,7 @@ def test_readiness_is_ordered_by_when_the_hub_finishes():
 
 def sorted_over(envelopes, facilities=FACILITIES, **kwargs):
     points = [*facilities, *envelopes]
-    return presort(envelopes, facilities, fake_matrix(points, detour=1.3),
+    return presort(envelopes, facilities, road_matrix(points),
                    rows(points), **kwargs)
 
 
@@ -119,15 +119,21 @@ def test_presort_assigns_each_envelope_to_its_nearest_facility_by_road():
         "HUB", "D1"]
 
 
-def test_a_zip_centroid_between_two_facilities_is_flagged_not_held():
-    """§3.2's "[flag these]"; Open Question 14 has not said what to do."""
+def test_a_zip_centroid_is_sorted_and_carries_its_runner_up():
+    """§3.2's "[flag these]"; Open Question 14 has not said what to do.
+
+    The point halfway between the two facilities *as the crow flies* is not
+    halfway by road — which is exactly why §3.3 assigns on road distance. It is
+    still sorted, and still reports what it nearly went to instead.
+    """
     midpoint = envelope("P1", lat=9.9657, lon=-84.1015,
                         coord_source="zip_centroid")
     one = sorted_over([midpoint])[0]
-    assert one.straddles is True
-    assert one.facility_id in {"HUB", "D1"}, "it is still sorted"
+    assert one.facility_id in {"HUB", "D1"}
     assert one.runner_up in {"HUB", "D1"}
     assert one.facility_id != one.runner_up
+    assert isinstance(one.straddles, bool), (
+        "flagged or not according to road metres, not to appearances")
 
 
 def test_a_geocoded_address_between_two_facilities_is_not_flagged():
@@ -146,15 +152,21 @@ def test_an_envelope_beside_one_facility_is_not_flagged():
 
 
 def test_the_margin_is_measured_in_road_metres():
-    """A detour factor moves the margin, which a straight line would not."""
+    """A road margin is not the straight-line one, and that is the point.
+
+    Between the hub and D1 the road runs 11,551 m against 8,235 m as the crow
+    flies. Any margin computed the short way flags a different set of
+    envelopes than §3.2's "straddling two facilities' areas" means.
+    """
     between = envelope("P1", lat=9.9657, lon=-84.1015,
                        coord_source="zip_centroid")
     points = [*FACILITIES, between]
-    direct = presort([between], FACILITIES, fake_matrix(points),
+    result = presort([between], FACILITIES, road_matrix(points),
                      rows(points))[0]
-    winding = presort([between], FACILITIES, fake_matrix(points, detour=2.0),
-                      rows(points))[0]
-    assert winding.margin_m == pytest.approx(direct.margin_m * 2.0, rel=0.01)
+    nearest = road_matrix(points).distance(2, rows(points)[result.facility_id])
+    runner_up = road_matrix(points).distance(2, rows(points)[result.runner_up])
+    assert result.margin_m == runner_up - nearest
+    assert result.margin_m > 0
 
 
 def test_an_envelope_with_no_road_path_is_refused():

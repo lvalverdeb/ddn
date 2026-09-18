@@ -24,7 +24,7 @@ from ddn.pickups import run as run_pickups
 from ddn.processing import schedule
 from ddn.solver_adapter import postcheck
 from tests.fixtures import peak_day
-from tests.matrices import fake_matrix
+from tests.matrices import road_matrix
 
 HOUR = 3600
 UNLOAD = assumptions.FACILITY_UNLOAD_MIN * 60
@@ -159,7 +159,7 @@ def test_the_pickup_day_collects_bags_or_accounts_for_them(day):
     points = [hub, *requests]
     dispatch = run_pickups(
         requests, vans, hub,
-        travel=road.over(fake_matrix(points), road.index_of(points)),
+        travel=road.over(road_matrix(points), road.index_of(points)),
         cut_off=(assumptions.PROCESSING_CUTOFF.hour * HOUR
                  + assumptions.PROCESSING_CUTOFF.minute * 60))
 

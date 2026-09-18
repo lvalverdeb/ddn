@@ -19,7 +19,7 @@ from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Tally, measure
 from tests.fixtures import peak_day
-from tests.matrices import fake_matrix
+from tests.matrices import road_matrix
 
 HOUR = 3600
 FLEET = peak_day.MOTORBIKES
@@ -79,7 +79,7 @@ def inputs():
     points = [facilities[0], *requests]
     return {"facilities": facilities, "bikes": bikes, "vans": vans,
             "requests": requests, "inflow": inflow,
-            "travel": road.over(fake_matrix(points), road.index_of(points)),
+            "travel": road.over(road_matrix(points), road.index_of(points)),
             "allocation": peak_day.BIKE_ALLOCATION,
             "_pools": {f: tuple(p) for f, p in pools.items()},
             "_day": day}
@@ -140,12 +140,34 @@ def test_the_day_delivers_about_section_10s_total(simulated):
     assert report.tally.dispatched == peak_day.MORNING_POOL - report.tally.unassigned
 
 
-def test_tomorrow_is_positioned_exactly_as_section_10_says(simulated):
-    """§10: "All 4,550 ready envelopes ... are positioned for delivery tomorrow"."""
+#: §10 says all 4,550 are positioned. On real road travel 4,140 are: the
+#: pickup vans cannot reach every site and return before §5.1.6's cut-off when
+#: the legs are the length roads actually make them. The gap is the document's
+#: to reconcile, and it is recorded rather than smoothed over.
+POSITIONED_ON_ROADS = 4140
+
+
+def test_not_everything_section_10_positions_reaches_the_hub(simulated):
+    """§10 positions 4,550; real roads position 4,140.
+
+    The difference is §5.1.6's cut-off meeting travel that is 1.4x the
+    crow-flies distance — the same factor `tests/matrices.py` records between
+    the hub and D1. §10's figure is reachable only on travel that understates
+    by forty per cent, which is what this repository used to compute.
+    """
     report, _ = simulated
-    assert sum(report.positioned.values()) == peak_day.READY == 4550
-    assert report.positioned == dict(peak_day.READY_BY_FACILITY)
-    assert report.rolled == {}, "nothing missed its line-haul"
+    positioned = sum(report.positioned.values())
+    assert positioned == POSITIONED_ON_ROADS
+    assert positioned < peak_day.READY == 4550
+    assert peak_day.READY - positioned == 410, "bags that missed the cut-off"
+    assert report.rolled == {}, "and nothing that reached the hub missed a van"
+
+
+def test_every_facility_gets_no_more_than_section_10_allots_it(simulated):
+    """What does arrive is still sorted where §10 sorts it."""
+    report, _ = simulated
+    for facility, count in report.positioned.items():
+        assert count <= peak_day.READY_BY_FACILITY[facility]
 
 
 def test_tomorrows_pool_exceeds_the_fleet_by_about_seventeen_hundred(simulated):
@@ -153,15 +175,27 @@ def test_tomorrows_pool_exceeds_the_fleet_by_about_seventeen_hundred(simulated):
     _, tomorrow = simulated
     capacity = FLEET * EFFECTIVE_PER_BIKE
     assert capacity == 3000
-    assert tomorrow.pool_size == pytest.approx(4690, rel=0.05)
-    assert tomorrow.pool_size - capacity == pytest.approx(1700, rel=0.12)
+    # Smaller than §10's 4,690, because 410 bags never reached the hub — and
+    # still half again what the fleet can serve.
+    assert tomorrow.pool_size == 4440
+    assert tomorrow.pool_size > capacity * 1.4
 
 
-def test_the_gap_is_the_one_section_8_3_predicts(simulated):
-    """§8.3's delivery check, from the day rather than from the document."""
+def test_van_hours_are_the_gap_section_8_3_predicts(simulated):
+    """§8.3: vans are "the most likely operational bottleneck".
+
+    On straight-line travel this check read 108 hours wanted against 110
+    available and passed, and `delivery` looked like the binding constraint. On
+    road distances it wants 121 against the same 110 and binds hardest — which
+    is what §8.3 predicts and what `docs/capacity-finding.md` found from three
+    stages. The old answer was not a smaller version of this one; it pointed at
+    a different bottleneck.
+    """
     report, _ = simulated
+    assert report.checks.vans.binds
     assert report.checks.delivery.binds
-    assert report.checks.binding.name == "delivery"
+    assert report.checks.binding.name == "van-hours"
+    assert report.checks.vans.required > report.checks.vans.available
 
 
 # ------------------------------------------------------- the cycle, not one day
@@ -293,23 +327,28 @@ def test_the_report_is_one_page_and_says_what_is_provisional(simulated, capsys):
     assert capsys.readouterr().out
 
 
-def test_van_hours_are_hours_worked_not_the_clock(simulated):
-    """§8.3's van check is the one most likely to bind, so its arithmetic matters.
+def test_van_hours_available_are_the_fleet_s_own_shifts(simulated):
+    """Supply is the vans' §9.1 shifts, not a number invented in the module.
 
-    Demand was summed from `returned_at`, which is a second of the day: a van
-    finishing at 18:00 counted as eighteen hours worked. Available hours were
-    two invented constants. Both fed the same comparison, and the check came
-    out "ok" for reasons unrelated to the fleet.
+    It was `len(routes) * 11 + len(trips) * 12` — two constants — and demand
+    was summed from `returned_at`, a second of the day, so a van finishing at
+    18:00 counted as eighteen hours worked. Both errors fed one comparison.
     """
     report, _ = simulated
     vans = 10
     longest_shift = 11  # §5.6: 07:00 to the processing cut-off
-    assert report.checks.vans.required <= vans * longest_shift
     assert report.checks.vans.available == pytest.approx(vans * longest_shift)
 
 
-def test_the_van_check_has_almost_no_slack(simulated):
-    """§8.3 and capacity-finding.md both say vans are where it gets tight."""
+def test_the_van_check_is_over_capacity_on_real_roads(simulated):
+    """The whole point of routing on roads rather than on a straight line.
+
+    Demand was 108 hours against 110 available — two hours of slack — when the
+    legs were computed as straight lines. On the recorded road table it is 121
+    against 110. The fleet is not nearly enough; it was never nearly enough,
+    and the arithmetic said otherwise because the distances were short.
+    """
     report, _ = simulated
-    assert 0.9 < report.checks.vans.load <= 1.0, (
-        "two hours of slack across ten vans; a placeholder away from binding")
+    assert report.checks.vans.load > 1.0
+    assert report.checks.vans.required == pytest.approx(121, abs=1)
+    assert -report.checks.vans.headroom == pytest.approx(11, abs=1)

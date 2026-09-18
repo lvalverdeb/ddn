@@ -5,7 +5,7 @@ from __future__ import annotations
 from ddn import assumptions
 from ddn.model import travel as road
 from ddn.pickups import Incident, run
-from tests.matrices import fake_matrix
+from tests.matrices import road_matrix
 
 HOUR = 3600
 HUB = {"id": "HUB", "lat": 9.9333, "lon": -84.0833}
@@ -26,7 +26,7 @@ def bag(n: int, *, at: int = 7 * HOUR, grams: int = 6000, **over):
 # It is a *fake*. `tests/matrices.py` says why that is the right trade here and
 # what it costs: nothing in this file measures geography.
 POINTS = [HUB, *(bag(n) for n in range(10))]
-TRAVEL = road.over(fake_matrix(POINTS, kph=30.0), road.index_of(POINTS))
+TRAVEL = road.over(road_matrix(POINTS), road.index_of(POINTS))
 
 
 def van(n: int = 1, **over):

@@ -6,6 +6,11 @@ daily decision about which packages cannot be served. The operation is specified
 in [`docs/vrp-problem-definition.md`](docs/vrp-problem-definition.md) (v0.10);
 this repository is the attempt to express it.
 
+Travel is road travel everywhere: §3.3 assigns by road distance, the stages
+take a gateway-built matrix, and the suite replays a real OSRM table rather
+than computing straight lines. That is not a detail — straight-line legs ran
+about 40% short and reported §8.3's van check as passing when it breaches.
+
 **Read [`docs/capacity-finding.md`](docs/capacity-finding.md) before drawing any
 conclusion from a number produced here.** Its first line is that the headline
 figure — 12.8 envelopes per deployed bike, against §7.4's expected 20–30 — **is
@@ -28,7 +33,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 619 tests, no services needed
+make test       # 620 tests, no services needed
 make check      # lint and tests
 ```
 
