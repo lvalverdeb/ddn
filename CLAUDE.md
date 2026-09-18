@@ -164,7 +164,10 @@ Building the image needs `GH_TOKEN` (or a loaded ssh-agent): it clones the
 second private repository, and `make bootstrap` says so by name rather than
 letting the build fail with a git error that mentions neither. `DOCKER_HOST`
 and `DOCKER_CONTEXT` select the daemon — often not the local one — and
-`make where` prints which is selected. Both failures are guarded and both
+`make config` prints every variable in force and which daemon it points at.
+Configuration is environment variables rather than `make` arguments, so one
+name reaches compose, the container and the host command; `.env.example` lists
+them and compose reads `.env` by itself. Both failures are guarded and both
 guards name the thing that is missing, which is the same courtesy
 `simulation/on_road.py` extends about its two inputs.
 

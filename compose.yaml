@@ -1,5 +1,9 @@
 # Bootstrap: `make bootstrap`.
 #
+# Everything configurable is an environment variable, and compose reads `.env`
+# from this directory without being told to. `.env.example` lists them;
+# `make config` prints what is in force.
+#
 # Three services, which is what §13 needs and no more. The API accepts requests
 # and enqueues; the worker runs the jobs; Redis is the queue between them.
 # §13.1 rules out running solver work inside the request, so the worker is a
@@ -26,7 +30,7 @@ services:
   api:
     # The same tag on api, worker and tests: one build, and a name `make` can
     # ask about before deciding whether it needs build credentials at all.
-    image: ddn-api:latest
+    image: ${DDN_IMAGE:-ddn-api:latest}
     build:
       context: .
       secrets:
@@ -50,7 +54,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: ddn-api:latest
+    image: ${DDN_IMAGE:-ddn-api:latest}
     build:
       context: .
       secrets:
@@ -72,7 +76,7 @@ services:
   # is the only way to know the image contains what the tests read -- `models/`
   # beside `ddn/`, and the problem definition several tests assert against.
   tests:
-    image: ddn-api:latest
+    image: ${DDN_IMAGE:-ddn-api:latest}
     build:
       context: .
       secrets:

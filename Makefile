@@ -8,10 +8,35 @@
 # promise is what makes this repository cheap to pick up. Docker is for
 # running the *service*, which does need a queue.
 
-COMPOSE ?= docker compose
-UV      ?= uv
-PORT    ?= 8000
-IMAGE   ?= ddn-api:latest
+# Configuration is environment, not arguments. `make` imports the environment,
+# so every variable below can be set in your shell, in `.env` (which compose
+# reads by itself), or inline -- and the same name reaches compose, the
+# container and the host command. `make config` prints what is in force.
+#
+#   export DDN_API_PORT=9000
+#   export DOCKER_HOST=ssh://ops@buildbox
+#   DDN_API_PORT=9000 make up
+#
+# `DDN_API_PORT` used to be `PORT` here and `DDN_API_PORT` in compose, so
+# setting one moved the URL this file printed and not the port compose
+# published. One fact, one name.
+DDN_API_PORT   ?= 8000
+DDN_IMAGE      ?= ddn-api:latest
+DDN_REDIS_DSN  ?= redis://localhost:6379/0
+COMPOSE        ?= docker compose
+UV             ?= uv
+
+# Exported only when *you* set them. Exporting make's own default would put
+# `DDN_API_PORT=8000` in compose's environment, where it outranks `.env` --
+# so writing the port in `.env` would have had no effect when invoked through
+# `make`. `origin` is "file" when the `?=` above supplied the value and
+# "environment" or "command line" when you did.
+ifneq ($(origin DDN_API_PORT),file)
+export DDN_API_PORT
+endif
+ifneq ($(origin DDN_IMAGE),file)
+export DDN_IMAGE
+endif
 
 # Which daemon to build and run on. Both are Docker's own variables; naming
 # them here means `make` passes them on and `make where` can say which one it
@@ -35,7 +60,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help install test lint fmt check bootstrap up down restart logs ps \
-	shell api worker redis test-docker rebuild clean where \
+	shell api worker redis test-docker rebuild clean where config \
 	guard-creds guard-docker have-image
 
 help:  ## List targets
@@ -64,11 +89,13 @@ check: lint test  ## What CI would run, if there were CI
 bootstrap: guard-docker guard-creds  ## Build the images and start the stack
 	$(COMPOSE) build
 	$(COMPOSE) up -d
-	@echo
-	@echo "  API      http://localhost:$(PORT)"
-	@echo "  OpenAPI  http://localhost:$(PORT)/docs   (§13.2's twenty-three endpoints)"
-	@echo "  logs     make logs"
-	@echo
+	@port=$$($(COMPOSE) port api 8000 2>/dev/null | sed 's/.*://'); \
+	port=$${port:-$(DDN_API_PORT)}; \
+	echo; \
+	echo "  API      http://localhost:$$port"; \
+	echo "  OpenAPI  http://localhost:$$port/docs   (§13.2's twenty-three endpoints)"; \
+	echo "  logs     make logs"; \
+	echo
 
 up: guard-docker  ## Start the stack without rebuilding
 	@$(MAKE) --no-print-directory have-image || $(MAKE) --no-print-directory guard-creds
@@ -92,11 +119,11 @@ redis: guard-docker  ## Just Redis, for running the API on the host
 	$(COMPOSE) up -d redis
 
 api: redis  ## Run the API on the host against the container's Redis
-	DDN_REDIS_DSN=redis://localhost:6379/0 \
-		$(UV) run uvicorn ddn.api.app:create_app --factory --reload --port $(PORT)
+	DDN_REDIS_DSN=$(DDN_REDIS_DSN) \
+		$(UV) run uvicorn ddn.api.app:create_app --factory --reload --port $(DDN_API_PORT)
 
 worker: redis  ## Run an Arq worker on the host (§13.1)
-	DDN_REDIS_DSN=redis://localhost:6379/0 \
+	DDN_REDIS_DSN=$(DDN_REDIS_DSN) \
 		$(UV) run arq ddn.api.jobs.WorkerSettings
 
 test-docker: guard-docker  ## Run the suite inside the shipped image
@@ -110,7 +137,10 @@ clean:  ## Stop everything and drop the queue's volume
 	$(COMPOSE) down -v --remove-orphans
 	rm -rf .pytest_cache .ruff_cache
 
-where:  ## Which Docker daemon these targets will use
+config:  ## Print every variable in force, and which daemon they point at
+	@echo "DDN_API_PORT    = $(DDN_API_PORT)   (make's value; compose's is below)"
+	@echo "DDN_IMAGE       = $(DDN_IMAGE)"
+	@echo "DDN_REDIS_DSN   = $(DDN_REDIS_DSN)   (host targets; compose sets its own)"
 	@echo "DOCKER_HOST     = $${DOCKER_HOST:-(unset — using the current context)}"
 	@echo "DOCKER_CONTEXT  = $${DOCKER_CONTEXT:-(unset)}"
 	@docker context show 2>/dev/null | sed 's/^/context         = /' || true
@@ -119,6 +149,13 @@ where:  ## Which Docker daemon these targets will use
 	else \
 		echo "daemon          = unreachable"; \
 	fi
+	@test -f .env && echo "env file        = .env (compose reads it; make does not)" \
+		|| echo "env file        = none (see .env.example)"
+	@$(COMPOSE) config 2>/dev/null \
+		| awk '/published:/ {gsub(/"/, "", $$2); print "api port        = " $$2 "  (compose, after .env)"; exit}' \
+		|| true
+
+where: config  ## Alias for `config`
 
 # --------------------------------------------------------------------- guards
 
@@ -131,7 +168,7 @@ where:  ## Which Docker daemon these targets will use
 # image that already exists needs no credential at all, which is what "without
 # rebuilding" means.
 have-image:
-	@docker image inspect $(IMAGE) >/dev/null 2>&1
+	@docker image inspect $(DDN_IMAGE) >/dev/null 2>&1
 
 guard-creds:
 	@if [ -n "$$GH_TOKEN" ]; then exit 0; fi; \
@@ -162,9 +199,9 @@ guard-docker:
 		echo; \
 		echo "  Start one, or point these targets at another:"; \
 		echo; \
-		echo "    make bootstrap DOCKER_HOST=ssh://user@host"; \
-		echo "    make bootstrap DOCKER_CONTEXT=colima"; \
+		echo "    export DOCKER_HOST=ssh://user@host"; \
+		echo "    export DOCKER_CONTEXT=colima"; \
 		echo; \
-		echo "  'make where' shows which one is currently selected."; \
+		echo "  'make config' shows which one is currently selected."; \
 		echo "  'make test' needs no daemon at all."; \
 		exit 1; }

@@ -50,14 +50,17 @@ build. `make bootstrap` stops with that explanation rather than letting `uv
 sync` fail inside a build layer with a git error that names neither repository.
 An ssh-agent works instead, if you have one loaded.
 
-The daemon is selectable, because it is often not the local one:
+Everything configurable is an environment variable, not a `make` argument.
+Compose reads `.env` from the repository root by itself, and `make` picks the
+same names up from your shell:
 
 ```sh
-make where                                     # which daemon is selected
-make bootstrap DOCKER_HOST=ssh://ops@buildbox  # or DOCKER_CONTEXT=colima
+cp .env.example .env     # DDN_API_PORT, DDN_IMAGE, GH_TOKEN, DOCKER_HOST…
+make config              # what is in force, and which daemon it points at
 ```
 
-Every target that needs a daemon checks for one first and names the endpoint it
+The daemon is often not the local one, so `DOCKER_HOST` and `DOCKER_CONTEXT`
+select it. Every target that needs one checks first and names the endpoint it
 tried. `make test` needs none.
 
 The tests need no gateway and no routing data. They cover the data contract, the
