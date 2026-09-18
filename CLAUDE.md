@@ -125,7 +125,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 535 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 537 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 
@@ -209,3 +209,7 @@ for the term after editing, not just the lines you touched.
 
 **Scrub forward; do not rewrite public history.** A force-push announces the
 text far more loudly than leaving it does.
+
+** never modify a test's expected values without stating the reason in the commit message 
+** never mock the solver outside tests/
+** always paste the full test runner output at the end of a task.

@@ -307,7 +307,7 @@ def run_day(
         day=state.day,
         tally=tally,
         metrics=measure(tally),
-        checks=_checks(state, per_facility, inflow, dispatch, night),
+        checks=_checks(state, per_facility, inflow, dispatch, night, vans),
         allocation=allocation,
         outcomes=outcomes,
         postponed_reasons=reasons,
@@ -357,26 +357,52 @@ def _waiting(dispatch: Any, requests: Sequence[Mapping[str, Any]]) -> int:
                for visit in dispatch.visits)
 
 
+def _hub_hours() -> float:
+    """§5.6: the hub works from shift start to the processing cut-off."""
+    return (_seconds(assumptions.PROCESSING_CUTOFF)
+            - _seconds(assumptions.SHIFT_START)) / HOUR
+
+
+def _shift_hours(vehicle: Mapping[str, Any]) -> float:
+    """A vehicle's own §9.1 shift, rather than a number invented here."""
+    start, end = vehicle.get("shift_start"), vehicle.get("shift_end")
+    if start is None or end is None:
+        return _hub_hours()
+    return (int(end) - int(start)) / HOUR
+
+
 def _checks(state: State, per_facility: Mapping[str, int],
             inflow: Sequence[Mapping[str, Any]], dispatch: Any,
-            night: linehaul.LinehaulPlan) -> Checks:
-    """§8.3's three, from what the day actually did."""
-    van_hours = 0.0
+            night: linehaul.LinehaulPlan,
+            vans: Sequence[Mapping[str, Any]]) -> Checks:
+    """§8.3's three, from what the day actually did.
+
+    Van-hours come from the vans' own §9.1 shifts. They were two invented
+    constants until a linter pointed at them, which is exactly the hard-coded
+    `[TBD]` the assumptions policy asks nobody to write: §4.3 makes van-hours
+    the contested resource and §8.3 calls them the likely bottleneck, so a
+    made-up shift length would have decided the check it feeds.
+    """
+    # Hours worked, not the clock they came back at. `returned_at` is a second
+    # of the day, so summing it counted a van that finished at 18:00 as having
+    # worked eighteen hours -- which made the day's van demand look far larger
+    # than it was, in the one check §8.3 says is most likely to bind.
+    started = {van["vehicle_id"]: int(van.get("shift_start", 0)) for van in vans}
     pickup_hours = 0.0
     if dispatch is not None:
-        pickup_hours = sum(dispatch.returned_at.values()) / HOUR
-        van_hours = len(dispatch.routes) * 11
+        pickup_hours = sum(
+            max(back - started.get(van_id, 0), 0)
+            for van_id, back in dispatch.returned_at.items()) / HOUR
     linehaul_hours = sum((trip.returns - trip.departure)
                          for trip in night.trips) / HOUR
-    van_hours += len(night.trips) * 12
 
     assembly = sum(1 for e in inflow if e.get("package_type") == "assembly")
     return check(
         pool=state.pool_size,
         motorbikes=sum(per_facility.values()),
         inflow=len(inflow),
-        van_hours_available=van_hours,
+        van_hours_available=sum(_shift_hours(van) for van in vans),
         pickup_hours=pickup_hours,
         linehaul_hours=linehaul_hours,
-        processing_hours=11,
+        processing_hours=_hub_hours(),
         assembly_share=(assembly / len(inflow)) if inflow else 0.0)

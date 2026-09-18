@@ -201,10 +201,17 @@ def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
             f"{facility['id']}'s travel matrix is degraded and a plan built on "
             f"it would describe a road network that does not exist: "
             f"{matrix.degraded}")
+    # §4.1 gives capacity per type and the model owns it, so the synthesised
+    # rows are read off the model rather than repeated here. `contract`
+    # cross-checks the two and refuses a disagreement, which is a check that
+    # could only ever have passed while both copies were edited together.
+    declared = next(spec["capacities"] for spec in model["fleet"]
+                    if spec["class"] == contract.CLASS_OF["motorbike"])
     vehicles = [{"vehicle_id": f"{facility['id']}-MOTO-{n}",
                  "type": "motorbike", "facility_id": facility["id"],
-                 "role": "delivery", "capacity_envelopes": 35,
-                 "capacity_weight_g": 35_000,
+                 "role": "delivery",
+                 "capacity_envelopes": declared[contract.COUNT],
+                 "capacity_weight_g": declared[contract.WEIGHT],
                  "shift_start": facility["shift_start"],
                  "shift_end": facility["shift_end"]}
                 for n in range(1, bikes + 1)]

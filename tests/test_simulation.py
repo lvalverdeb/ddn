@@ -287,3 +287,25 @@ def test_the_report_is_one_page_and_says_what_is_provisional(simulated, capsys):
     assert "docs/capacity-finding.md" in page
     assert "no targets" in page, "§11's targets are [TBD] and stay that way"
     assert capsys.readouterr().out
+
+
+def test_van_hours_are_hours_worked_not_the_clock(simulated):
+    """§8.3's van check is the one most likely to bind, so its arithmetic matters.
+
+    Demand was summed from `returned_at`, which is a second of the day: a van
+    finishing at 18:00 counted as eighteen hours worked. Available hours were
+    two invented constants. Both fed the same comparison, and the check came
+    out "ok" for reasons unrelated to the fleet.
+    """
+    report, _ = simulated
+    vans = 10
+    longest_shift = 11  # §5.6: 07:00 to the processing cut-off
+    assert report.checks.vans.required <= vans * longest_shift
+    assert report.checks.vans.available == pytest.approx(vans * longest_shift)
+
+
+def test_the_van_check_has_almost_no_slack(simulated):
+    """§8.3 and capacity-finding.md both say vans are where it gets tight."""
+    report, _ = simulated
+    assert 0.9 < report.checks.vans.load <= 1.0, (
+        "two hours of slack across ten vans; a placeholder away from binding")

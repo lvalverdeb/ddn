@@ -76,11 +76,11 @@ for _path, _hint in (
 TODAY = date(2026, 9, 16)
 POOL, BIKES = 4550, 120          # §10: positioned for delivery; shared fleet
 
-def free():
+def free() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0)); return s.getsockname()[1]
 
-def wait(u, n=240):
+def wait(u: str, n: int = 240) -> None:
     for _ in range(n):
         try:
             httpx.get(u, timeout=1)

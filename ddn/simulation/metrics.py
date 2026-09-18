@@ -18,7 +18,7 @@ the summed counts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 
 #: §11's own expectation for the one row it fills in: 20-30 per bike per day.
 EXPECTED_PER_BIKE = (20, 30)
@@ -55,9 +55,6 @@ class Tally:
     def __add__(self, other: Tally) -> Tally:
         return Tally(**{f.name: getattr(self, f.name) + getattr(other, f.name)
                         for f in fields(self)})
-
-    def with_routes(self, *, distance_m: int, solver_seconds: float) -> Tally:
-        return replace(self, distance_m=distance_m, solver_seconds=solver_seconds)
 
 
 @dataclass(frozen=True, slots=True)
