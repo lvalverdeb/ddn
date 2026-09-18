@@ -104,6 +104,7 @@ where the target says, and when you move a stage, move one boundary at a time.
 | `lastmile/` | `ddn/lastmile/` | 5.4, 8 | per-facility delivery routing, and which envelopes are left when capacity is short | yes |
 | `returns/` | `ddn/returns/` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
 | `simulation/` | `ddn/simulation/` | 5.6, 10, 11 | the day end to end, its metrics and §8.3's checks | — |
+| `api/` | `ddn/api/` | 13 | FastAPI service layer: thin handlers, job queue, event validation | — |
 
 Every target package now exists. `ddn/contract.py` still holds §5.4's mapping
 and `solver_adapter.last_mile` delegates to it rather than restating it, so
@@ -119,7 +120,34 @@ leg. Do not add a solver call to make the stages look uniform.
 
 **Stack:** Python 3.13; `vrp-platform[pyvrp]` pinned by git tag at
 `osrm-microservice@v0.4.0` (the solver is PyVRP, reached through the platform's
-adapter); pytest; ruff 0.16.4.
+adapter); FastAPI and Pydantic for §13; Arq on Redis for §13.1's job queue, with
+`fakeredis` in tests so the suite still needs no external service; pytest; ruff
+0.16.4.
+
+## The API (§13)
+
+`ddn/api/` depends on every module above it and **nothing depends on it.** §13
+opens by saying what it is: "a thin layer: it accepts inputs, starts jobs,
+reports status and returns results. Stage logic lives in the modules of §5 and
+is never implemented inside request handlers." A handler that computes
+something is a handler doing another module's job.
+
+- **Solver work is a job, never a request.** §13.1: any endpoint that invokes
+  the solver returns `202` with a job id. **Never FastAPI `BackgroundTasks`** —
+  §13.1 rules them out by name, because a process that dies takes the work with
+  it and nobody can ask what happened to it.
+- **Status is never set directly.** Callers append events and §5.2.6 validates
+  the transition; an illegal one is `409` with the current state.
+- **`Idempotency-Key` is required** on ingest and event endpoints, and a replay
+  returns the original response rather than acting twice.
+- **Every routing result carries its §7.1 violation list**, empty on success.
+- **Overrides and outcome events record actor and time** (§13.1, §8.2).
+- The two §13.3 scheduled processes call the same internal functions as the
+  handlers. They do not call the API over HTTP.
+
+§13's subsections are numbered 14.1–14.4 in the document, colliding with §14
+Revision history — a copy-paste when §13 was inserted. They are cited here as
+§13.1–§13.4; worth fixing in the spec.
 
 ## Commands
 
