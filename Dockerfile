@@ -55,6 +55,17 @@ COPY models/ ./models/
 RUN --mount=type=secret,id=gh_token,required=false \
     uv sync --frozen --extra api --no-editable
 
+# The suite is not in this image, so nothing at runtime would notice `models/`
+# missing until the first routing run failed. `contract.load_model` reads it by
+# path relative to the package, which is exactly the kind of thing a COPY
+# rearranges silently -- so the build refuses to produce an image that cannot
+# load it. One line, and it fails where it is cheap to fix.
+RUN .venv/bin/python -c "\
+from ddn.contract import load_model; \
+from ddn.returns import load_model as returns_model; \
+from ddn.solver_adapter.problem import load_pickup_model; \
+load_model(); returns_model(); load_pickup_model()"
+
 
 FROM python:3.13-slim-bookworm AS runtime
 
