@@ -61,7 +61,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help install test lint fmt check notebooks nb-clean bootstrap up down logs ps \
-	shell api worker redis rebuild clean config \
+	shell api worker redis rebuild clean config daemon-host \
 	guard-docker
 
 help:  ## List targets
@@ -100,9 +100,10 @@ bootstrap: guard-docker  ## Build the images and start the stack
 	$(COMPOSE) up -d --wait
 	@port=$$($(COMPOSE) port api 8000 2>/dev/null | sed 's/.*://'); \
 	port=$${port:-$(DDN_API_PORT)}; \
+	host=$$($(MAKE) --no-print-directory daemon-host); \
 	echo; \
-	echo "  API      http://localhost:$$port"; \
-	echo "  OpenAPI  http://localhost:$$port/docs   (§13.2's twenty-three endpoints)"; \
+	echo "  API      http://$$host:$$port"; \
+	echo "  OpenAPI  http://$$host:$$port/docs   (§13.2's twenty-three endpoints)"; \
 	echo "  logs     make logs"; \
 	echo
 
@@ -158,6 +159,19 @@ config:  ## Print every variable in force, and which daemon they point at
 		|| true
 
 # --------------------------------------------------------------------- guards
+
+# Where the stack is actually listening. A remote daemon publishes its ports on
+# *its* host, not on yours -- printing `localhost` for an ssh:// or tcp://
+# daemon sends you to a port nothing is on, which is exactly what happened the
+# first time this ran against a remote engine. An ssh alias is resolved through
+# `ssh -G`, because the alias is a name only your ssh config knows.
+daemon-host:
+	@case "$$DOCKER_HOST" in \
+		ssh://*) alias=$${DOCKER_HOST#ssh://}; alias=$${alias#*@}; alias=$${alias%%[:/]*}; \
+			ssh -G "$$alias" 2>/dev/null | awk '/^hostname /{print $$2; found=1} END{if(!found) print "'"$$alias"'"}' | head -1 ;; \
+		tcp://*) h=$${DOCKER_HOST#tcp://}; echo "$${h%%:*}" ;; \
+		*) echo localhost ;; \
+	esac
 
 # Reaching no daemon is the other failure that arrives as a wall of Go stack
 # rather than a sentence. Say which endpoint was tried, and how to point

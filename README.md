@@ -28,7 +28,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 615 tests, no services needed
+make test       # 617 tests, no services needed
 make check      # lint and tests
 ```
 
@@ -38,8 +38,12 @@ no routing data. That is the whole of what it takes to work on the modules.
 To run the §13 service, which does need a queue:
 
 ```sh
-make bootstrap     # redis, the API on :8000, an Arq worker
+make bootstrap                          # redis, the API, an Arq worker
+make bootstrap DOCKER_HOST=ssh://box    # or on another engine entirely
 ```
+
+`bootstrap` waits for the API's healthcheck and prints the host the stack is
+actually listening on — which is not `localhost` when the daemon is remote.
 
 The token is the same second-repository problem as above, moved into the image
 build. `make bootstrap` stops with that explanation rather than letting `uv

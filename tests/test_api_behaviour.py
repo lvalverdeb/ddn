@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from ddn.api import jobs
 from ddn.api.idempotency import PREFIX, Replays, once
 from ddn.api.store import Store
 from ddn.model import Status
@@ -262,3 +263,33 @@ async def test_records_expire(pool):
     await replays.complete("ttl-key", status_code=200, body={"ok": True})
     remaining = await pool.ttl(f"{PREFIX}ttl-key")
     assert 0 < remaining <= 60
+
+
+# ----------------------------------------------------- §13.1's worker settings
+
+def test_the_worker_connects_where_the_api_enqueues(monkeypatch):
+    """`arq ddn.api.jobs.WorkerSettings` must read `DDN_REDIS_DSN`.
+
+    It did not. arq falls back to its own default -- localhost -- so a worker in
+    a container crash-looped against nothing while the API enqueued happily to
+    the real Redis: jobs accepted, `202` returned, and nobody ever running them.
+    Nothing in this suite noticed, because the tests supply their own pool and
+    their own worker; it took a `compose up` to see it.
+    """
+    import importlib
+
+    monkeypatch.setenv("DDN_REDIS_DSN", "redis://redis:6379/2")
+    module = importlib.reload(jobs)
+    try:
+        assert module.WorkerSettings.redis_settings.host == "redis"
+        assert module.WorkerSettings.redis_settings.port == 6379
+        assert module.WorkerSettings.redis_settings.database == 2
+        assert module.WorkerSettings.functions == module.FUNCTIONS
+    finally:
+        monkeypatch.delenv("DDN_REDIS_DSN")
+        importlib.reload(module)
+
+
+def test_the_worker_falls_back_to_localhost_for_a_developer():
+    """Unset is a developer running `make worker` beside `make redis`."""
+    assert jobs.redis_settings().host == "localhost"

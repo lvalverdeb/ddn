@@ -55,6 +55,18 @@ services:
   worker:
     <<: *image
     command: ["arq", "ddn.api.jobs.WorkerSettings"]
+    # arq serves no HTTP, so this checks the one thing a worker must be able to
+    # do: reach the queue it was told to consume. Without it a worker that
+    # cannot connect restarts for ever while `up --wait` reports the stack up,
+    # which is how a misconfigured DSN went unnoticed until someone read the
+    # logs.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import asyncio,os; from arq.connections import RedisSettings, create_pool; asyncio.run(create_pool(RedisSettings.from_dsn(os.environ['DDN_REDIS_DSN'])))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   redis-data:

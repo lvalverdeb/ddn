@@ -104,6 +104,13 @@ class WorkerSettings:
     """
 
     functions = FUNCTIONS
+    # arq reads this at startup. Without it, arq falls back to its own default
+    # -- localhost -- and a worker in a container crash-loops against nothing
+    # while the API enqueues happily to the real Redis. The API never had the
+    # bug because its lifespan calls `redis_settings()`; this class was written
+    # in the same commit and never wired to it, and nothing noticed until a
+    # container ran.
+    redis_settings = redis_settings()
     max_tries = 3
     job_timeout = 900
     keep_result = 3600

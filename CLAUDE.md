@@ -152,7 +152,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 615 tests; no gateway, no Redis, no routing data
+make test                    # 617 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```
