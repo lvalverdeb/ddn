@@ -13,14 +13,13 @@ something a second time, which is the confusion the key exists to prevent.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated
 
 from arq import ArqRedis
 from fastapi import Depends, Header, HTTPException, Request
 from fastapi import status as http
-from fastapi.responses import JSONResponse
 
+from ddn.api.idempotency import Replays
 from ddn.api.store import Store
 
 
@@ -30,6 +29,11 @@ def get_store(request: Request) -> Store:
 
 def get_pool(request: Request) -> ArqRedis:
     return request.app.state.queue
+
+
+def get_replays(request: Request) -> Replays:
+    """§13.1's replay records, in the same Redis as the queue."""
+    return Replays(request.app.state.queue)
 
 
 def idempotency_key(
@@ -52,20 +56,4 @@ def idempotency_key(
 StoreDep = Annotated[Store, Depends(get_store)]
 PoolDep = Annotated[ArqRedis, Depends(get_pool)]
 KeyDep = Annotated[str, Depends(idempotency_key)]
-
-
-def once(store: Store, key: str, status_code: int,
-         produce: Callable[[], dict[str, Any]]) -> JSONResponse:
-    """Do it, or hand back what was handed back the first time.
-
-    The work runs only when the key is new. `produce` is therefore allowed to
-    have effects -- writing envelopes, recording audit, enqueuing a job -- and
-    a retry has none of them.
-    """
-    seen = store.replay(key)
-    if seen is not None:
-        return JSONResponse(status_code=seen.status_code, content=seen.body,
-                            headers={"Idempotent-Replay": "true"})
-    body = produce()
-    store.remember(key, status_code=status_code, body=body)
-    return JSONResponse(status_code=status_code, content=body)
+ReplaysDep = Annotated[Replays, Depends(get_replays)]

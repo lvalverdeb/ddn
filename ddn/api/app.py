@@ -102,6 +102,7 @@ def _published(app: FastAPI):
                 headers = [p for p in operation.get("parameters", [])
                            if p["in"] == "header"
                            and p["name"] == IDEMPOTENCY_HEADER]
+                conflicts = []
                 for header in headers:
                     header["required"] = True
                     operation["responses"]["400"] = {
@@ -109,11 +110,15 @@ def _published(app: FastAPI):
                                         "A retried call without one could "
                                         "duplicate an envelope or an outcome."),
                         "content": {"application/json": {"schema": problem}}}
+                    conflicts.append(
+                        "a call with this idempotency key is still in flight")
                 if path.endswith("/events"):
+                    conflicts.append(
+                        "§5.2.6 draws no such transition, and the body carries "
+                        "the state the envelope is actually in")
+                if conflicts:
                     operation["responses"]["409"] = {
-                        "description": ("§5.2.6 draws no such transition. The "
-                                        "body carries the state the envelope "
-                                        "is actually in."),
+                        "description": "; ".join(conflicts).capitalize() + ".",
                         "content": {"application/json": {"schema": problem}}}
         app.openapi_schema = schema
         return schema

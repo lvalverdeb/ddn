@@ -10,6 +10,10 @@ it is replaced here rather than in twenty handlers.
 What that costs is honest and worth stating: restart the process and the day is
 gone. Nothing here is durable, and a deployment that needs it to be needs this
 module rewritten first.
+
+§13.1's replay records used to live here and no longer do. They had to survive
+a restart and be shared between API containers, and `ddn.api.idempotency` keeps
+them in the queue's Redis for both reasons.
 """
 
 from __future__ import annotations
@@ -31,14 +35,6 @@ class AuditRecord:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class Replay:
-    """A response already given, to be given again rather than acted on twice."""
-
-    status_code: int
-    body: dict[str, Any]
-
-
 @dataclass
 class Store:
     """The API's state. One object so that replacing it is one change."""
@@ -49,7 +45,6 @@ class Store:
     plans: dict[str, dict[str, Any]] = field(default_factory=dict)
     pickup_plan: dict[str, Any] = field(default_factory=dict)
     audit: list[AuditRecord] = field(default_factory=list)
-    _replays: dict[str, Replay] = field(default_factory=dict)
 
     # ---- §13.1's audit
     def record(self, *, actor: str, action: str, subject: str,
@@ -61,15 +56,6 @@ class Store:
 
     def audit_for(self, subject: str) -> Iterator[AuditRecord]:
         return (entry for entry in self.audit if entry.subject == subject)
-
-    # ---- §13.1's idempotency
-    def replay(self, key: str) -> Replay | None:
-        """What this key answered last time, if it has answered before."""
-        return self._replays.get(key)
-
-    def remember(self, key: str, *, status_code: int,
-                 body: dict[str, Any]) -> None:
-        self._replays[key] = Replay(status_code=status_code, body=body)
 
     # ---- the pools the handlers read
     def ready_at(self, facility_id: str, by: datetime) -> int:

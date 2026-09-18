@@ -15,7 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi import status as http
 
 from ddn.api import jobs
-from ddn.api.deps import KeyDep, PoolDep, StoreDep, once
+from ddn.api.deps import KeyDep, PoolDep, ReplaysDep, StoreDep
+from ddn.api.idempotency import once
 from ddn.api.schemas import JobAccepted, JobState, Lock
 
 router = APIRouter(tags=["Planning"])
@@ -61,8 +62,9 @@ async def linehaul_state(job_id: str, pool: PoolDep):
 
 @router.post("/linehaul/plans/{job_id}/events", status_code=http.HTTP_200_OK,
              summary="Departed, arrived (§5.3)")
-def linehaul_event(job_id: str, payload: dict[str, Any], store: StoreDep,
-                   key: KeyDep):
+async def linehaul_event(job_id: str, payload: dict[str, Any], store: StoreDep,
+                   key: KeyDep,
+                 replays: ReplaysDep):
     """§5.3's two milestones. §7.1 needs the arrival to check dispatch order."""
     if payload.get("event") not in {"departed", "arrived"}:
         raise HTTPException(
@@ -77,7 +79,7 @@ def linehaul_event(job_id: str, payload: dict[str, Any], store: StoreDep,
                      at=datetime.now(UTC))
         return {"plan_id": job_id, "event": payload["event"]}
 
-    return once(store, key, http.HTTP_200_OK, produce)
+    return await once(replays, key, http.HTTP_200_OK, produce)
 
 
 # ------------------------------------------------------------------ §5.4

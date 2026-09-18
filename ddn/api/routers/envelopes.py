@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException
 from fastapi import status as http
 
-from ddn.api.deps import KeyDep, StoreDep, once
+from ddn.api.deps import KeyDep, ReplaysDep, StoreDep
 from ddn.api.events import advance
+from ddn.api.idempotency import once
 from ddn.api.schemas import Envelope, EnvelopeBatch, EnvelopeEvent, Status
 
 router = APIRouter(tags=["Envelopes"])
@@ -16,7 +17,8 @@ router = APIRouter(tags=["Envelopes"])
 
 @router.post("/envelopes/batch", status_code=http.HTTP_202_ACCEPTED,
              summary="Upload-file ingest (§5.1.1)")
-def ingest(batch: EnvelopeBatch, store: StoreDep, key: KeyDep):
+async def ingest(batch: EnvelopeBatch, store: StoreDep, key: KeyDep,
+                 replays: ReplaysDep):
     """§5.1.1: the upload file usually arrives before the bag.
 
     Accepted rather than created: §5.2 has to reconcile, geocode, assemble and
@@ -29,7 +31,7 @@ def ingest(batch: EnvelopeBatch, store: StoreDep, key: KeyDep):
         return {"accepted": len(batch.envelopes),
                 "package_ids": [e.package_id for e in batch.envelopes]}
 
-    return once(store, key, http.HTTP_202_ACCEPTED, produce)
+    return await once(replays, key, http.HTTP_202_ACCEPTED, produce)
 
 
 @router.get("/envelopes/{package_id}", response_model=Envelope,
@@ -45,8 +47,9 @@ def read(package_id: str, store: StoreDep):
 @router.post("/envelopes/{package_id}/events",
              status_code=http.HTTP_200_OK,
              summary="Outcome or address correction (§6)")
-def append_event(package_id: str, event: EnvelopeEvent, store: StoreDep,
-                 key: KeyDep):
+async def append_event(package_id: str, event: EnvelopeEvent, store: StoreDep,
+                 key: KeyDep,
+                 replays: ReplaysDep):
     """§13.1: status is never set directly; §5.2.6 validates the move.
 
     §6's address correction rides on the same event: a Postponed envelope whose
@@ -73,4 +76,4 @@ def append_event(package_id: str, event: EnvelopeEvent, store: StoreDep,
                      reason=event.reason)
         return {"package_id": package_id, "status": moved["status"]}
 
-    return once(store, key, http.HTTP_200_OK, produce)
+    return await once(replays, key, http.HTTP_200_OK, produce)

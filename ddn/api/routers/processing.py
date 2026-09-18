@@ -8,8 +8,9 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from fastapi import status as http
 
-from ddn.api.deps import KeyDep, StoreDep, once
+from ddn.api.deps import KeyDep, ReplaysDep, StoreDep
 from ddn.api.events import advance
+from ddn.api.idempotency import once
 from ddn.api.schemas import ProcessingEvent, ReadyCount
 
 router = APIRouter(tags=["Processing"])
@@ -17,7 +18,8 @@ router = APIRouter(tags=["Processing"])
 
 @router.post("/processing/events", status_code=http.HTTP_200_OK,
              summary="Reconciled, discrepancy, assembled, sorted (§5.2)")
-def append_event(event: ProcessingEvent, store: StoreDep, key: KeyDep):
+async def append_event(event: ProcessingEvent, store: StoreDep, key: KeyDep,
+                 replays: ReplaysDep):
     """§13.4: the API receives these; it does not perform them.
 
     §5.2.1 holds a disputed envelope rather than moving it on -- "envelopes in
@@ -48,7 +50,7 @@ def append_event(event: ProcessingEvent, store: StoreDep, key: KeyDep):
         return {"package_id": event.package_id, "status": moved["status"],
                 "held": False}
 
-    return once(store, key, http.HTTP_200_OK, produce)
+    return await once(replays, key, http.HTTP_200_OK, produce)
 
 
 @router.get("/processing/ready", response_model=ReadyCount,

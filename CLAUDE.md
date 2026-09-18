@@ -139,7 +139,11 @@ something is a handler doing another module's job.
 - **Status is never set directly.** Callers append events and §5.2.6 validates
   the transition; an illegal one is `409` with the current state.
 - **`Idempotency-Key` is required** on ingest and event endpoints, and a replay
-  returns the original response rather than acting twice.
+  returns the original response rather than acting twice. The records live in
+  the queue's Redis, not in the process: per-process idempotency is a cache, not
+  a guarantee — two API containers would each keep their own. The key is claimed
+  before the work runs, because a retry after a timeout is often *concurrent*
+  with the original.
 - **Every routing result carries its §7.1 violation list**, empty on success.
 - **Overrides and outcome events record actor and time** (§13.1, §8.2).
 - The two §13.3 scheduled processes call the same internal functions as the
@@ -148,7 +152,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 604 tests; no gateway, no Redis, no routing data
+make test                    # 608 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```

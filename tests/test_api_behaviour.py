@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from ddn.api.idempotency import PREFIX, Replays, once
 from ddn.api.store import Store
 from ddn.model import Status
 from tests.api_harness import drain, make_app, make_pool
@@ -190,3 +191,74 @@ async def test_capabilities_report_what_was_measured(client):
     assert body["flexible_vehicle_to_depot_assignment"] is False
     assert body["dynamic_stop_insertion"] is True
     assert body["source"] == "docs/solver-capabilities.md"
+
+
+# ------------------------------------------------- §13.1's records are durable
+
+async def test_a_replay_survives_the_process_that_answered_it(pool):
+    """The records were a dict on the Store, so a restart dropped them.
+
+    A driver app retrying across a deploy then acted twice. Here the second app
+    shares only the Redis — a different `Store`, different state, as two API
+    containers are — and still answers with the first one's response.
+    """
+    body = {"envelopes": [envelope("PKG-1")]}
+    headers = {"Idempotency-Key": "survives"}
+
+    first_store = Store()
+    async with AsyncClient(transport=ASGITransport(app=make_app(pool, first_store)),
+                           base_url="http://api") as first:
+        original = await first.post("/envelopes/batch", json=body, headers=headers)
+    assert original.status_code == 202
+    assert "PKG-1" in first_store.envelopes
+
+    second_store = Store()
+    async with AsyncClient(transport=ASGITransport(app=make_app(pool, second_store)),
+                           base_url="http://api") as second:
+        again = await second.post("/envelopes/batch", json=body, headers=headers)
+
+    assert again.status_code == original.status_code
+    assert again.json() == original.json()
+    assert again.headers.get("Idempotent-Replay") == "true"
+    assert second_store.envelopes == {}, "the replay did not act on this one"
+
+
+async def test_a_call_still_in_flight_is_refused_rather_than_repeated(client, pool):
+    """A retry after a timeout is often concurrent with the original.
+
+    The first call was slow, not dead. Checking "have I seen this key?" and
+    then acting is a race that loses exactly when it is most needed, so the key
+    is claimed before the work runs.
+    """
+    replays = Replays(pool)
+    assert await replays.claim("in-flight-key") is None, "claimed by the first call"
+
+    response = await client.post("/envelopes/batch",
+                                 json={"envelopes": [envelope()]},
+                                 headers={"Idempotency-Key": "in-flight-key"})
+    assert response.status_code == 409
+    body = response.json()
+    assert body["title"] == "request in flight"
+    assert "still being processed" in body["detail"]
+
+
+async def test_a_failed_call_does_not_poison_its_key(pool):
+    """A request that raised has not happened, so the key must stay usable."""
+    replays = Replays(pool)
+
+    def explode() -> dict:
+        raise RuntimeError("the hub caught fire")
+
+    with pytest.raises(RuntimeError):
+        await once(replays, "released", 200, explode)
+
+    assert await replays.claim("released") is None, "the claim was released"
+
+
+async def test_records_expire(pool):
+    """Keys are remembered long enough to cover a retry, not for ever."""
+    replays = Replays(pool, ttl=60)
+    await replays.claim("ttl-key")
+    await replays.complete("ttl-key", status_code=200, body={"ok": True})
+    remaining = await pool.ttl(f"{PREFIX}ttl-key")
+    assert 0 < remaining <= 60

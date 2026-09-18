@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException
 from fastapi import status as http
 
-from ddn.api.deps import KeyDep, StoreDep, once
+from ddn.api.deps import KeyDep, ReplaysDep, StoreDep
+from ddn.api.idempotency import once
 from ddn.api.schemas import Mailbag, PickupEvent
 
 router = APIRouter(tags=["Pickups"])
@@ -20,19 +21,21 @@ EVENTS = frozenset({COLLECTED, SEAL_BROKEN, FAILED, CANCELLED})
 
 @router.post("/pickups", status_code=http.HTTP_201_CREATED,
              summary="A mailbag is ready (§5.1.1)")
-def request_pickup(bag: Mailbag, store: StoreDep, key: KeyDep):
+async def request_pickup(bag: Mailbag, store: StoreDep, key: KeyDep,
+                 replays: ReplaysDep):
     """§5.1.1: "Customers indicate one or more bags are ready"."""
     def produce() -> dict:
         store.mailbags[bag.mailbag_id] = bag.model_dump(mode="json")
         return {"mailbag_id": bag.mailbag_id, "status": "requested"}
 
-    return once(store, key, http.HTTP_201_CREATED, produce)
+    return await once(replays, key, http.HTTP_201_CREATED, produce)
 
 
 @router.post("/pickups/{mailbag_id}/events", status_code=http.HTTP_200_OK,
              summary="Collected, seal check, failed (§5.1.7)")
-def append_event(mailbag_id: str, event: PickupEvent, store: StoreDep,
-                 key: KeyDep):
+async def append_event(mailbag_id: str, event: PickupEvent, store: StoreDep,
+                 key: KeyDep,
+                 replays: ReplaysDep):
     """§5.1.7's exceptions, as they happen at the site.
 
     A broken seal is **collected and flagged**, not refused: §5.1.7 has the hub
@@ -60,7 +63,7 @@ def append_event(mailbag_id: str, event: PickupEvent, store: StoreDep,
         return {"mailbag_id": mailbag_id, "status": event.event,
                 "collected": collected}
 
-    return once(store, key, http.HTTP_200_OK, produce)
+    return await once(replays, key, http.HTTP_200_OK, produce)
 
 
 @router.get("/pickups/plan", summary="Current van routes (§5.1.5)")
