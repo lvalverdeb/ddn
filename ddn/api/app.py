@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ddn.api.jobs import redis_settings
 from ddn.api.routers import envelopes, observability, pickups, planning, processing
 from ddn.api.store import Store
 
@@ -42,7 +43,7 @@ def create_app(*, queue: ArqRedis | None = None,
         # connected, and opening a second one on startup would leave the
         # handlers talking to a pool nobody drains.
         if getattr(app.state, "queue", None) is None:
-            app.state.queue = await create_pool(settings or RedisSettings())
+            app.state.queue = await create_pool(settings or redis_settings())
         yield
 
     app = FastAPI(title=TITLE, description=DESCRIPTION, version="0.11",

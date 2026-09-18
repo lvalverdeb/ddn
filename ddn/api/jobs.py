@@ -20,14 +20,28 @@ thin call into `ddn.simulation`, `ddn.allocation`, `ddn.linehaul` or
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from datetime import date
 from typing import Any
 
 from arq import ArqRedis
+from arq.connections import RedisSettings
 from arq.jobs import Job
 
 QUEUE = "ddn"
+
+#: Where the queue lives. Named like the repository's other inputs
+#: (`DDN_PLATFORM_REPO`, `DDN_OSRM_GRAPH`): required things are asked for by
+#: name rather than guessed. Unset falls back to a local Redis, which is what a
+#: developer running `make dev` has.
+REDIS_DSN = "DDN_REDIS_DSN"
+
+
+def redis_settings() -> RedisSettings:
+    """§13.1's queue connection, from the environment or localhost."""
+    dsn = os.environ.get(REDIS_DSN)
+    return RedisSettings.from_dsn(dsn) if dsn else RedisSettings()
 
 
 async def run_allocation(ctx: dict[str, Any], *, day: str,
@@ -77,6 +91,22 @@ async def run_returns(ctx: dict[str, Any], *, payload: dict[str, Any]
 #: Every function the queue will run. A worker is started with exactly these.
 FUNCTIONS = [run_allocation, run_simulation, run_routes, run_linehaul,
              run_returns]
+
+
+class WorkerSettings:
+    """What `arq ddn.api.jobs.WorkerSettings` needs to start a worker.
+
+    §13.1 asks for "a dedicated queue with retry and visibility", and this is
+    the process that provides it: a separate container from the API, so that
+    solver work cannot take a request thread with it and so that the two scale
+    apart. `max_tries` is arq's own retry; a job that keeps failing ends in the
+    queue's dead set where it can be looked at, rather than disappearing.
+    """
+
+    functions = FUNCTIONS
+    max_tries = 3
+    job_timeout = 900
+    keep_result = 3600
 
 
 async def enqueue(pool: ArqRedis, function: str, **kwargs: Any) -> str:
