@@ -152,9 +152,10 @@ Revision history — a copy-paste when §13 was inserted. They are cited here as
 ## Commands
 
 ```sh
-uv sync --extra dev
-uv run pytest tests/ -q      # 537 tests; no gateway, no routing data needed
+uv sync --extra dev --extra api
+uv run pytest tests/ -q      # 586 tests; no gateway, no Redis, no routing data
 uv run ruff check .
+uv run uvicorn ddn.api.app:create_app --factory   # §13, needs a real Redis
 ```
 
 `uv sync` needs read access to **two** private repositories: this one and

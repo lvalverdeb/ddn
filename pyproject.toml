@@ -11,9 +11,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# §13's service layer. FastAPI because the spec names it; Arq because §13.1
+# rules out in-process background tasks and asks for "a dedicated queue with
+# retry and visibility" -- Arq is asyncio-native, so it needs no thread bridge
+# from an async handler, and its job records are the status endpoint's source.
+api = [
+    "fastapi>=0.115",
+    "arq>=0.26",
+]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24",
     "ruff==0.16.4",
+    # So the suite still needs no external service. CLAUDE.md's commands
+    # promise tests that run without a gateway or routing data; a Redis
+    # requirement would break that promise for everyone who clones this.
+    "fakeredis>=2.26",
 ]
 
 [build-system]
@@ -34,3 +47,4 @@ target-version = "py313"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
