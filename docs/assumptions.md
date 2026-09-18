@@ -52,6 +52,36 @@ Three provenances are used, and they are not equally trustworthy:
 | `VAN_IDLE_RETURN_MIN` | 45 | §5.1.5 | **invented** |
 | `PICKUP_RESPONSE_TARGET_H` | 4 | §5.1.6 | **invented.** A service metric, not a solver constraint |
 
+## Processing throughput (§5.2.5, Open Question 4)
+
+Open Question 4 asks for "envelopes per hour for reconciliation, geocoding,
+assembly (clean-room) and sorting; clean-room operating hours; share of
+envelopes requiring assembly". None is supplied. These drive `expected_ready_at`,
+which drives what line-haul can carry, so **a readiness figure computed from
+them is a property of these numbers and not of the operation** — the same
+warning `capacity-finding.md` carries about the 12.8 figure.
+
+They are deliberately *not* fitted to §10's "assembly clears 700 of the 900":
+that split is illustrative and priority-ordered, and tuning an invented rate to
+reproduce it would manufacture agreement between two things that are both
+guesses.
+
+| Key | Value | Spec gap | Provenance |
+|---|---|---|---|
+| `RECONCILE_PER_HOUR` | 1200 | §5.2.1, §5.2.5 | **invented** |
+| `ASSEMBLY_PER_HOUR` | 120 | §5.2.3; §8.3 calls the clean room the likely bottleneck | **invented.** The one that decides how much rolls to tomorrow |
+| `SORT_PER_HOUR` | 2400 | §5.2.4 | **invented** |
+
+Geocoding has no rate here: §5.2.2 puts it before the bag arrives in the usual
+case, so it is off the critical path for readiness.
+
+## Pickups (§5.1.5, §3.2)
+
+| Key | Value | Spec gap | Provenance |
+|---|---|---|---|
+| `REOPT_CADENCE_MIN` | 30 | §5.1.5 | document — §5.1.5's own "e.g. every 30 minutes" |
+| `EQUIDISTANT_MARGIN_M` | 2000 | §3.2 flags zips "straddling two facilities' areas"; Open Question 14 asks how | **invented.** Too small and nothing is flagged; too large and every envelope is |
+
 ## Facility placeholders (§3.1)
 
 **Synthetic.** The real geography is unsupplied, and `capacity-finding.md` is

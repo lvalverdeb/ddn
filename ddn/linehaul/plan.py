@@ -56,12 +56,25 @@ class Trip:
     returns: int
 
 
+#: Why a depot's envelopes stayed at the hub. §5.3 gives two causes and they
+#: are not the same problem: one is a fleet that is too small, the other a hub
+#: that was too slow. Reporting both as "rolled" hides which.
+NO_VAN = "no van could reach the depot before its morning release"
+NOT_READY_IN_TIME = "not ready before the van's latest departure"
+
+
 @dataclass(frozen=True)
 class LinehaulPlan:
     """The night's line-haul, and what it could not carry."""
 
     trips: tuple[Trip, ...] = ()
     rolled: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: facility id -> why its rolled envelopes rolled.
+    reasons: dict[str, str] = field(default_factory=dict)
+
+    def reason_for(self, facility_id: str) -> str | None:
+        """Why this depot's envelopes stayed, or `None` if none did."""
+        return self.reasons.get(facility_id)
 
     @property
     def carried(self) -> int:
@@ -119,6 +132,7 @@ def plan(facilities: Sequence[dict[str, Any]],
     free = sorted(vans, key=lambda v: int(v.get("linehaul_release_at", 0)))
     trips: list[Trip] = []
     rolled: dict[str, tuple[str, ...]] = {}
+    reasons: dict[str, str] = {}
 
     # Tightest deadline first; vans are scarce and a missed release costs a day.
     for facility_id in sorted(waiting, key=lambda name: deadlines.get(name, 0)):
@@ -134,6 +148,7 @@ def plan(facilities: Sequence[dict[str, Any]],
             # nothing departs. §5.3 prefers a whole day's delay to a van that
             # arrives after the bikes have gone.
             rolled[facility_id] = tuple(e["package_id"] for e in pool)
+            reasons[facility_id] = NO_VAN
             continue
 
         free.remove(chosen)
@@ -150,5 +165,6 @@ def plan(facilities: Sequence[dict[str, Any]],
         ))
         if missed:
             rolled[facility_id] = tuple(e["package_id"] for e in missed)
+            reasons[facility_id] = NOT_READY_IN_TIME
 
-    return LinehaulPlan(trips=tuple(trips), rolled=rolled)
+    return LinehaulPlan(trips=tuple(trips), rolled=rolled, reasons=reasons)

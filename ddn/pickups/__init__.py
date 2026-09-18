@@ -14,5 +14,7 @@ from ddn.pickups.admission import (
     can_take,
     load,
 )
+from ddn.pickups.dispatch import Dispatch, Incident, Visit, run
 
-__all__ = ["BAGS", "COLLECTS", "WEIGHT", "Assignment", "assign", "can_take", "load"]
+__all__ = ["BAGS", "COLLECTS", "WEIGHT", "Assignment", "Dispatch", "Incident",
+           "Visit", "assign", "can_take", "load", "run"]

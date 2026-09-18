@@ -95,20 +95,20 @@ where the target says, and when you move a stage, move one boundary at a time.
 
 | target | today | § | what it owns | is the *stage* a solver problem? |
 |---|---|---|---|---|
-| `model/` | `ddn/model/` | 9.1, 5.2.6 | entities and lifecycle | — |
+| `model/` | `ddn/model/` | 9.1, 5.2.6, 3.3 | entities, lifecycle, nearest-facility | — |
 | `solver_adapter/` | `ddn/solver_adapter/`, `ddn/contract.py` | 9.1, 7.1, 9.2 | operation records → `Problem`; priority as class plus score; §9.2 output; §7.1 post-checks | — (a mapping) |
 | `allocation/` | — | 4.2 | daily fleet split across facilities and van duty, upstream of the solver | no |
-| `pickups/` | `ddn/pickups.py` | 5.1 | dynamic mailbag pickup routing, van-only; admission is the half that exists | no |
-| `processing/` | — | 5.2 | expected-ready-time computation **only** — not reconciliation or assembly themselves | no |
-| `linehaul/` | `ddn/linehaul.py` | 5.3 | van-to-depot assignment against morning release times | no |
+| `pickups/` | `ddn/pickups/` | 5.1 | admission, and the day on §5.1.5's cadence with §5.1.7's exceptions | no |
+| `processing/` | `ddn/processing/` | 5.2 | expected-ready-time computation and §5.2.4's pre-sort **only** — not reconciliation or assembly themselves | no |
+| `linehaul/` | `ddn/linehaul/` | 5.3 | van-to-depot assignment against morning release times | no |
 | `lastmile/` | `ddn/lastmile.py` | 5.4 | per-facility delivery routing; static batch, the one-day lag's gift | yes |
 | `returns/` | `ddn/returns.py` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
 | `simulation/` | `ddn/run_day.py` | 5.6, 10, 11 | day simulator and metrics | — |
 
-`allocation/` and `processing/` have no code yet. `ddn/model/` and
-`ddn/solver_adapter/` are built; `ddn/contract.py` still holds §5.4's mapping and
-`solver_adapter.last_mile` delegates to it rather than restating it, so the two
-are one boundary until the move.
+`allocation/` is the last package with no code. Everything else is built;
+`ddn/contract.py` still holds §5.4's mapping and `solver_adapter.last_mile`
+delegates to it rather than restating it, so the two are one boundary until the
+move.
 
 That last column is about the *stage*, not the module: **no module here calls a
 solver.** They build a `Problem` and the caller solves it. Two of the four
@@ -125,7 +125,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 436 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 480 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 

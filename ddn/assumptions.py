@@ -61,6 +61,24 @@ VAN_IDLE_RETURN_MIN = 45
 PICKUP_RESPONSE_TARGET_H = 4
 
 
+# §5.2.5 and Open Question 4: no throughput figure is supplied anywhere. These
+# three decide `expected_ready_at`, and through it what line-haul can carry, so
+# a readiness result computed from them describes them rather than the
+# operation. Deliberately not fitted to §10's 700-of-900 assembly split.
+RECONCILE_PER_HOUR = 1200
+ASSEMBLY_PER_HOUR = 120
+SORT_PER_HOUR = 2400
+
+# §5.1.5's own illustration: "re-optimisation runs at a fixed cadence (e.g.
+# every 30 minutes)".
+REOPT_CADENCE_MIN = 30
+
+# §3.2 asks for zips "straddling two facilities' areas" to be flagged and Open
+# Question 14 asks what to do about them. Invented: too small and nothing is
+# flagged, too large and everything is.
+EQUIDISTANT_MARGIN_M = 2000
+
+
 class FacilityPlaceholder(NamedTuple):
     """One row of the document's facility table. Synthetic, not the operation."""
 

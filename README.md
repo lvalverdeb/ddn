@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 436 tests
+uv run pytest tests/ -q      # 480 tests
 uv run ruff check .
 ```
 
@@ -40,8 +40,9 @@ line-haul assignment, pickup admission and the return run.
 | module | §  | what it does | is the *stage* a solver problem? |
 |---|---|---|---|
 | `contract.py` | 9.1 | operation records → `Problem`; priority as class plus score | — (a mapping) |
-| `pickups.py`  | 5.1 | admission: which van may take a bag | no |
-| `linehaul.py` | 5.3 | assignment against each depot's morning release | no |
+| `pickups/`    | 5.1 | admission, and the day run on a re-optimisation cadence | no |
+| `processing/` | 5.2 | expected ready times; pre-sort at file receipt | no |
+| `linehaul/`   | 5.3 | assignment against each depot's morning release | no |
 | `lastmile.py` | 5.4 | static per-facility batch, the one-day lag's gift | yes |
 | `returns.py`  | 5.5 | static CVRP, stops aggregated by customer site | yes |
 | `solver_adapter/` | 9.2, 7.1 | §9.2 output; §7.1 post-checks; §5.1's problem | — |
@@ -51,7 +52,7 @@ That last column is about the *stage*. No module here calls a solver itself —
 solves it.
 
 **Two of the four operational modules import no part of the routing library at
-all.** `linehaul.py` imports nothing from `vrp`; `pickups.py` imports one name
+all.** `linehaul/` imports nothing from `vrp`; `pickups/` imports one name
 from `ddn.contract`. §5.3 is an assignment problem and treating it as routing
 would invent a route where there is a single leg; §5.1 is a dynamic VRP as a
 *problem type*, but the half built so far is admission, which needs no solver
