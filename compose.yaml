@@ -1,0 +1,87 @@
+# Bootstrap: `make bootstrap`.
+#
+# Three services, which is what §13 needs and no more. The API accepts requests
+# and enqueues; the worker runs the jobs; Redis is the queue between them.
+# §13.1 rules out running solver work inside the request, so the worker is a
+# separate container rather than a thread -- a process that dies takes
+# in-process work with it, and nobody can ask what became of it.
+
+name: ddn
+
+services:
+  redis:
+    image: redis:7-alpine
+    # Appendonly so a restart does not silently drop queued jobs. §13.1 asks
+    # for "retry and visibility"; a queue that forgets has neither.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      secrets:
+        - gh_token
+      ssh:
+        - default
+    environment:
+      DDN_REDIS_DSN: redis://redis:6379/0
+    ports:
+      - "${DDN_API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      secrets:
+        - gh_token
+      ssh:
+        - default
+    # The same image as the API, so the jobs a handler enqueues are the ones
+    # this process can run. Two images would drift and the symptom would be a
+    # job that stays queued for ever.
+    command: ["arq", "ddn.api.jobs.WorkerSettings"]
+    environment:
+      DDN_REDIS_DSN: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # One-shot. `make test-docker` runs the suite in the image that ships, which
+  # is the only way to know the image contains what the tests read -- `models/`
+  # beside `ddn/`, and the problem definition several tests assert against.
+  tests:
+    build:
+      context: .
+      secrets:
+        - gh_token
+      ssh:
+        - default
+    command: ["pytest", "tests/", "-q"]
+    profiles: ["test"]
+
+volumes:
+  redis-data:
+
+secrets:
+  gh_token:
+    # Read access to lvalverdeb/osrm-microservice. Without it `uv sync` fails
+    # during the build with a git authentication error that names no repository.
+    environment: GH_TOKEN

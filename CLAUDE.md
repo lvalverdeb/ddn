@@ -148,11 +148,25 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-uv sync --extra dev --extra api
-uv run pytest tests/ -q      # 587 tests; no gateway, no Redis, no routing data
-uv run ruff check .
-uv run uvicorn ddn.api.app:create_app --factory   # §13, needs a real Redis
+make test                    # 587 tests; no gateway, no Redis, no routing data
+make check                   # and ruff
+make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```
+
+`Makefile` is the front door and `make` lists it. The suite runs on the host
+with no services, which is a promise worth keeping: anyone who clones this
+repository runs everything with one command and no infrastructure. Docker is
+for the *service*, which needs a queue — `compose.yaml` runs Redis, the API and
+a worker, and the worker is a separate container because §13.1 will not have
+solver work inside a request.
+
+Building the image needs `GH_TOKEN` (or a loaded ssh-agent): it clones the
+second private repository, and `make bootstrap` says so by name rather than
+letting the build fail with a git error that mentions neither. `DOCKER_HOST`
+and `DOCKER_CONTEXT` select the daemon — often not the local one — and
+`make where` prints which is selected. Both failures are guarded and both
+guards name the thing that is missing, which is the same courtesy
+`simulation/on_road.py` extends about its two inputs.
 
 `uv sync` needs read access to **two** private repositories: this one and
 `lvalverdeb/osrm-microservice`. Without it you get a git authentication failure

@@ -27,10 +27,35 @@ Without access to `osrm-microservice` you get a git authentication failure from
 new person hits.
 
 ```sh
-uv sync --extra dev --extra api
-uv run pytest tests/ -q      # 587 tests
-uv run ruff check .
+make            # what there is
+make test       # 587 tests, no services needed
+make check      # lint and tests
 ```
+
+`make test` installs what it needs and runs on the host: no Redis, no gateway,
+no routing data. That is the whole of what it takes to work on the modules.
+
+To run the §13 service, which does need a queue:
+
+```sh
+export GH_TOKEN=$(gh auth token)   # the build clones the *other* private repo
+make bootstrap                     # redis, the API on :8000, an Arq worker
+```
+
+The token is the same second-repository problem as above, moved into the image
+build. `make bootstrap` stops with that explanation rather than letting `uv
+sync` fail inside a build layer with a git error that names neither repository.
+An ssh-agent works instead, if you have one loaded.
+
+The daemon is selectable, because it is often not the local one:
+
+```sh
+make where                                     # which daemon is selected
+make bootstrap DOCKER_HOST=ssh://ops@buildbox  # or DOCKER_CONTEXT=colima
+```
+
+Every target that needs a daemon checks for one first and names the endpoint it
+tried. `make test` needs none.
 
 The tests need no gateway and no routing data. They cover the data contract, the
 line-haul assignment, pickup admission and the return run.
