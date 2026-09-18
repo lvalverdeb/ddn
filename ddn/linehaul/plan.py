@@ -85,6 +85,18 @@ class LinehaulPlan:
         return sum(len(ids) for ids in self.rolled.values())
 
 
+def _released_at(van: dict[str, Any]) -> int:
+    """When a van is free for line-haul; zero if it never went on pickups.
+
+    §9.1 marks `linehaul_release_at` "datetime, optional", and a record may
+    carry the column with no value rather than leave it out -- which is what a
+    van held for line-haul from the outset looks like. Reading it with a
+    default only covers the absent case, and a present `None` reached `int()`
+    and raised.
+    """
+    return int(van.get("linehaul_release_at") or 0)
+
+
 def latest_departure(facility: dict[str, Any], *, unload_seconds: int) -> int:
     """§3.1's derived column: release − transit − unload.
 
@@ -129,7 +141,7 @@ def plan(facilities: Sequence[dict[str, Any]],
                  for f in facilities}
     transit = {f["id"]: int(f["transit_from_hub_min"]) * 60 for f in facilities}
 
-    free = sorted(vans, key=lambda v: int(v.get("linehaul_release_at", 0)))
+    free = sorted(vans, key=_released_at)
     trips: list[Trip] = []
     rolled: dict[str, tuple[str, ...]] = {}
     reasons: dict[str, str] = {}
@@ -140,8 +152,7 @@ def plan(facilities: Sequence[dict[str, Any]],
         deadline = deadlines.get(facility_id)
         chosen = next(
             (v for v in free
-             if deadline is not None
-             and int(v.get("linehaul_release_at", 0)) <= deadline),
+             if deadline is not None and _released_at(v) <= deadline),
             None)
         if chosen is None:
             # No van can reach this depot before it releases its routes, so

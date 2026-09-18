@@ -253,3 +253,23 @@ def test_a_trip_says_when_the_van_is_back():
 
     assert trip.returns == trip.arrival + 20 * 60 + 240 * 60
     assert trip.returns > trip.arrival
+
+
+def test_a_van_with_an_explicit_null_release_time_is_still_available():
+    """§9.1 marks `linehaul_release_at` "datetime, optional".
+
+    A van held for line-haul from the outset has the column and no value, which
+    is not the same as the column being absent — and reading it with a default
+    only covered the absent case, so a record carrying `None` reached `int()`
+    and raised. Found by feeding the planner §9.1-shaped records from the
+    simulator rather than test-shaped ones.
+    """
+    depot = {"id": "D1", "route_release_time": 7 * 3600,
+             "transit_from_hub_min": 30}
+    envelopes = [{"package_id": "P1", "facility_id": "D1",
+                  "expected_ready_at": 0}]
+    night = linehaul.plan([depot], envelopes,
+                          [{"vehicle_id": "V1", "linehaul_release_at": None}],
+                          unload_seconds=1800)
+    assert night.carried == 1
+    assert night.trips[0].van_id == "V1"

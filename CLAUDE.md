@@ -125,7 +125,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 508 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 509 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 
