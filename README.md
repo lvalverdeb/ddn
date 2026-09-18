@@ -42,6 +42,9 @@ export GH_TOKEN=$(gh auth token)   # the build clones the *other* private repo
 make bootstrap                     # redis, the API on :8000, an Arq worker
 ```
 
+An ssh-agent with a key loaded works instead of the token — the build accepts
+either. Neither is needed to `make up` an image that already exists.
+
 The token is the same second-repository problem as above, moved into the image
 build. `make bootstrap` stops with that explanation rather than letting `uv
 sync` fail inside a build layer with a git error that names neither repository.

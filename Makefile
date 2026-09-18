@@ -11,6 +11,7 @@
 COMPOSE ?= docker compose
 UV      ?= uv
 PORT    ?= 8000
+IMAGE   ?= ddn-api:latest
 
 # Which daemon to build and run on. Both are Docker's own variables; naming
 # them here means `make` passes them on and `make where` can say which one it
@@ -35,7 +36,7 @@ endif
 .DEFAULT_GOAL := help
 .PHONY: help install test lint fmt check bootstrap up down restart logs ps \
 	shell api worker redis test-docker rebuild clean where \
-	guard-token guard-docker
+	guard-creds guard-docker have-image
 
 help:  ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -60,7 +61,7 @@ check: lint test  ## What CI would run, if there were CI
 
 # ------------------------------------------------------------------- services
 
-bootstrap: guard-docker guard-token  ## Build the images and start the stack
+bootstrap: guard-docker guard-creds  ## Build the images and start the stack
 	$(COMPOSE) build
 	$(COMPOSE) up -d
 	@echo
@@ -69,7 +70,8 @@ bootstrap: guard-docker guard-token  ## Build the images and start the stack
 	@echo "  logs     make logs"
 	@echo
 
-up: guard-docker guard-token  ## Start the stack without rebuilding
+up: guard-docker  ## Start the stack without rebuilding
+	@$(MAKE) --no-print-directory have-image || $(MAKE) --no-print-directory guard-creds
 	$(COMPOSE) up -d
 
 down:  ## Stop the stack, keeping the queue's data
@@ -97,10 +99,11 @@ worker: redis  ## Run an Arq worker on the host (§13.1)
 	DDN_REDIS_DSN=redis://localhost:6379/0 \
 		$(UV) run arq ddn.api.jobs.WorkerSettings
 
-test-docker: guard-docker guard-token  ## Run the suite inside the shipped image
+test-docker: guard-docker  ## Run the suite inside the shipped image
+	@$(MAKE) --no-print-directory have-image || $(MAKE) --no-print-directory guard-creds
 	$(COMPOSE) run --rm tests
 
-rebuild: guard-docker guard-token  ## Rebuild from scratch
+rebuild: guard-docker guard-creds  ## Rebuild from scratch
 	$(COMPOSE) build --no-cache
 
 clean:  ## Stop everything and drop the queue's volume
@@ -119,24 +122,36 @@ where:  ## Which Docker daemon these targets will use
 
 # --------------------------------------------------------------------- guards
 
-# The build clones a *second* private repository. Saying so here, by name, is
-# the difference between a clear stop and a git authentication error that
-# mentions neither repository — the same reason `simulation/on_road.py` asks
-# for its two inputs by name rather than guessing them.
-guard-token:
-	@test -n "$$GH_TOKEN" || { \
-		echo "GH_TOKEN is unset."; \
-		echo; \
-		echo "  The image build installs vrp-platform from"; \
-		echo "  github.com/lvalverdeb/osrm-microservice, which is private."; \
-		echo "  Without a token 'uv sync' fails inside the build with a git"; \
-		echo "  authentication error that names neither repository."; \
-		echo; \
-		echo "    export GH_TOKEN=\$$(gh auth token)"; \
-		echo; \
-		echo "  Or build over SSH instead: the Dockerfile falls back to an"; \
-		echo "  ssh-agent mount when GH_TOKEN is empty (ssh-add -l to check)."; \
-		exit 1; }
+# The build clones a *second* private repository, and the Dockerfile accepts
+# either credential for it: a token, or an ssh-agent with a key loaded. This
+# guard has to accept both, or it refuses a path the build supports -- which it
+# did, until `make up` turned somebody away who had keys and no token.
+#
+# Only reached when something is actually going to be built. `make up` on an
+# image that already exists needs no credential at all, which is what "without
+# rebuilding" means.
+have-image:
+	@docker image inspect $(IMAGE) >/dev/null 2>&1
+
+guard-creds:
+	@if [ -n "$$GH_TOKEN" ]; then exit 0; fi; \
+	if ssh-add -l >/dev/null 2>&1; then exit 0; fi; \
+	echo "No credential for the private dependency."; \
+	echo; \
+	echo "  The image build installs vrp-platform from"; \
+	echo "  github.com/lvalverdeb/osrm-microservice, which is private."; \
+	echo "  Without one of these, 'uv sync' fails inside the build with a git"; \
+	echo "  authentication error that names neither repository."; \
+	echo; \
+	echo "  Either:"; \
+	echo "    export GH_TOKEN=\$$(gh auth token)"; \
+	echo "  or load a key the agent can offer:"; \
+	echo "    ssh-add ~/.ssh/id_ed25519      # 'ssh-add -l' to check"; \
+	echo; \
+	echo "  Neither is needed to run an image that already exists, nor by"; \
+	echo "  'make test', which needs no daemon either."; \
+	exit 1
+
 
 # Reaching no daemon is the other failure that arrives as a wall of Go stack
 # rather than a sentence. Say which endpoint was tried, and how to point

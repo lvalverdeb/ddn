@@ -24,6 +24,9 @@ services:
     restart: unless-stopped
 
   api:
+    # The same tag on api, worker and tests: one build, and a name `make` can
+    # ask about before deciding whether it needs build credentials at all.
+    image: ddn-api:latest
     build:
       context: .
       secrets:
@@ -47,6 +50,7 @@ services:
     restart: unless-stopped
 
   worker:
+    image: ddn-api:latest
     build:
       context: .
       secrets:
@@ -68,6 +72,7 @@ services:
   # is the only way to know the image contains what the tests read -- `models/`
   # beside `ddn/`, and the problem definition several tests assert against.
   tests:
+    image: ddn-api:latest
     build:
       context: .
       secrets:
