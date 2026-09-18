@@ -1,6 +1,6 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.10
+**Status:** Draft v0.11
 **Date:** 16 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
@@ -473,7 +473,48 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 
 ---
 
-## 13. Revision history
+## 13. Service interface (API)
+
+The workflow is exposed as an HTTP API built with FastAPI. The API is a thin layer: it accepts inputs, starts jobs, reports status and returns results. Stage logic lives in the modules of §5 and is never implemented inside request handlers.
+
+### 14.1 Principles
+
+- **Jobs, not synchronous calls.** Any endpoint that invokes the solver returns `202 Accepted` with a job id; callers poll `GET …/{id}` or register a webhook. Jobs run on a dedicated queue with retry and visibility, not in-process background tasks.
+- **Schemas are the data contract.** Request and response models are generated from §9 and shared with the internal model; the OpenAPI document is the published form of §9.
+- **Lifecycle by events.** Callers append events (collected, reconciled, assembled, sorted, outcome recorded); the §5.2.6 state machine validates each transition. Status is never set directly.
+- **Idempotency.** Ingest and event endpoints require an idempotency key so retried calls from driver apps or customer systems cannot duplicate envelopes or outcomes.
+- **Constraint visibility.** Every routing result carries its §7.1 violation list (empty on success).
+- **Audit.** Overrides (§8.2) and outcome events record the actor and time.
+
+### 14.2 Resources
+
+| Resource | Endpoints | Spec |
+|---|---|---|
+| Envelopes | `POST /envelopes/batch` (upload-file ingest); `GET /envelopes/{id}`; `POST /envelopes/{id}/events` (outcome, address correction) | §5.1.1, §6, §9.1 |
+| Pickups | `POST /pickups` (mailbag ready); `POST /pickups/{id}/events` (collected, seal check, failed); `GET /pickups/plan` (current van routes) | §5.1 |
+| Processing | `POST /processing/events` (reconciled, discrepancy, assembled, sorted); `GET /processing/ready?facility=&by=` (expected ready counts) | §5.2 |
+| Allocation | `POST /allocation/runs`; `GET /allocation/runs/{id}` | §4.2 |
+| Line-haul | `POST /linehaul/plans`; `GET /linehaul/plans/{id}`; `POST /linehaul/plans/{id}/events` (departed, arrived) | §5.3 |
+| Delivery routes | `POST /routes/runs` (facility, day); `GET /routes/runs/{id}`; `POST /routes/runs/{id}/locks` (overrides, triggers re-run) | §5.4, §8.2 |
+| Returns | `POST /returns/runs`; `GET /returns/runs/{id}` | §5.5 |
+| Simulation | `POST /simulation/days`; `GET /simulation/days/{id}` | §5.6, §10 |
+| Metrics | `GET /metrics?day=` | §11 |
+| Health | `GET /health`; `GET /solver/capabilities` | §12 Q5 |
+
+### 14.3 Scheduled orchestration
+
+Two processes run on a schedule and call the same internal functions as the endpoints; they do not call the API over HTTP:
+
+- **Pickup re-optimisation** every [TBD, default 30] minutes during the collection window, publishing the plan read by `GET /pickups/plan`.
+- **Nightly cycle**: allocation → line-haul plan → next-day delivery routes for every facility, on the pool that will be positioned by morning release.
+
+### 14.4 Out of scope for the API
+
+Reconciliation, assembly and sorting are physical hub processes; the API only receives their events. Customer-facing pickup booking and the driver app are separate clients of this API, not part of it.
+
+---
+
+## 14. Revision history
 
 | Version | Date | Author | Change |
 |---|---|---|---|
@@ -483,6 +524,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.11 | 2026-09-18 | [TBD] | Added §13 service interface: FastAPI resources, job model, event-based lifecycle, scheduled orchestration |
 | 0.10 | 2026-09-16 | [TBD] | One-day lag confirmed: pickup, processing, sorting and line-haul on day D, all delivery on D+1; depot cut-off replaced by morning route release and latest van departure; assembled envelopes follow the same routing |
 | 0.9 | 2026-09-16 | [TBD] | Upload file precedes bag: pre-geocoding, pre-sorting, assembly scheduling, ready-time computed at request |
 | 0.8 | 2026-09-16 | [TBD] | Pickups van-only for security; motorbikes delivery-only; vans identified as the contested pickup/line-haul resource; release-to-line-haul scheduling |
