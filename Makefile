@@ -46,7 +46,7 @@ export DDN_IMAGE
 endif
 
 # Which daemon to build and run on. Both are Docker's own variables; naming
-# them here means `make` passes them on and `make where` can say which one it
+# them here means `make` passes them on and `make config` can say which one it
 # will use, rather than leaving you to infer it from a connection error.
 #
 #   make bootstrap DOCKER_HOST=ssh://ops@buildbox
@@ -66,8 +66,8 @@ export DOCKER_CONTEXT
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help install test lint fmt check bootstrap up down restart logs ps \
-	shell api worker redis test-docker rebuild clean where config \
+.PHONY: help install test lint fmt check bootstrap up down logs ps \
+	shell api worker redis rebuild clean config \
 	creds-help guard-docker
 
 help:  ## List targets
@@ -96,7 +96,7 @@ check: lint test  ## What CI would run, if there were CI
 bootstrap: guard-docker  ## Build the images and start the stack
 	@$(NEED_CREDS)
 	$(COMPOSE) build
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d --wait
 	@port=$$($(COMPOSE) port api 8000 2>/dev/null | sed 's/.*://'); \
 	port=$${port:-$(DDN_API_PORT)}; \
 	echo; \
@@ -111,8 +111,6 @@ up: guard-docker  ## Start the stack without rebuilding
 
 down:  ## Stop the stack, keeping the queue's data
 	$(COMPOSE) down
-
-restart: down up  ## Stop and start
 
 logs:  ## Follow the logs
 	$(COMPOSE) logs -f
@@ -133,10 +131,6 @@ api: redis  ## Run the API on the host against the container's Redis
 worker: redis  ## Run an Arq worker on the host (§13.1)
 	DDN_REDIS_DSN=$(DDN_REDIS_DSN) \
 		$(UV) run arq ddn.api.jobs.WorkerSettings
-
-test-docker: guard-docker  ## Run the suite inside the shipped image
-	@$(HAVE_IMAGE) || $(NEED_CREDS)
-	$(COMPOSE) run --rm tests
 
 rebuild: guard-docker  ## Rebuild from scratch
 	@$(NEED_CREDS)
@@ -163,8 +157,6 @@ config:  ## Print every variable in force, and which daemon they point at
 	@$(COMPOSE) config 2>/dev/null \
 		| awk '/published:/ {gsub(/"/, "", $$2); print "api port        = " $$2 "  (compose, after .env)"; exit}' \
 		|| true
-
-where: config  ## Alias for `config`
 
 # --------------------------------------------------------------------- guards
 

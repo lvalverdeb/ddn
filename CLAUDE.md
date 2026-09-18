@@ -153,12 +153,21 @@ make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```
 
+`make bootstrap` waits for the API's healthcheck before printing its URL, so a
+stack that came up broken says so rather than handing you a link to nothing.
+
 `Makefile` is the front door and `make` lists it. The suite runs on the host
 with no services, which is a promise worth keeping: anyone who clones this
 repository runs everything with one command and no infrastructure. Docker is
 for the *service*, which needs a queue — `compose.yaml` runs Redis, the API and
 a worker, and the worker is a separate container because §13.1 will not have
 solver work inside a request.
+
+**The image holds the service, not the repository.** No `tests/`, no `docs/`:
+running the suite in a container would duplicate, slowly and with a daemon,
+something the host does in a second. The api and worker share one build block
+through a YAML anchor, because two would drift and the symptom would be a
+worker that cannot load the jobs the API enqueues.
 
 Building the image needs `GH_TOKEN` (or a loaded ssh-agent): it clones the
 second private repository, and `make bootstrap` says so by name rather than

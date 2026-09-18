@@ -59,6 +59,8 @@ cp .env.example .env     # DDN_API_PORT, DDN_IMAGE, GH_TOKEN, DOCKER_HOST…
 make config              # what is in force, and which daemon it points at
 ```
 
+`make bootstrap` waits for the API to report healthy before printing its URL.
+
 The daemon is often not the local one, so `DOCKER_HOST` and `DOCKER_CONTEXT`
 select it. Every target that needs one checks first and names the endpoint it
 tried. `make test` needs none.

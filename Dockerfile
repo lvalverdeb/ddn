@@ -34,25 +34,26 @@ RUN --mount=type=secret,id=gh_token,required=false \
         GIT_CONFIG_COUNT=1 \
         GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/gh_token)@github.com/.insteadOf" \
         GIT_CONFIG_VALUE_0="https://github.com/" \
-        uv sync --frozen --no-install-project --extra api --extra dev; \
+        uv sync --frozen --no-install-project --extra api; \
     else \
         GIT_CONFIG_COUNT=1 \
         GIT_CONFIG_KEY_0="url.git@github.com:.insteadOf" \
         GIT_CONFIG_VALUE_0="https://github.com/" \
-        uv sync --frozen --no-install-project --extra api --extra dev; \
+        uv sync --frozen --no-install-project --extra api; \
     fi
 
 # `models/` sits beside `ddn/` on purpose: `contract.load_model` reads the
 # delivery models by path relative to the package, because this repository
-# ships them and knows where they are. `docs/` and `tests/` come too, so that
-# the suite runs in the image -- several tests read the problem definition and
-# assert the code still matches what it says.
+# ships them and knows where they are.
+#
+# The suite is not here. It runs on the host in about a second with no daemon,
+# which is the promise CLAUDE.md makes; copying `tests/` and `docs/` in would
+# put a test suite and a 500-line specification in a production image to
+# duplicate something cheaper elsewhere.
 COPY ddn/ ./ddn/
 COPY models/ ./models/
-COPY docs/ ./docs/
-COPY tests/ ./tests/
 RUN --mount=type=secret,id=gh_token,required=false \
-    uv sync --frozen --extra api --extra dev --no-editable
+    uv sync --frozen --extra api --no-editable
 
 
 FROM python:3.13-slim-bookworm AS runtime
@@ -64,9 +65,6 @@ WORKDIR /app
 COPY --from=build --chown=ddn:ddn /app/.venv /app/.venv
 COPY --from=build --chown=ddn:ddn /app/ddn /app/ddn
 COPY --from=build --chown=ddn:ddn /app/models /app/models
-COPY --from=build --chown=ddn:ddn /app/docs /app/docs
-COPY --from=build --chown=ddn:ddn /app/tests /app/tests
-COPY --from=build --chown=ddn:ddn /app/pyproject.toml /app/pyproject.toml
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \

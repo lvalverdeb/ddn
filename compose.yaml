@@ -4,13 +4,29 @@
 # from this directory without being told to. `.env.example` lists them;
 # `make config` prints what is in force.
 #
-# Three services, which is what §13 needs and no more. The API accepts requests
-# and enqueues; the worker runs the jobs; Redis is the queue between them.
-# §13.1 rules out running solver work inside the request, so the worker is a
-# separate container rather than a thread -- a process that dies takes
-# in-process work with it, and nobody can ask what became of it.
+# Two processes and a queue, which is what §13 needs. The API accepts requests
+# and enqueues; the worker runs the jobs; Redis is between them. §13.1 rules
+# out running solver work inside the request, so the worker is a separate
+# container rather than a thread -- a process that dies takes in-process work
+# with it, and nobody can ask what became of it.
 
 name: ddn
+
+# The api and the worker are the same image doing different jobs, so the build
+# is written once. Two build blocks would drift, and the symptom would be a job
+# that stays queued for ever because the worker cannot load it.
+x-image: &image
+  image: ${DDN_IMAGE:-ddn-api:latest}
+  build:
+    context: .
+    secrets: [gh_token]
+    ssh: [default]
+  environment:
+    DDN_REDIS_DSN: redis://redis:6379/0
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
 
 services:
   redis:
@@ -18,8 +34,7 @@ services:
     # Appendonly so a restart does not silently drop queued jobs. §13.1 asks
     # for "retry and visibility"; a queue that forgets has neither.
     command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
+    volumes: [redis-data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -28,69 +43,27 @@ services:
     restart: unless-stopped
 
   api:
-    # The same tag on api, worker and tests: one build, and a name `make` can
-    # ask about before deciding whether it needs build credentials at all.
-    image: ${DDN_IMAGE:-ddn-api:latest}
-    build:
-      context: .
-      secrets:
-        - gh_token
-      ssh:
-        - default
-    environment:
-      DDN_REDIS_DSN: redis://redis:6379/0
+    <<: *image
     ports:
       - "${DDN_API_PORT:-8000}:8000"
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 5s
-    restart: unless-stopped
 
   worker:
-    image: ${DDN_IMAGE:-ddn-api:latest}
-    build:
-      context: .
-      secrets:
-        - gh_token
-      ssh:
-        - default
-    # The same image as the API, so the jobs a handler enqueues are the ones
-    # this process can run. Two images would drift and the symptom would be a
-    # job that stays queued for ever.
+    <<: *image
     command: ["arq", "ddn.api.jobs.WorkerSettings"]
-    environment:
-      DDN_REDIS_DSN: redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # One-shot. `make test-docker` runs the suite in the image that ships, which
-  # is the only way to know the image contains what the tests read -- `models/`
-  # beside `ddn/`, and the problem definition several tests assert against.
-  tests:
-    image: ${DDN_IMAGE:-ddn-api:latest}
-    build:
-      context: .
-      secrets:
-        - gh_token
-      ssh:
-        - default
-    command: ["pytest", "tests/", "-q"]
-    profiles: ["test"]
 
 volumes:
   redis-data:
 
 secrets:
   gh_token:
-    # Read access to lvalverdeb/osrm-microservice. Without it `uv sync` fails
-    # during the build with a git authentication error that names no repository.
+    # Read access to lvalverdeb/osrm-microservice. Without it -- or an
+    # ssh-agent -- `uv sync` fails during the build with a git authentication
+    # error that names no repository.
     environment: GH_TOKEN
