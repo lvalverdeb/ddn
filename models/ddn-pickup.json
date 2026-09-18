@@ -1,0 +1,62 @@
+{
+  "name": "ddn-pickup",
+  "applies_to": [
+    "Documents"
+  ],
+  "problem_id": "ddn-pickup",
+  "quantity": [
+    {
+      "dimension": "mailbags",
+      "from_field": "mailbags"
+    },
+    {
+      "dimension": "grams",
+      "from_field": "grams"
+    }
+  ],
+  "service": {
+    "fixed_seconds": 600
+  },
+  "windows": [
+    {
+      "start": 25200,
+      "end": 64800
+    }
+  ],
+  "shift": {
+    "start": 25200,
+    "end": 64800
+  },
+  "route": {
+    "closed": true
+  },
+  "assignment": {
+    "depot": "nearest"
+  },
+  "declinable": {
+    "priority_tier": 1,
+    "prize": 0
+  },
+  "fleet": [
+    {
+      "class": "VAN",
+      "id": "VAN-{n}",
+      "per_depot": 6,
+      "capacities": {
+        "mailbags": 40,
+        "grams": 500000
+      }
+    }
+  ],
+  "run": {
+    "engine": "pyvrp",
+    "budget": 400,
+    "seed": 0,
+    "objective": {
+      "mode": "MIN_COST",
+      "vehicle_fixed_cost": 50000,
+      "cost_per_metre": 1,
+      "cost_per_second": 0
+    }
+  }
+}

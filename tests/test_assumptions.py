@@ -95,3 +95,20 @@ def test_the_blocking_unknowns_have_no_placeholder():
     forbidden = re.compile(r"COST|RATIO|SLA_TARGET|_TARGET_RATE")
     assert not [name for name in vars(assumptions) if forbidden.search(name)]
     assert "Deliberately absent" in DOC
+
+
+def test_the_pickup_model_carries_the_documented_mailbag_capacity():
+    """§7.1's `[TBD]` reaches a model file, which is a second place to drift.
+
+    `models/ddn-pickup.json` declares the van's mailbag capacity so that
+    `servicemodel.build` can size the fleet, and `solver_adapter.problem`
+    cross-checks it against each §9.1 vehicle row. That makes three copies of
+    one unsupplied number, so the model is held to the document too.
+    """
+    import json
+
+    model = json.loads(
+        (Path(__file__).resolve().parent.parent
+         / "models" / "ddn-pickup.json").read_text(encoding="utf-8"))
+    capacities = {spec["class"]: spec["capacities"] for spec in model["fleet"]}
+    assert capacities["VAN"]["mailbags"] == assumptions.MAILBAGS_PER_VAN

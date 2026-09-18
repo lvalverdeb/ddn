@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 412 tests
+uv run pytest tests/ -q      # 436 tests
 uv run ruff check .
 ```
 
@@ -44,6 +44,7 @@ line-haul assignment, pickup admission and the return run.
 | `linehaul.py` | 5.3 | assignment against each depot's morning release | no |
 | `lastmile.py` | 5.4 | static per-facility batch, the one-day lag's gift | yes |
 | `returns.py`  | 5.5 | static CVRP, stops aggregated by customer site | yes |
+| `solver_adapter/` | 9.2, 7.1 | §9.2 output; §7.1 post-checks; §5.1's problem | — |
 
 That last column is about the *stage*. No module here calls a solver itself —
 `contract.py`, `lastmile.py` and `returns.py` build a `Problem` and the caller

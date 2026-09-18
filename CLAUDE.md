@@ -21,8 +21,11 @@ file; cite them the same way in docstrings, comments and commit messages.
   nothing else. Do not rename it to `envelope_id`; §9.1 fixes the name.
 - **§7.1 Hard constraints** — invariants. Every solver output must be validated
   against all of them before it is accepted. A violation is a failing test, never
-  a warning. (No post-check module exists yet; `ddn/contract.py` asserts some of
-  them at build time. Writing the check is work to do, not code to go find.)
+  a warning. `ddn/solver_adapter/postcheck.py` is that validation, in two halves
+  because §7.1 is: `check_route_constraints` answers the seven bullets one solve
+  can see, `check_day_constraints` the four that span stages (one vehicle per
+  *day*, arrival before dispatch, van unloaded before line-haul). It delegates to
+  `vrp.verify`'s seventeen invariants rather than restating them.
 - **§9 Data contract** — the only schema definition. Do not add, rename or drop
   fields without updating the spec first and saying so.
 - **§5.2.6 Envelope lifecycle** — the state machine, from `Requested` through
@@ -93,7 +96,7 @@ where the target says, and when you move a stage, move one boundary at a time.
 | target | today | § | what it owns | is the *stage* a solver problem? |
 |---|---|---|---|---|
 | `model/` | `ddn/model/` | 9.1, 5.2.6 | entities and lifecycle | — |
-| `solver_adapter/` | `ddn/contract.py` | 9.1, 7.1 | operation records → `Problem`; priority as class plus score; constraint post-checks | — (a mapping) |
+| `solver_adapter/` | `ddn/solver_adapter/`, `ddn/contract.py` | 9.1, 7.1, 9.2 | operation records → `Problem`; priority as class plus score; §9.2 output; §7.1 post-checks | — (a mapping) |
 | `allocation/` | — | 4.2 | daily fleet split across facilities and van duty, upstream of the solver | no |
 | `pickups/` | `ddn/pickups.py` | 5.1 | dynamic mailbag pickup routing, van-only; admission is the half that exists | no |
 | `processing/` | — | 5.2 | expected-ready-time computation **only** — not reconciliation or assembly themselves | no |
@@ -102,9 +105,10 @@ where the target says, and when you move a stage, move one boundary at a time.
 | `returns/` | `ddn/returns.py` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
 | `simulation/` | `ddn/run_day.py` | 5.6, 10, 11 | day simulator and metrics | — |
 
-`allocation/` and `processing/` have no code yet. `solver_adapter/`'s post-checks
-do not exist yet either — see §7.1 above. `ddn/model/` is the first target package
-built; `ddn/contract.py` still holds the mapping and is untouched by it.
+`allocation/` and `processing/` have no code yet. `ddn/model/` and
+`ddn/solver_adapter/` are built; `ddn/contract.py` still holds §5.4's mapping and
+`solver_adapter.last_mile` delegates to it rather than restating it, so the two
+are one boundary until the move.
 
 That last column is about the *stage*, not the module: **no module here calls a
 solver.** They build a `Problem` and the caller solves it. Two of the four
@@ -121,7 +125,7 @@ adapter); pytest; ruff 0.16.4.
 
 ```sh
 uv sync --extra dev
-uv run pytest tests/ -q      # 412 tests; no gateway, no routing data needed
+uv run pytest tests/ -q      # 436 tests; no gateway, no routing data needed
 uv run ruff check .
 ```
 
