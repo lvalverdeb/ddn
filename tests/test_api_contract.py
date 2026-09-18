@@ -144,3 +144,49 @@ def test_section_13s_subsections_are_numbered_13_not_14():
                                "Out of scope for the API"), start=1):
         assert f"### 13.{n} {title}" in SECTION_13
         assert f"### 14.{n} " not in SPEC, "§14 has no subsections"
+
+
+#: §13.1's six: "ingest and event endpoints require an idempotency key".
+IDEMPOTENT = ["/envelopes/batch", "/envelopes/{package_id}/events", "/pickups",
+              "/pickups/{mailbag_id}/events", "/processing/events",
+              "/linehaul/plans/{job_id}/events"]
+
+
+@pytest.mark.parametrize("path", IDEMPOTENT)
+def test_the_idempotency_key_is_published_as_required(spec, path):
+    """It is refused when absent, so the document must not call it optional.
+
+    FastAPI reads required-ness from the dependency's default, and the
+    dependency needs one to answer §13.1 with an explanation rather than a bare
+    422 — so the generated document said `required: false` while the service
+    refused the call. A client built from that would omit the header and meet a
+    400 the document never mentioned.
+    """
+    header = next(p for p in spec["paths"][path]["post"]["parameters"]
+                  if p["name"] == "Idempotency-Key")
+    assert header["required"] is True
+    assert header["in"] == "header"
+
+
+@pytest.mark.parametrize("path", IDEMPOTENT)
+def test_the_400_for_a_missing_key_is_published(spec, path):
+    assert "400" in spec["paths"][path]["post"]["responses"]
+
+
+@pytest.mark.parametrize("path", [p for p in IDEMPOTENT if p.endswith("/events")])
+def test_the_409_for_an_illegal_transition_is_published(spec, path):
+    """§5.2.6 refuses moves it does not draw; a caller should read that here."""
+    responses = spec["paths"][path]["post"]["responses"]
+    assert "409" in responses
+    assert "Problem" in str(responses["409"]), "and it carries the current state"
+
+
+def test_endpoints_without_a_key_do_not_document_a_400_for_one(spec):
+    """Derived from the document, so it cannot drift into a stale list."""
+    for path, operations in spec["paths"].items():
+        for verb, operation in operations.items():
+            has_header = any(p["name"] == "Idempotency-Key"
+                             for p in operation.get("parameters", []))
+            if not has_header and path not in IDEMPOTENT:
+                assert "400" not in operation["responses"], (
+                    f"{verb.upper()} {path} documents a 400 it cannot return")

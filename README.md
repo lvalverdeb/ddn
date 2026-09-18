@@ -28,7 +28,7 @@ new person hits.
 
 ```sh
 make            # what there is
-make test       # 587 tests, no services needed
+make test       # 604 tests, no services needed
 make check      # lint and tests
 ```
 

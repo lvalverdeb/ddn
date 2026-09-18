@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from arq import ArqRedis
 from arq.connections import RedisSettings, create_pool
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -61,4 +62,60 @@ def create_app(*, queue: ArqRedis | None = None,
 
     for module in (envelopes, pickups, processing, planning, observability):
         app.include_router(module.router)
+
+    app.openapi = _published(app)  # type: ignore[method-assign]
     return app
+
+
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+
+
+def _published(app: FastAPI):
+    """Make the document say what the service actually does.
+
+    §13.1 calls the OpenAPI document "the published form of §9", which only
+    holds if it is true. Two things were not.
+
+    `Idempotency-Key` is refused when absent and was published as optional,
+    because FastAPI reads required-ness from the dependency's default and the
+    dependency needs one to produce §13.1's explanation rather than a bare 422.
+    A client generated from that document would omit the header and meet a 400
+    the document never mentioned.
+
+    And the two refusals §13 asks for -- 400 for a missing key, 409 with the
+    current state for a transition §5.2.6 does not draw -- appeared nowhere in
+    the responses.
+
+    Both are derived from the document itself: the header is found by looking
+    for it, and the event endpoints by their path. Nothing here is a second
+    list of endpoints to keep in step with the routers.
+    """
+    problem = {"$ref": "#/components/schemas/Problem"}
+
+    def openapi() -> dict:
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(title=app.title, version=app.version,
+                             description=app.description, routes=app.routes)
+        for path, operations in schema["paths"].items():
+            for operation in operations.values():
+                headers = [p for p in operation.get("parameters", [])
+                           if p["in"] == "header"
+                           and p["name"] == IDEMPOTENCY_HEADER]
+                for header in headers:
+                    header["required"] = True
+                    operation["responses"]["400"] = {
+                        "description": ("§13.1: the idempotency key is missing. "
+                                        "A retried call without one could "
+                                        "duplicate an envelope or an outcome."),
+                        "content": {"application/json": {"schema": problem}}}
+                if path.endswith("/events"):
+                    operation["responses"]["409"] = {
+                        "description": ("§5.2.6 draws no such transition. The "
+                                        "body carries the state the envelope "
+                                        "is actually in."),
+                        "content": {"application/json": {"schema": problem}}}
+        app.openapi_schema = schema
+        return schema
+
+    return openapi
