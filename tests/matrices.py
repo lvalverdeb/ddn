@@ -1,9 +1,16 @@
 """Travel for tests: **real road distances, replayed from a recording.**
 
-`tests/fixtures/road.json.gz` holds a table measured once against OSRM v26.8.0
-over the Costa Rica extract, car profile. `road_matrix` builds a `TravelMatrix`
-for any subset of those points, so the suite routes on real roads while still
-needing no gateway, no graph and no network.
+`tests/fixtures/road.json.gz` holds a table built once by
+`vrp.matrix.build_large_matrix` against the platform's gateway — the same call
+`simulation/on_road.py` makes in production — over the Costa Rica extract.
+`road_matrix` builds a `TravelMatrix` for any subset of those points, so the
+suite routes on real roads while still needing no gateway, no graph and no
+network.
+
+Recorded through the platform rather than from OSRM's `/table` endpoint so that
+the fixture and production come from the same code path: snapping with a stated
+threshold and reported distances, tiling rather than a raised table limit, and
+the platform's own matrix version.
 
 This replaced a `fake_matrix` that computed straight lines. Straight-line
 travel is not a neutral approximation, it is a systematic understatement: hub
@@ -16,6 +23,12 @@ number that looks like a measurement and is not.
 own, jittered around the placeholder towns in `docs/assumptions.md`. So these
 distances have the shape of Costa Rican roads and say nothing about the
 operation's geography, which §3.1 still does not supply.
+
+And the jitter puts some of them where no road is: 39 of the 94 snapped beyond
+the gateway's 100 m threshold, the furthest by 7.7 km. Those rows are travel
+between the roads *nearest* the coordinates. `provenance()` returns the
+recorded figures, and `test_matrices.py` asserts they are still what this
+paragraph claims.
 
 To add a coordinate, put it in `tests/fixtures/record_road.py` and re-record
 against a live OSRM. A point that is missing fails loudly rather than falling
@@ -42,6 +55,14 @@ def recording() -> dict[str, Any]:
     """The recorded road table, read once."""
     with gzip.open(ROAD, "rt", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def provenance() -> dict[str, Any]:
+    """How the table was built, and how far its points had to move."""
+    table = recording()
+    return {key: table[key] for key in
+            ("source", "matrix_version", "snap_threshold_m",
+             "snapped_beyond_threshold", "furthest_snap_m")}
 
 
 def _key(lat: float, lon: float) -> str:
