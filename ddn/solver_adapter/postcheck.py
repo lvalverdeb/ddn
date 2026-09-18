@@ -161,6 +161,94 @@ def _capacity_bullet(dimension: str, is_van: bool) -> str:
     return VAN_WEIGHT if is_van else MOTORBIKE_CAPACITY
 
 
+def _stray(problem: Problem, solution: Solution) -> list[Violation]:
+    """Routes naming a vehicle the problem never had. `vrp.verify` raises on one."""
+    known = {vehicle.id for vehicle in problem.vehicles}
+    return [Violation(bullet=UNKNOWN_VEHICLE,
+                      detail=f"is not one of the problem's {len(known)} vehicles",
+                      vehicle_id=vehicle_id)
+            for vehicle_id in
+            sorted({route.vehicle_id for route in solution.routes} - known)]
+
+
+def _from_verifier(problem: Problem, solution: Solution) -> list[Violation]:
+    """The platform's seventeen invariants, in §7.1's language where they map."""
+    return [Violation(
+        bullet=INVARIANT_BULLET.get(reported.invariant,
+                                    f"platform invariant {reported.invariant}"),
+        detail=f"{reported.invariant}: {reported.detail}",
+        vehicle_id=reported.vehicle_id, order_id=reported.order_id)
+        for reported in verify(problem, solution).violations]
+
+
+def _capacity_bullets(problem: Problem, route: Any,
+                      kind_of: Mapping[str, str | None]) -> list[Violation]:
+    """§7.1's three capacity bullets, against the vehicle's declared limits."""
+    limits = {vehicle.id: vehicle.capacities for vehicle in problem.vehicles}
+    is_van = CLASS_OF.get(kind_of.get(route.vehicle_id, "")) in pickups.COLLECTS
+
+    found = []
+    for dimension, amount in _peak(route).items():
+        allowed = limits.get(route.vehicle_id, {}).get(dimension)
+        if allowed is None or amount <= allowed:
+            continue
+        detail = f"carries {dimension}={amount}, above its {allowed}"
+        if dimension == pickups.BAGS:
+            detail += (f"; the limit is the placeholder "
+                       f"MAILBAGS_PER_VAN={assumptions.MAILBAGS_PER_VAN}, "
+                       "Open Question 1")
+        found.append(Violation(_capacity_bullet(dimension, is_van), detail,
+                               vehicle_id=route.vehicle_id))
+    return found
+
+
+def _home_bullets(problem: Problem, route: Any) -> list[Violation]:
+    """§7.1: "starts and ends at its home facility". The duration half is INV-6."""
+    if not route.steps:
+        return []
+    homes = {vehicle.id: (vehicle.start_location_id, vehicle.end_location_id)
+             for vehicle in problem.vehicles}
+    start, end = homes.get(route.vehicle_id, (None, None))
+    first, last = route.steps[0].location_id, route.steps[-1].location_id
+
+    found = []
+    if start is not None and first != start:
+        found.append(Violation(
+            ROUTE_WITHIN_SHIFT, f"starts at {first}, not its home {start}",
+            vehicle_id=route.vehicle_id))
+    if end is not None and last != end:
+        found.append(Violation(
+            ROUTE_WITHIN_SHIFT, f"ends at {last}, not its home {end}",
+            vehicle_id=route.vehicle_id))
+    return found
+
+
+def _order_bullets(solution: Solution, by_id: Mapping[str, dict[str, Any]],
+                   today: date | None) -> list[Violation]:
+    """The three bullets that are facts about the envelope, not about the route."""
+    found = []
+    for order_id, carried_by in _served(solution).items():
+        if len(carried_by) > 1:
+            found.append(Violation(
+                ONE_VEHICLE_PER_DAY,
+                f"served by {', '.join(sorted(set(carried_by)))} in one solve",
+                order_id=order_id))
+
+        package = by_id.get(order_id)
+        if package is None:
+            continue
+        status = package.get("status")
+        if status is not None and status != READY:
+            found.append(Violation(READY_ONLY, f"is {status}, not {READY}",
+                                   order_id=order_id))
+        raw = package.get("sla_date")
+        if today is not None and raw and date.fromisoformat(raw) < today:
+            found.append(Violation(
+                NOT_PAST_SLA, f"SLA date {raw} is before {today.isoformat()}",
+                order_id=order_id))
+    return found
+
+
 def check_route_constraints(
     problem: Problem, solution: Solution, *,
     packages: Sequence[dict[str, Any]] = (),
@@ -194,72 +282,15 @@ def check_route_constraints(
     # on it rather than reporting it. A post-check that dies on a malformed
     # plan is no use against the plans it exists to catch, so the strays are
     # reported here and the verifier is not asked about them.
-    known = {vehicle.id for vehicle in problem.vehicles}
-    stray = sorted({route.vehicle_id for route in solution.routes} - known)
-    for vehicle_id in stray:
-        found.append(Violation(
-            bullet=UNKNOWN_VEHICLE,
-            detail=f"is not one of the problem's {len(known)} vehicles",
-            vehicle_id=vehicle_id))
-
+    stray = _stray(problem, solution)
+    found.extend(stray)
     if not stray:
-        for reported in verify(problem, solution).violations:
-            found.append(Violation(
-                bullet=INVARIANT_BULLET.get(
-                    reported.invariant,
-                    f"platform invariant {reported.invariant}"),
-                detail=f"{reported.invariant}: {reported.detail}",
-                vehicle_id=reported.vehicle_id, order_id=reported.order_id))
-
-    limits = {vehicle.id: vehicle.capacities for vehicle in problem.vehicles}
-    homes = {vehicle.id: (vehicle.start_location_id, vehicle.end_location_id)
-             for vehicle in problem.vehicles}
+        found.extend(_from_verifier(problem, solution))
 
     for route in solution.routes:
-        is_van = CLASS_OF.get(kind_of.get(route.vehicle_id, "")) in pickups.COLLECTS
-        for dimension, amount in _peak(route).items():
-            allowed = limits.get(route.vehicle_id, {}).get(dimension)
-            if allowed is not None and amount > allowed:
-                detail = f"carries {dimension}={amount}, above its {allowed}"
-                if dimension == pickups.BAGS:
-                    detail += (f"; the limit is the placeholder "
-                               f"MAILBAGS_PER_VAN={assumptions.MAILBAGS_PER_VAN}, "
-                               "Open Question 1")
-                found.append(Violation(_capacity_bullet(dimension, is_van), detail,
-                                       vehicle_id=route.vehicle_id))
-
-        if not route.steps:
-            continue
-        start, end = homes.get(route.vehicle_id, (None, None))
-        first, last = route.steps[0].location_id, route.steps[-1].location_id
-        if start is not None and first != start:
-            found.append(Violation(
-                ROUTE_WITHIN_SHIFT, f"starts at {first}, not its home {start}",
-                vehicle_id=route.vehicle_id))
-        if end is not None and last != end:
-            found.append(Violation(
-                ROUTE_WITHIN_SHIFT, f"ends at {last}, not its home {end}",
-                vehicle_id=route.vehicle_id))
-
-    for order_id, carried_by in _served(solution).items():
-        if len(carried_by) > 1:
-            found.append(Violation(
-                ONE_VEHICLE_PER_DAY,
-                f"served by {', '.join(sorted(set(carried_by)))} in one solve",
-                order_id=order_id))
-
-        package = by_id.get(order_id)
-        if package is None:
-            continue
-        status = package.get("status")
-        if status is not None and status != READY:
-            found.append(Violation(READY_ONLY, f"is {status}, not {READY}",
-                                   order_id=order_id))
-        raw = package.get("sla_date")
-        if today is not None and raw and date.fromisoformat(raw) < today:
-            found.append(Violation(
-                NOT_PAST_SLA, f"SLA date {raw} is before {today.isoformat()}",
-                order_id=order_id))
+        found.extend(_capacity_bullets(problem, route, kind_of))
+        found.extend(_home_bullets(problem, route))
+    found.extend(_order_bullets(solution, by_id, today))
 
     if stage == PICKUP:
         found.extend(_pickup_bullets(problem, solution, kind_of))
@@ -293,27 +324,27 @@ def _pickup_bullets(problem: Problem, solution: Solution,
     return found
 
 
-def check_day_constraints(day: Day) -> list[Violation]:
-    """The four §7.1 bullets that need more than one solve to test.
-
-    Args:
-        day: the day's solves and plans. Anything absent is not checked and is
-            not claimed to have been -- a `Day` with no line-haul plan cannot
-            test arrival ordering, and says so by returning nothing for it.
-
-    Returns:
-        Every violation found across the day.
-    """
-    found: list[Violation] = []
-    by_id = {p["package_id"]: p for p in day.packages}
-
+def _carried_today(day: Day) -> dict[str, list[str]]:
+    """order id -> every facility/vehicle that served it, across the whole day."""
     carried: dict[str, list[str]] = {}
     for facility_id, solution in day.solutions.items():
         for order_id, vehicles in _served(solution).items():
             carried.setdefault(order_id, []).extend(
                 f"{facility_id}/{vehicle}" for vehicle in vehicles)
+    return carried
 
-    for order_id, places in sorted(carried.items()):
+
+def _across_the_day(day: Day) -> list[Violation]:
+    """§7.1's "at most one vehicle per day", and the two record-level bullets.
+
+    The same three `check_route_constraints` tests per solve, asked again over
+    every solve at once -- an envelope served twice at one facility is a bug a
+    single solve can see, and one served at two facilities is not.
+    """
+    by_id = {p["package_id"]: p for p in day.packages}
+    found: list[Violation] = []
+
+    for order_id, places in sorted(_carried_today(day).items()):
         if len(places) > 1:
             found.append(Violation(
                 ONE_VEHICLE_PER_DAY,
@@ -331,8 +362,23 @@ def check_day_constraints(day: Day) -> list[Violation]:
         if raw and date.fromisoformat(raw) < day.today:
             found.append(Violation(
                 NOT_PAST_SLA,
-                f"SLA date {raw} is before {day.today.isoformat()}", order_id=order_id))
+                f"SLA date {raw} is before {day.today.isoformat()}",
+                order_id=order_id))
+    return found
 
+
+def check_day_constraints(day: Day) -> list[Violation]:
+    """The four §7.1 bullets that need more than one solve to test.
+
+    Args:
+        day: the day's solves and plans. Anything absent is not checked and is
+            not claimed to have been -- a `Day` with no line-haul plan cannot
+            test arrival ordering, and says so by returning nothing for it.
+
+    Returns:
+        Every violation found across the day.
+    """
+    found = _across_the_day(day)
     if day.linehaul is not None:
         found.extend(_arrival_bullets(day))
         found.extend(_van_release_bullets(day))
@@ -354,21 +400,30 @@ def _arrival_bullets(day: Day) -> list[Violation]:
         if facility_id == "HUB":
             continue
         for route in solution.routes:
-            for step in route.steps:
-                if not step.order_id:
-                    continue
-                landed = arrived.get(step.order_id)
-                if landed is None:
-                    found.append(Violation(
-                        AFTER_ARRIVAL,
-                        f"dispatched from {facility_id} but no line-haul trip carried it",
-                        vehicle_id=route.vehicle_id, order_id=step.order_id))
-                elif step.start_service < landed[1]:
-                    found.append(Violation(
-                        AFTER_ARRIVAL,
-                        f"dispatched at {step.start_service} but arrived at "
-                        f"{landed[1]} on the {landed[0]} run",
-                        vehicle_id=route.vehicle_id, order_id=step.order_id))
+            found.extend(_waited_for_the_van(route, facility_id, arrived))
+    return found
+
+
+def _waited_for_the_van(route: Any, facility_id: str,
+                        arrived: Mapping[str, tuple[str, int]]
+                        ) -> list[Violation]:
+    """One depot route, against what the line-haul actually brought it."""
+    found = []
+    for step in route.steps:
+        if not step.order_id:
+            continue
+        landed = arrived.get(step.order_id)
+        if landed is None:
+            found.append(Violation(
+                AFTER_ARRIVAL,
+                f"dispatched from {facility_id} but no line-haul trip carried it",
+                vehicle_id=route.vehicle_id, order_id=step.order_id))
+        elif step.start_service < landed[1]:
+            found.append(Violation(
+                AFTER_ARRIVAL,
+                f"dispatched at {step.start_service} but arrived at "
+                f"{landed[1]} on the {landed[0]} run",
+                vehicle_id=route.vehicle_id, order_id=step.order_id))
     return found
 
 

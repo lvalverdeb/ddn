@@ -140,55 +140,71 @@ def run(
     fleet = [_Van(record=dict(v), lat=hub["lat"], lon=hub["lon"],
                   clock=int(v["shift_start"])) for v in vans]
     pending = {r["mailbag_id"]: dict(r) for r in requests}
-
-    visits: list[Visit] = []
-    unplaced: list[str] = []
-    re_requests: list[str] = []
-    flagged: list[str] = []
+    log = _Log()
 
     times = [int(r["requested_at"]) for r in requests] or [cut_off]
     tick = min(times)
     while tick <= cut_off and pending:
-        # §5.1.7: "Request cancelled after dispatch -- stop removed at next
-        # cycle." A cancellation is the one incident that resolves without a
-        # visit, so it is applied before any van is offered the stop.
-        for mailbag_id in [m for m, r in pending.items()
-                           if incidents.get(m) is Incident.CANCELLED
-                           and int(r["requested_at"]) <= tick]:
-            del pending[mailbag_id]
-
-        arrived = sorted(
-            (r for r in pending.values() if int(r["requested_at"]) <= tick),
-            key=lambda r: (int(r["requested_at"]), r["mailbag_id"]))
-
-        for request in arrived:
-            bag = load(request)
-            chosen = _cheapest(fleet, bag, travel=travel, hub=hub,
-                               cut_off=cut_off)
-            if chosen is None:
-                continue
-
-            leg = travel(chosen.lat, chosen.lon, bag["lat"], bag["lon"])
-            at = max(chosen.clock + leg, tick)
-            del pending[bag["mailbag_id"]]
-            visits.append(_visit(chosen, bag, at, incidents, surplus,
-                                 pending, re_requests, flagged))
-            chosen.clock = at + assumptions.PICKUP_STOP_MIN * 60
-            chosen.lat, chosen.lon = bag["lat"], bag["lon"]
-
+        _cycle(tick, fleet, pending, log, incidents=incidents,
+               surplus=surplus, travel=travel, hub=hub, cut_off=cut_off)
         tick += cadence_seconds
 
-    unplaced.extend(sorted(pending))
     for van in fleet:
         van.clock += travel(van.lat, van.lon, hub["lat"], hub["lon"])
 
     return Dispatch(
-        visits=tuple(visits),
+        visits=tuple(log.visits),
         routes={van.id: tuple(van.route) for van in fleet},
         returned_at={van.id: van.clock for van in fleet},
-        unplaced=tuple(unplaced),
-        re_requests=tuple(re_requests),
-        flagged=tuple(flagged))
+        unplaced=tuple(sorted(pending)),
+        re_requests=tuple(log.re_requests),
+        flagged=tuple(log.flagged))
+
+
+@dataclass(slots=True)
+class _Log:
+    """What the day produced, gathered as it happens rather than returned up."""
+
+    visits: list[Visit] = field(default_factory=list)
+    re_requests: list[str] = field(default_factory=list)
+    flagged: list[str] = field(default_factory=list)
+
+
+def _cycle(tick: int, fleet: Sequence[_Van],
+           pending: dict[str, dict[str, Any]], log: _Log, *,
+           incidents: Mapping[str, Incident], surplus: Mapping[str, int],
+           travel: Travel, hub: Mapping[str, Any], cut_off: int) -> None:
+    """One re-optimisation cycle (§5.1.5), at `tick`.
+
+    Only requests the cycle has reached are visible, and only bags still
+    pending can be placed -- a stop already visited belongs to the van that
+    visited it, whatever a later cycle would prefer.
+    """
+    # §5.1.7: "Request cancelled after dispatch -- stop removed at next cycle."
+    # A cancellation is the one incident that resolves without a visit, so it
+    # is applied before any van is offered the stop.
+    for mailbag_id in [m for m, r in pending.items()
+                       if incidents.get(m) is Incident.CANCELLED
+                       and int(r["requested_at"]) <= tick]:
+        del pending[mailbag_id]
+
+    arrived = sorted(
+        (r for r in pending.values() if int(r["requested_at"]) <= tick),
+        key=lambda r: (int(r["requested_at"]), r["mailbag_id"]))
+
+    for request in arrived:
+        bag = load(request)
+        chosen = _cheapest(fleet, bag, travel=travel, hub=hub, cut_off=cut_off)
+        if chosen is None:
+            continue
+
+        leg = travel(chosen.lat, chosen.lon, bag["lat"], bag["lon"])
+        at = max(chosen.clock + leg, tick)
+        del pending[bag["mailbag_id"]]
+        log.visits.append(_visit(chosen, bag, at, incidents, surplus, pending,
+                                 log.re_requests, log.flagged))
+        chosen.clock = at + assumptions.PICKUP_STOP_MIN * 60
+        chosen.lat, chosen.lon = bag["lat"], bag["lon"]
 
 
 def _cheapest(fleet: Sequence[_Van], bag: Mapping[str, Any], *,

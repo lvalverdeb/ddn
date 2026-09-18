@@ -131,6 +131,212 @@ def _served_everything(offered: Sequence[dict[str, Any]], _facility: str,
     return list(offered), []
 
 
+@dataclass(frozen=True, slots=True)
+class _Attempted:
+    """§5.4 and §8: who the facilities took out, and who they left."""
+
+    attempted: list[dict[str, Any]]
+    unassigned: list[Excluded]
+    expired: list[dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Doorstep:
+    """§6: what came of the attempts."""
+
+    outcomes: dict[str, int]
+    reasons: dict[str, int]
+    postponed: list[dict[str, Any]]
+    going_back: list[dict[str, Any]]
+    within_sla: int
+    first_attempt: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Collection:
+    """§5.1 to §5.3: the day's inflow, positioned for tomorrow."""
+
+    dispatch: Any
+    night: linehaul.LinehaulPlan
+    positioned: dict[str, list[dict[str, Any]]]
+
+
+def _attempt(pools: Mapping[str, list[dict[str, Any]]],
+             per_facility: Mapping[str, int], *, today: date,
+             deliver: Callable[..., tuple[list, list]]) -> _Attempted:
+    """Each facility's pool, cut to capacity and attempted.
+
+    §6.1 comes first: an envelope past its SLA date is not dispatched at all,
+    it goes back. What remains is §8's decision -- `lastmile.select` trims to
+    what the bikes can carry -- and only then is anything attempted.
+    """
+    attempted: list[dict[str, Any]] = []
+    unassigned: list[Excluded] = []
+    expired: list[dict[str, Any]] = []
+
+    for facility, pool in pools.items():
+        live = [e for e in pool if not _expired(e, today)]
+        expired.extend(e for e in pool if _expired(e, today))
+
+        bikes = per_facility.get(facility, 0)
+        offered, declined = select(live, capacity=bikes * EFFECTIVE_PER_BIKE,
+                                   today=today)
+        unassigned.extend(declined)
+        served, refused = deliver(offered, facility, bikes)
+        attempted.extend(served)
+        unassigned.extend(Excluded(e["package_id"], "time") for e in refused)
+
+    return _Attempted(attempted, unassigned, expired)
+
+
+def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
+              today: date, hub_id: str) -> _Doorstep:
+    """§6's outcomes, drawn per envelope in a fixed order so a day replays."""
+    outcomes: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    postponed: list[dict[str, Any]] = []
+    going_back: list[dict[str, Any]] = list(attempt.expired)
+    within_sla = first_attempt = 0
+
+    for envelope in attempt.attempted:
+        outcome = rates.draw(rng)
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        if outcome == DELIVERED:
+            if not _expired(envelope, today):
+                within_sla += 1
+            if int(envelope.get("attempt_number", 0)) == 0:
+                first_attempt += 1
+        elif outcome == POSTPONED:
+            reason = sub_reason(rng)
+            reasons[reason] = reasons.get(reason, 0) + 1
+            postponed.append(replace_record(envelope, reason))
+        else:
+            going_back.append(dict(envelope, previous_outcome=outcome,
+                                   facility_id=hub_id))
+
+    return _Doorstep(outcomes, reasons, postponed, going_back, within_sla,
+                     first_attempt)
+
+
+def _collect(facilities: Sequence[dict[str, Any]],
+             requests: Sequence[dict[str, Any]],
+             inflow: Sequence[dict[str, Any]],
+             vans: Sequence[dict[str, Any]], *,
+             travel: Callable[[float, float, float, float], int] | None,
+             hub_id: str) -> _Collection:
+    """§5.1 collects, §5.2 times, §5.3 positions. The other half of the day."""
+    positioned: dict[str, list[dict[str, Any]]] = {f["id"]: [] for f in facilities}
+    if not requests:
+        return _Collection(None, linehaul.LinehaulPlan(), positioned)
+
+    if travel is None:
+        raise ValueError(
+            "a pickup day needs travel times; §5.1 cannot be run on a "
+            "guessed speed and this package invents none")
+
+    dispatch = pickups.run(
+        requests, vans, next(f for f in facilities if f["id"] == hub_id),
+        travel=travel, cut_off=_seconds(assumptions.PROCESSING_CUTOFF))
+    ready_at = _ready_times(dispatch, inflow)
+    _position(positioned, ready_at, requests, inflow)
+
+    depot_bound = [dict(e, expected_ready_at=ready_at[e["package_id"]])
+                   for e in inflow
+                   if e["package_id"] in ready_at and e["facility_id"] != hub_id]
+    night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
+                          depot_bound, vans,
+                          unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
+
+    rolled = {pid for ids in night.rolled.values() for pid in ids}
+    for facility, pool in positioned.items():
+        if facility != hub_id:
+            positioned[facility] = [e for e in pool
+                                    if e["package_id"] not in rolled]
+    return _Collection(dispatch, night, positioned)
+
+
+def _ready_times(dispatch: Any,
+                 inflow: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """§5.2.5, over the envelopes whose bags actually reached the hub."""
+    collected = set(dispatch.collected)
+    arrival_of = {bag: dispatch.returned_at.get(van, 0)
+                  for van, route in dispatch.routes.items() for bag in route}
+    return {r.package_id: r.ready_at for r in processing.schedule(
+        [e for e in inflow if e["mailbag_id"] in collected], arrival_of)}
+
+
+def _position(positioned: dict[str, list[dict[str, Any]]],
+              ready_at: Mapping[str, int],
+              requests: Sequence[dict[str, Any]],
+              inflow: Sequence[dict[str, Any]]) -> None:
+    """Put each ready envelope at its facility, carrying the customer's site.
+
+    §5.5's stop is the sender, not the recipient's address, and the hub knows
+    it from the upload file that brought the bag -- so it is attached now,
+    because by the time an envelope is rejected the request it arrived in is
+    long gone.
+    """
+    site_of = {r["mailbag_id"]: (r["lat"], r["lon"]) for r in requests}
+    by_id = {e["package_id"]: e for e in inflow}
+    for package_id, when in ready_at.items():
+        envelope = by_id[package_id]
+        site = site_of.get(envelope["mailbag_id"])
+        positioned.setdefault(envelope["facility_id"], []).append(
+            dict(envelope, expected_ready_at=when,
+                 customer_lat=site[0] if site else envelope["lat"],
+                 customer_lon=site[1] if site else envelope["lon"]))
+
+
+def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
+    """§5.5, and a refusal to guess where an envelope came from."""
+    missing = [e["package_id"] for e in going_back if "customer_lat" not in e]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} envelope(s) going back carry no customer site "
+            f"({', '.join(missing[:3])}...); §5.5 returns them to the sender, "
+            "which is not the address they were delivered to")
+    return returns.sites([dict(e, facility_id=hub_id) for e in going_back])
+
+
+def _handover(pools: Mapping[str, list[dict[str, Any]]],
+              collection: _Collection, doorstep: _Doorstep,
+              unassigned: Sequence[Excluded]
+              ) -> dict[str, tuple[dict[str, Any], ...]]:
+    """Tomorrow's pools: what was positioned, what was held, what was left."""
+    declined = {u.package_id for u in unassigned}
+    return {
+        facility: (*collection.positioned.get(facility, ()),
+                   *[e for e in doorstep.postponed
+                     if e["facility_id"] == facility],
+                   *[e for e in yesterdays if e["package_id"] in declined])
+        for facility, yesterdays in pools.items()}
+
+
+def _count(state: State, attempt: _Attempted, doorstep: _Doorstep,
+           collection: _Collection, requests: Sequence[dict[str, Any]],
+           inflow: Sequence[dict[str, Any]],
+           per_facility: Mapping[str, int]) -> Tally:
+    """The day's raw counts, which §11's ratios are all derived from."""
+    dispatch = collection.dispatch
+    return Tally(
+        ready_pool=state.pool_size,
+        dispatched=len(attempt.attempted),
+        delivered=doorstep.outcomes.get(DELIVERED, 0),
+        delivered_first_attempt=doorstep.first_attempt,
+        delivered_within_sla=doorstep.within_sla,
+        postponed=doorstep.outcomes.get(POSTPONED, 0),
+        rejected=doorstep.outcomes.get(REJECTED, 0),
+        defective=doorstep.outcomes.get(DEFECTIVE, 0),
+        sla_expired=len(attempt.expired),
+        unassigned=len(attempt.unassigned),
+        received=len(inflow),
+        received_before_cut_off=len(inflow),
+        ready_by_cut_off=sum(len(p) for p in collection.positioned.values()),
+        pickups=len(dispatch.visits) if dispatch else 0,
+        pickup_wait_seconds=_waiting(dispatch, requests),
+        bikes_deployed=sum(per_facility.values()))
+
+
 def run_day(
     state: State, *,
     facilities: Sequence[dict[str, Any]],
@@ -172,147 +378,37 @@ def run_day(
     """
     rates = rates or Rates()
     rng = random.Random(seed + state.day.toordinal())
-    tally = Tally()
 
-    # ---- §4.2: today's allocation, and what it cost to change yesterday's.
+    # §4.2: today's allocation, and what it cost to change yesterday's.
     pools = {f["id"]: list(state.pools.get(f["id"], ())) for f in facilities}
-    demand = {facility: len(pool) for facility, pool in pools.items()}
     targets = (dict(allocation) if allocation is not None
-               else allocate(demand, len(bikes)) if bikes
-               else dict.fromkeys(pools, 0))
-    allocation = place(targets, bikes, previous=state.placement)
-    per_facility = {f: len(v) for f, v in allocation.by_facility().items()}
+               else allocate({f: len(p) for f, p in pools.items()}, len(bikes))
+               if bikes else dict.fromkeys(pools, 0))
+    fleet = place(targets, bikes, previous=state.placement)
+    per_facility = {f: len(v) for f, v in fleet.by_facility().items()}
 
-    # ---- §5.4 and §8: who is attempted, and who is left.
-    unassigned: list[Excluded] = []
-    attempted: list[dict[str, Any]] = []
-    expired: list[dict[str, Any]] = []
-    for facility, pool in pools.items():
-        # §6.1: past its SLA date it is not dispatched; it goes back instead.
-        live = [e for e in pool if not _expired(e, state.day)]
-        expired.extend(e for e in pool if _expired(e, state.day))
+    attempt = _attempt(pools, per_facility, today=state.day, deliver=deliver)
+    doorstep = _doorstep(attempt, rates=rates, rng=rng, today=state.day,
+                         hub_id=hub_id)
+    collection = _collect(facilities, requests, inflow, vans, travel=travel,
+                          hub_id=hub_id)
+    stops = _return_run(doorstep.going_back, hub_id)
+    tomorrow = _handover(pools, collection, doorstep, attempt.unassigned)
 
-        capacity = per_facility.get(facility, 0) * EFFECTIVE_PER_BIKE
-        offered, declined = select(live, capacity=capacity, today=state.day)
-        unassigned.extend(declined)
-        served, refused = deliver(offered, facility, per_facility.get(facility, 0))
-        attempted.extend(served)
-        unassigned.extend(Excluded(e["package_id"], "time") for e in refused)
-
-    # ---- §6: what happened at the door.
-    outcomes: dict[str, int] = {}
-    reasons: dict[str, int] = {}
-    postponed: list[dict[str, Any]] = []
-    going_back: list[dict[str, Any]] = list(expired)
-    delivered_within_sla = first_attempt = 0
-
-    for envelope in attempted:
-        outcome = rates.draw(rng)
-        outcomes[outcome] = outcomes.get(outcome, 0) + 1
-        if outcome == DELIVERED:
-            if not _expired(envelope, state.day):
-                delivered_within_sla += 1
-            if int(envelope.get("attempt_number", 0)) == 0:
-                first_attempt += 1
-        elif outcome == POSTPONED:
-            reason = sub_reason(rng)
-            reasons[reason] = reasons.get(reason, 0) + 1
-            postponed.append(replace_record(envelope, reason))
-        else:
-            going_back.append(dict(envelope, previous_outcome=outcome,
-                                   facility_id=hub_id))
-
-    # ---- §5.1 to §5.3: today's collection, positioned for tomorrow.
-    dispatch = None
-    night = linehaul.LinehaulPlan()
-    positioned: dict[str, list[dict[str, Any]]] = {f["id"]: [] for f in facilities}
-    if requests:
-        if travel is None:
-            raise ValueError(
-                "a pickup day needs travel times; §5.1 cannot be run on a "
-                "guessed speed and this package invents none")
-        dispatch = pickups.run(
-            requests, vans, next(f for f in facilities if f["id"] == hub_id),
-            travel=travel,
-            cut_off=_seconds(assumptions.PROCESSING_CUTOFF))
-        collected = set(dispatch.collected)
-        arrival_of = {bag: dispatch.returned_at.get(van, 0)
-                      for van, route in dispatch.routes.items() for bag in route}
-        ready = processing.schedule(
-            [e for e in inflow if e["mailbag_id"] in collected], arrival_of)
-        ready_at = {r.package_id: r.ready_at for r in ready}
-
-        # §5.5's stop is the customer's site, not the recipient's address, and
-        # the hub knows it from the upload file that brought the bag. Carried
-        # on to the envelope now, because by the time an envelope is rejected
-        # the request it arrived in is long gone.
-        site_of = {r["mailbag_id"]: (r["lat"], r["lon"]) for r in requests}
-        by_id = {e["package_id"]: e for e in inflow}
-        for package_id, when in ready_at.items():
-            envelope = by_id[package_id]
-            site = site_of.get(envelope["mailbag_id"])
-            positioned.setdefault(envelope["facility_id"], []).append(
-                dict(envelope, expected_ready_at=when,
-                     customer_lat=site[0] if site else envelope["lat"],
-                     customer_lon=site[1] if site else envelope["lon"]))
-
-        depot_bound = [dict(e, expected_ready_at=ready_at[e["package_id"]])
-                       for e in inflow
-                       if e["package_id"] in ready_at and e["facility_id"] != hub_id]
-        night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
-                              depot_bound, vans,
-                              unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
-        rolled_ids = {pid for ids in night.rolled.values() for pid in ids}
-        for facility, pool in positioned.items():
-            if facility != hub_id:
-                positioned[facility] = [e for e in pool
-                                        if e["package_id"] not in rolled_ids]
-
-    # ---- §5.5: tonight's return run.
-    missing = [e["package_id"] for e in going_back if "customer_lat" not in e]
-    if missing:
-        raise ValueError(
-            f"{len(missing)} envelope(s) going back carry no customer site "
-            f"({', '.join(missing[:3])}...); §5.5 returns them to the sender, "
-            "which is not the address they were delivered to")
-    stops = returns.sites([dict(e, facility_id=hub_id) for e in going_back])
-
-    # ---- tomorrow.
-    tomorrow: dict[str, tuple[dict[str, Any], ...]] = {}
-    declined_ids = {u.package_id for u in unassigned}
-    for facility, yesterdays in pools.items():
-        held = [e for e in postponed if e["facility_id"] == facility]
-        left = [e for e in yesterdays if e["package_id"] in declined_ids]
-        tomorrow[facility] = (*positioned.get(facility, ()), *held, *left)
-
-    tally = Tally(
-        ready_pool=state.pool_size,
-        dispatched=len(attempted),
-        delivered=outcomes.get(DELIVERED, 0),
-        delivered_first_attempt=first_attempt,
-        delivered_within_sla=delivered_within_sla,
-        postponed=outcomes.get(POSTPONED, 0),
-        rejected=outcomes.get(REJECTED, 0),
-        defective=outcomes.get(DEFECTIVE, 0),
-        sla_expired=len(expired),
-        unassigned=len(unassigned),
-        received=len(inflow),
-        received_before_cut_off=len(inflow),
-        ready_by_cut_off=sum(len(p) for p in positioned.values()),
-        pickups=len(dispatch.visits) if dispatch else 0,
-        pickup_wait_seconds=_waiting(dispatch, requests),
-        bikes_deployed=sum(per_facility.values()))
+    dispatch, night = collection.dispatch, collection.night
+    tally = _count(state, attempt, doorstep, collection, requests, inflow,
+                   per_facility)
 
     report = DayReport(
         day=state.day,
         tally=tally,
         metrics=measure(tally),
         checks=_checks(state, per_facility, inflow, dispatch, night, vans),
-        allocation=allocation,
-        outcomes=outcomes,
-        postponed_reasons=reasons,
-        unassigned=tuple(unassigned),
-        positioned={f: len(p) for f, p in positioned.items()},
+        allocation=fleet,
+        outcomes=doorstep.outcomes,
+        postponed_reasons=doorstep.reasons,
+        unassigned=tuple(attempt.unassigned),
+        positioned={f: len(p) for f, p in collection.positioned.items()},
         rolled=dict(night.reasons),
         return_stops=len(stops),
         carried_into_tomorrow=sum(len(p) for p in tomorrow.values()))
@@ -321,7 +417,7 @@ def run_day(
         day=state.day + timedelta(days=1),
         pools=tomorrow,
         returns_queue=(),
-        placement={a.vehicle_id: a.facility_id for a in allocation.allocations})
+        placement={a.vehicle_id: a.facility_id for a in fleet.allocations})
 
 
 def run_days(days: int, state: State, **kwargs: Any) -> list[DayReport]:
