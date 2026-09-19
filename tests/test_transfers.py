@@ -7,7 +7,6 @@ from datetime import date, datetime, time, timedelta
 import pytest
 
 from ddn import linehaul
-from ddn.linehaul import MAX_LOAD_G
 from ddn.model import Status, TransferReason, TransferRequest, may
 from ddn.solver_adapter import Day, check_day_constraints, postcheck
 
@@ -134,7 +133,7 @@ def test_without_inter_depot_transit_a_transfer_is_refused_not_guessed():
 
 def test_a_transfer_that_would_overload_the_van_is_declined():
     """§7.1: 500 kg across hub-origin, transfer and return envelopes."""
-    heavy = envelopes("D1", 1, grams=MAX_LOAD_G)
+    heavy = envelopes("D1", 1, grams=500_000)
     night = linehaul.plan([depot("D1", transit_min=30), depot("D3", transit_min=45)],
                           heavy, [{"vehicle_id": "VAN-01"}], unload_seconds=1800,
                           transfers=[transfer(grams=1000)], transit=transit)
@@ -144,7 +143,7 @@ def test_a_transfer_that_would_overload_the_van_is_declined():
 def test_every_transfer_is_carried_or_declined():
     """The accounting §9.2 asks for: none may quietly vanish."""
     wanted = [transfer("T1"), transfer("T2", frm="D5", to="D6"),
-              transfer("T3", grams=MAX_LOAD_G)]
+              transfer("T3", grams=500_000)]
     night = linehaul.plan([depot("D1", transit_min=30), depot("D3", transit_min=45)],
                           envelopes("D1", 2), [{"vehicle_id": "VAN-01"}],
                           unload_seconds=1800, transfers=wanted, transit=transit)
@@ -175,12 +174,25 @@ def test_section_7_1_now_enforces_every_bullet():
     assert postcheck.TRANSFER_WITHIN_SLA in postcheck.BULLETS
 
 
+def test_the_limit_is_section_4_1s_five_hundred_kilograms():
+    """§4.1: "Van | 500 kg". §7.1 repeats it for a leg's combined load.
+
+    Pinned as a literal, because every other test of this bullet builds its
+    violating input *relative* to the constant -- `500_001`, previously
+    `MAX_LOAD_G + 1`. A relative input moves with the limit, so the limit was
+    free: raising `MAX_LOAD_G` tenfold left the whole suite green. The
+    mechanism was covered and the number was not, which is the same shape as
+    the bike's 35 being pinned at `test_returns.py`.
+    """
+    assert linehaul.MAX_LOAD_G == 500_000
+
+
 def test_an_overloaded_leg_is_a_violation():
     """§7.1's combined-load bullet, which only a leg can break."""
     night = linehaul.LinehaulPlan(trips=(linehaul.Trip(
         van_id="VAN-01", destination="D1", package_ids=(), departure=0,
         arrival=1, returns=2,
-        legs=(linehaul.Leg("HUB", "D1", 0, 1, weight_g=MAX_LOAD_G + 1),)),))
+        legs=(linehaul.Leg("HUB", "D1", 0, 1, weight_g=500_001),)),))
     found = check_day_constraints(Day(today=TODAY, linehaul=night))
     assert postcheck.COMBINED_LOAD in {v.bullet for v in found}
 
