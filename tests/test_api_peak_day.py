@@ -231,7 +231,6 @@ async def test_the_return_run_goes_over_the_queue(client, pool, day):
                 "lon": day.facilities[0].lon,
                 "shift_start": 17 * HOUR, "shift_end": 21 * HOUR},
         "vehicle_ids": ["VAN-01", "VAN-02"],
-        "vehicle_fixed_cost": 500,
         "matrix": {"durations": [[0 if i == j else 120 for j in range(size)]
                                  for i in range(size)],
                    "distances": [[0 if i == j else 700 for j in range(size)]

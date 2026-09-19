@@ -72,18 +72,33 @@ def bags(n: int = 4):
 def deployable(name: str = "ddn-lastmile") -> dict:
     """The shipped model priced so a bike is worth deploying.
 
-    `models/ddn-lastmile.json` sets `vehicle_fixed_cost` to 50,000 against
-    prizes of at most 1,999, so on a small pool the solver declines everything
-    and no route exists to check. That is §8's unanswered objective question —
-    `docs/solver-capabilities.md` records it — not a property of this adapter,
-    so the fixture prices around it exactly as the capability probe does.
+    `models/*.json` price a vehicle at 50,000 against a standard envelope's
+    15,000, so on a small pool the solver correctly declines everything and no
+    route exists to check. That is §8's unanswered cost ratio, not a property
+    of this adapter, so the fixture prices around it.
+
+    **It prices the fleet, not `run.objective`.** It used to edit the latter,
+    and that did nothing at all: `vrp.servicemodel.run_config` is the only
+    reader of `run.objective` and is never called here, so the 500 went
+    nowhere. The cost that reaches PyVRP is the one `contract.costs` takes off
+    each `fleet[]` entry.
+
+    **And it is still belt-and-braces, which is worth saying.** Every pool in
+    this file affords the shipped 50,000 — the suite is green with the pricing
+    removed. The decline is real, but it needs a pool of three or four (see
+    `test_contract.py::test_between_two_equal_priority_routings_the_shorter
+    _one_wins`, which meets it). This exists so that adding such a pool does
+    not mean rediscovering why nothing was served.
     """
     model = (contract.load_model() if name == "ddn-lastmile"
              else sa.load_pickup_model())
-    model["run"] = dict(model["run"],
-                        objective=dict(model["run"]["objective"],
-                                       vehicle_fixed_cost=500))
-    return model
+    return priced(model, fixed_cost=500)
+
+
+def priced(model: dict, *, fixed_cost: int) -> dict:
+    """The same model with every vehicle class priced to deploy."""
+    return dict(model, fleet=[dict(spec, fixed_cost=fixed_cost)
+                              for spec in model["fleet"]])
 
 
 def solved_last_mile(pool=None, fleet=None):

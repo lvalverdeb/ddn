@@ -289,3 +289,57 @@ def test_no_module_repeats_a_registered_placeholder():
         "a registered placeholder is written out again in a module; read it "
         "from ddn.assumptions so that docs/assumptions.md stays the one place "
         "a stand-in can be found and changed:\n  " + "\n  ".join(offences))
+
+
+def test_the_model_files_state_no_placeholder_the_document_does_not():
+    """A model file is a second place for a `[TBD]` to live, so it drifts.
+
+    `models/*.json` cannot simply drop its copies: `shift`, `windows` and
+    `per_depot` are in the platform's `REQUIRED_KEYS` and `servicemodel.build`
+    dereferences them unguarded, so deleting one is a `KeyError`, not a
+    simplification. What can be done is hold them to the document — the same
+    treatment `MAILBAGS_PER_VAN` and §8's cost terms already get.
+
+    Three values genuinely duplicate a registered placeholder. The rest of the
+    shift and window numbers match nothing in `ddn/assumptions.py` at all —
+    `ddn-lastmile`'s 08:00–16:00 and `ddn-return`'s 17:00–21:00 are
+    unregistered stand-ins in their own right, which is a gap this test
+    records rather than closes: registering them is a decision about four more
+    invented values, not a mechanical fix.
+    """
+    import json
+
+    def model(name: str) -> dict:
+        return json.loads((Path(__file__).resolve().parent.parent
+                           / "models" / f"{name}.json").read_text(encoding="utf-8"))
+
+    pickup, returns = model("ddn-pickup"), model("ddn-return")
+
+    assert pickup["service"]["fixed_seconds"] == assumptions.PICKUP_STOP_MIN * 60
+    assert returns["service"]["fixed_seconds"] == assumptions.RETURN_STOP_MIN * 60
+
+    window, = pickup["windows"]
+    assert window["start"] == _as_seconds(assumptions.SHIFT_START)
+    assert window["end"] == _as_seconds(assumptions.PROCESSING_CUTOFF)
+
+
+def test_no_model_file_still_carries_the_objective_nothing_reads():
+    """`run.objective` was a third copy of §8's cost terms and reached nothing.
+
+    `vrp.servicemodel.run_config` is its only reader and is never called in
+    this repository; the costs that reach PyVRP come off `fleet[]` through
+    `contract.costs`. Two test fixtures edited it believing they were pricing
+    the solve, and were not. `run` itself stays — `lastmile.plan` reads its
+    budget and seed.
+    """
+    import json
+
+    for name in ("ddn-lastmile", "ddn-pickup", "ddn-return"):
+        run = json.loads((Path(__file__).resolve().parent.parent
+                          / "models" / f"{name}.json").read_text())["run"]
+        assert "objective" not in run, f"{name} carries an objective nothing reads"
+        assert {"budget", "seed"} <= set(run), "lastmile.plan reads both"
+
+
+def _as_seconds(clock: time) -> int:
+    return clock.hour * 3600 + clock.minute * 60

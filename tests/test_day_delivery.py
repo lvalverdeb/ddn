@@ -21,6 +21,7 @@ from ddn.lastmile import select
 from ddn.model import Status
 from ddn.solver_adapter import postcheck
 from tests.fixtures import peak_day
+from tests.test_solver_adapter import priced
 
 HOUR = 3600
 D1_BIKES = peak_day.BIKE_ALLOCATION["D1"]
@@ -149,9 +150,7 @@ def test_no_route_exceeds_the_shift(day, d1_morning):
                 "shift_start": shift_start, "shift_end": shift_end}
 
     model = contract.load_model()
-    model["run"] = dict(model["run"],
-                        objective=dict(model["run"]["objective"],
-                                       vehicle_fixed_cost=500))
+    model = priced(model, fixed_cost=500)
     problem = sa.last_mile(facility, pool, bikes, matrix(len(pool) + 1),
                            today=day.delivery_day, model=model)
     solution = solve(problem)
@@ -220,9 +219,7 @@ def test_the_return_run_solves_from_the_hub(day):
            "shift_start": 17 * HOUR, "shift_end": 21 * HOUR}
 
     model = returns.load_model()
-    model["run"] = dict(model["run"],
-                        objective=dict(model["run"]["objective"],
-                                       vehicle_fixed_cost=500))
+    model = priced(model, fixed_cost=500)
     problem = returns.to_problem(
         hub, stops,
         returns.fleet(["VAN-01", "VAN-02"], shift_start=17 * HOUR,

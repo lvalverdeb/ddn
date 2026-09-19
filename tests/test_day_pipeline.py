@@ -25,6 +25,7 @@ from ddn.processing import schedule
 from ddn.solver_adapter import postcheck
 from tests.fixtures import peak_day
 from tests.matrices import road_matrix
+from tests.test_solver_adapter import priced
 
 HOUR = 3600
 UNLOAD = assumptions.FACILITY_UNLOAD_MIN * 60
@@ -199,9 +200,7 @@ def test_a_pickup_van_is_never_given_a_delivery_stop(day):
                         for i in range(size)))
 
     model = contract.load_model()
-    model["run"] = dict(model["run"],
-                        objective=dict(model["run"]["objective"],
-                                       vehicle_fixed_cost=500))
+    model = priced(model, fixed_cost=500)
     problem = sa.last_mile(hub, packages, [*fleet, earmarked], matrix,
                            today=day.delivery_day, model=model)
     solution = solve(problem)

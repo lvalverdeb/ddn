@@ -49,13 +49,7 @@
   "run": {
     "engine": "pyvrp",
     "budget": 400,
-    "seed": 0,
-    "objective": {
-      "mode": "MIN_COST",
-      "vehicle_fixed_cost": 50000,
-      "cost_per_metre": 1,
-      "cost_per_second": 0
-    }
+    "seed": 0
   },
   "windows": [
     {
