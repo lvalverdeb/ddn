@@ -85,16 +85,30 @@ def test_facility_placeholders_match_the_documents_table():
         assert facility.transit_from_hub_min == transit
 
 
-def test_the_blocking_unknowns_have_no_placeholder():
-    """§8's cost ratio and §11's targets are named absent, not filled in.
+def test_the_absent_gaps_have_no_placeholder():
+    """§11's targets are named absent, not filled in.
 
-    A stand-in cost ratio is what produced the figure `capacity-finding.md`
-    exists to disown, and an invented SLA target would read as a commitment the
-    customer never made.
+    An invented SLA target reads as a commitment the customer never made, which
+    is a different kind of wrong from an invented service time: the second is a
+    guess, the first is a promise.
+
+    §8's cost ratio used to be checked here too, and this test is the reason it
+    is worth saying what happened. It looked for names matching `COST|RATIO` in
+    `ddn.assumptions` and found none, and passed for months while
+    `contract.PRIZE_SCALE` and three `models/*.json` objective blocks carried
+    the ratio in full. A test that greps one module for a naming convention
+    cannot see a value in another module, or in a JSON file, and the property it
+    claimed to establish was never the property it checked. The weights are
+    registered now, so what is left here is the genuinely absent gap; the
+    duplication of a registered value is checked by
+    `test_no_module_repeats_a_registered_placeholder`.
     """
-    forbidden = re.compile(r"COST|RATIO|SLA_TARGET|_TARGET_RATE")
+    forbidden = re.compile(r"SLA_TARGET|_TARGET_RATE|_COMPLIANCE")
     assert not [name for name in vars(assumptions) if forbidden.search(name)]
     assert "Deliberately absent" in DOC
+    assert "PICKUP_RESPONSE_TARGET_H" in vars(assumptions), (
+        "the one §11-shaped value that is a service metric rather than a "
+        "commitment should stay registered, not be caught by the pattern above")
 
 
 def test_the_module_docstring_counts_the_absent_list_correctly():

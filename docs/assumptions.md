@@ -103,6 +103,40 @@ together, and nothing about the operation.
 | `POSTPONED_UNAVAILABLE_PER_MILLE` | 500 | §6 names three reasons and splits them nowhere | **invented** |
 | `POSTPONED_BAD_ADDRESS_PER_MILLE` | 200 | as above; the remainder is "driver out of time" | **invented.** §6 re-geocodes these, which can move an envelope to another facility |
 
+## The §8 objective
+
+**This is the blocking unknown, and these are stand-ins for it.** §8 ranks
+delivered work first and distance third and never says what one is worth against
+the other. Until it does, every figure produced by a solve — which envelopes are
+declined, and therefore `capacity-finding.md`'s envelopes-per-bike — describes
+these four numbers as much as it describes the operation.
+
+They were not absent before this page listed them. `contract.PRIZE_SCALE` and the
+`models/*.json` objective blocks each carried one, unlabelled, while this document
+said no placeholder existed. Registering them is not a decision to invent a ratio;
+it is a decision to stop hiding the one already in use.
+
+One cost unit is one metre, which is the platform's own convention
+(`vrp/evaluator.py:46-51`).
+
+| Key | Value | Spec gap | Provenance |
+|---|---|---|---|
+| `PRIZE_SCALE` | 100 | §8 gives no envelope-versus-distance ratio | **invented.** Multiplies §8.1's score into a prize. Measured ceiling: above ~1,000 the solver returns routes past the end of the shift |
+| `COST_PER_METRE` | 1 | §8 | **invented**, and it is also what PyVRP applies to an unpriced vehicle, so declaring it changes no plan — it makes the rate a decision rather than a default |
+| `VEHICLE_FIXED_COST` | 50000 | §8 | **invented.** 50 km of riding to put one bike on the road. The term that decides whether a bike is deployed at all |
+| `COST_PER_SECOND` | 0 | §8 | **invented.** §7.4 makes the shift a hard bound, so duration is a constraint here and not a cost |
+| `BAND_URGENT_LOW` / `BAND_STANDARD_LOW` / `BAND_LOW_LOW` | 1000 / 100 / 1 | §8.1, Open Question 11: the categories and their gaps | document — §8.1's own illustration, "Urgent 1,000–1,999, Standard 100–199, Low 1–99" |
+
+## Deferred
+
+- **§8's objective 4, "balance workload across vehicles at the same facility".**
+  Not implemented and not placeholdered. `docs/solver-capabilities.md` confirms no
+  balance or equity primitive, so any encoding would be invented — and CLAUDE.md
+  forbids inventing a solver capability. It is also not measurable yet: balance is
+  a trade against the other three objectives, and those only acquired real weights
+  in the change that added this section. Revisit once a run has been re-measured
+  against them.
+
 ## Returns and the taper
 
 | Key | Value | Spec gap | Provenance |
@@ -130,10 +164,6 @@ and no figure measured on them describes the operation.
 
 ## Deliberately absent
 
-- **§8's objective weights** — the envelope-versus-kilometre cost ratio. Not
-  tagged `[TBD]` anywhere in the spec and the blocking unknown. No placeholder:
-  a run made with a stand-in ratio is what produced the 12.8 figure that
-  `capacity-finding.md` exists to disown.
 - **§11's eleven metric targets.** A target is a commitment, not an input.
   Inventing "SLA compliance ≥ 98%" fabricates a customer promise. The one
   figure the spec does supply — 20–30 envelopes per bike per day — is in §11

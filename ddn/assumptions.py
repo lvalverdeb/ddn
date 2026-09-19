@@ -13,15 +13,21 @@ coordinates in particular are synthetic towns on the Costa Rican graph that
 `capacity-finding.md` is the standing warning about what follows from measuring
 on placeholders.
 
-Three gaps are deliberately not filled: §8's objective weights, which is the
-blocking unknown; §11's metric targets, which are commitments rather than
-inputs; and §9.2's reason code for an unreachable address, which needs a spec
-change rather than a value. See the document's closing section, which is the
-list this sentence counts.
+Two gaps are deliberately not filled: §11's metric targets, which are
+commitments rather than inputs, and §9.2's reason code for an unreachable
+address, which needs a spec change rather than a value. See the document's
+closing section, which is the list this sentence counts.
+
+§8's objective weights used to be a third. They were never absent in practice --
+`contract.PRIZE_SCALE` and the `models/*.json` objective blocks both carried a
+stand-in, unlabelled, while the document said no placeholder existed. They are
+registered here instead, as invented, because a placeholder that is written down
+can be argued with and one that is not cannot.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import time
 from typing import NamedTuple
 
@@ -110,6 +116,79 @@ REOPT_CADENCE_MIN = 30
 # Question 14 asks what to do about them. Invented: too small and nothing is
 # flagged, too large and everything is.
 EQUIDISTANT_MARGIN_M = 2000
+
+
+# --------------------------------------------------------------- §8 objective
+#
+# A priority score and a metre are not the same unit, and the objective adds
+# them. Measured on real Costa Rica road distances over 400 GAM stops, serving
+# one more envelope costs about 2,300 at the median and 12,400 at p99.
+#
+# Scaled against the *median*, not the p99. The first attempt used the p99 so
+# that no envelope would ever be declined for a detour, and that broke the
+# thing it was protecting: a prize large enough to outweigh any detour is large
+# enough to outweigh the shift, and PyVRP answered by returning routes that run
+# past the end of the day. Measured on D5 -- 186 envelopes, 5 bikes, real
+# Guanacaste roads:
+#
+#     scale        1     10    100   1,000   12,500
+#     status    FEAS   FEAS   FEAS   INFEAS  INFEAS
+#     served      43     65     69        0        0
+#
+# So the useful range is bounded above by feasibility, not by distance. At 100
+# a low-priority envelope (score 40 -> 4,000) beats the median marginal cost
+# and loses to an exceptional one, which is what prize-collecting is for: a
+# remote envelope needing a 6 km detour should be declined ahead of three
+# nearby ones, and §8's second objective is minimising unassigned, not
+# refusing to leave anything.
+#
+# Invented. Provisional until §8 supplies real cost figures: a ratio between two
+# of the document's own numbers plus a measured feasibility ceiling, not a
+# preference.
+PRIZE_SCALE = 100
+
+# §8's other half, in the platform's currency, where one cost unit is one metre
+# (`vrp/evaluator.py:46-51`). All three invented.
+#
+# COST_PER_METRE is 1 because that is what PyVRP applies when a vehicle prices
+# nothing -- `pyvrp/Model.py:439` defaults `unit_distance_cost` to 1 and
+# `pyvrp_adapter.py:600` omits the key for a zero cost. Declaring it changes no
+# plan; it makes the rate a decision instead of a default, so that changing it
+# has an effect.
+COST_PER_METRE = 1
+# A bike costs 50 km of riding to put on the road. This one does change plans:
+# it is what makes deploying a bike a decision rather than free.
+VEHICLE_FIXED_COST = 50_000
+# Time is not priced. §7.4 makes the shift a hard bound, so duration is a
+# constraint here rather than a cost.
+COST_PER_SECOND = 0
+
+
+@dataclass(frozen=True)
+class Band:
+    """One priority class, and the scores that fall in it.
+
+    §8.1 leaves the categories open (Open Question 11) and gives an
+    illustrative encoding; these are that illustration until operations name
+    theirs. `tier` is 1-based because tier 0 belongs to the SLA clock.
+    """
+
+    name: str
+    low: int
+    tier: int
+
+
+# §8.1's illustration: "Urgent 1,000-1,999, Standard 100-199, Low 1-99".
+BAND_URGENT_LOW = 1000
+BAND_STANDARD_LOW = 100
+BAND_LOW_LOW = 1
+
+#: Highest first, so the first band a score clears is its own.
+BANDS: tuple[Band, ...] = (
+    Band("urgent", BAND_URGENT_LOW, 1),
+    Band("standard", BAND_STANDARD_LOW, 2),
+    Band("low", BAND_LOW_LOW, 3),
+)
 
 
 class FacilityPlaceholder(NamedTuple):

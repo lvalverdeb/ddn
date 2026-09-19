@@ -50,6 +50,8 @@ from typing import Any
 from vrp import servicemodel
 from vrp.model import Lock, Problem, TimeWindow, TravelMatrix, Vehicle
 
+from ddn import assumptions
+
 # §9.2's vocabulary for the unassigned list. Time and count are decided
 # downstream by the solver; "in dispute" has no state of its own in §5.2.6 and
 # so cannot be told apart from the rest of the pipeline here. These three are
@@ -82,32 +84,13 @@ OVERLAID = frozenset({"priority_tier", "prize", "priority_source",
 # owns.
 OVERLAID_STOP = frozenset({"time_windows"})
 
-# A priority score and a metre are not the same unit, and the objective adds
-# them. Measured on real Costa Rica road distances over 400 GAM stops, serving
-# one more envelope costs about 2,300 at the median and 12,400 at p99.
-#
-# Scaled against the *median*, not the p99. The first attempt used the p99 so
-# that no envelope would ever be declined for a detour, and that broke the
-# thing it was protecting: a prize large enough to outweigh any detour is large
-# enough to outweigh the shift, and PyVRP answered by returning routes that run
-# past the end of the day. Measured on D5 -- 186 envelopes, 5 bikes, real
-# Guanacaste roads:
-#
-#     scale        1     10    100   1,000   12,500
-#     status    FEAS   FEAS   FEAS   INFEAS  INFEAS
-#     served      43     65     69        0        0
-#
-# So the useful range is bounded above by feasibility, not by distance. At 100
-# a low-priority envelope (score 40 -> 4,000) beats the median marginal cost
-# and loses to an exceptional one, which is what prize-collecting is for: a
-# remote envelope needing a 6 km detour should be declined ahead of three
-# nearby ones, and §8's second objective is minimising unassigned, not
-# refusing to leave anything.
-#
-# Provisional until §8 supplies real cost figures. It is a ratio between two of
-# the document's own numbers plus a measured feasibility ceiling, not a
-# preference.
-PRIZE_SCALE = 100
+#: §8's weights live in `ddn.assumptions` with the rest of the placeholders --
+#: they are invented values and belong where an invented value can be found.
+#: Re-exported here because this module is where §8.1's mapping is applied and
+#: because `solver_adapter.problem` and the tests read them off `contract`.
+PRIZE_SCALE = assumptions.PRIZE_SCALE
+Band = assumptions.Band
+BANDS = assumptions.BANDS
 
 DEFAULT_WEIGHT_G = 200          # §4.1
 DEFAULT_SERVICE_MIN = 10        # §7.4
@@ -117,28 +100,6 @@ COUNT, WEIGHT = "envelopes", "grams"
 # them, here, because §9.1 publishes `type` and the model is written in the
 # platform's vocabulary.
 CLASS_OF = {"motorbike": "MOTO", "van": "VAN"}
-
-
-@dataclass(frozen=True)
-class Band:
-    """One priority class, and the scores that fall in it.
-
-    §8.1 leaves the categories open (`Open Question 2`) and gives an
-    illustrative encoding; these are that illustration until operations name
-    theirs. `tier` is 1-based because tier 0 belongs to the SLA clock.
-    """
-
-    name: str
-    low: int
-    tier: int
-
-
-# Highest first, so the first band a score clears is its own.
-BANDS: tuple[Band, ...] = (
-    Band("urgent", 1000, 1),
-    Band("standard", 100, 2),
-    Band("low", 0, 3),
-)
 
 
 @dataclass(frozen=True)
