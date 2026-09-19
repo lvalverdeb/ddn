@@ -219,3 +219,38 @@ def test_coord_source_uses_the_schema_spelling_not_the_prose_one():
 
 def test_geocode_confidence_has_the_three_values_section_9_1_lists():
     assert {c.value for c in GeocodeConfidence} == {"high", "medium", "low"}
+
+
+# ------------------------------------------------------- §5.3.2's inter-depot
+
+def test_between_reads_ordered_road_pairs():
+    """§3.1 gives transit from the hub and nothing between depots.
+
+    `between` supplies the missing half from the same gateway table §3.3 needs
+    to rank facilities, and it reads the pair in the order asked. Road travel
+    is not symmetric — D1 to D2 is 40 minutes on this recording and D2 to D1 is
+    43 — so a circuit timed on the reverse leg departs on a minute the van
+    cannot make.
+    """
+    from ddn.model import travel as road
+    from tests.fixtures import peak_day
+    from tests.matrices import road_matrix, rows
+
+    points = [{"id": f.facility_id, "lat": f.lat, "lon": f.lon}
+              for f in peak_day.load().facilities]
+    transit = road.between(road_matrix(points), rows(points))
+
+    assert transit("D1", "D2") // 60 == 40
+    assert transit("D2", "D1") // 60 == 43
+    assert transit("D1", "D1") == 0
+
+
+def test_between_refuses_a_facility_the_matrix_does_not_span():
+    """The nearest row is not a safe guess — `over`'s reason, by id."""
+    from ddn.model import travel as road
+    from tests.matrices import flat_matrix
+
+    transit = road.between(flat_matrix(2), {"HUB": 0, "D1": 1})
+    assert transit("HUB", "D1") == 180
+    with pytest.raises(KeyError):
+        transit("HUB", "D9")

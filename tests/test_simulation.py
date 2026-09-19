@@ -19,7 +19,7 @@ from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Tally, measure
 from tests.fixtures import peak_day
-from tests.matrices import road_matrix
+from tests.matrices import road_matrix, rows
 
 HOUR = 3600
 FLEET = peak_day.MOTORBIKES
@@ -73,13 +73,19 @@ def inputs():
             for v in day.vehicles if v.type.value == "van"]
     bikes = [v.vehicle_id for v in day.vehicles if v.type.value == "motorbike"]
 
-    # §5.1's legs run hub-to-site, so the matrix spans exactly those. A fake:
-    # `tests/matrices.py` says why the suite has no gateway, and what that
-    # costs — nothing here measures geography.
+    # Two road tables over the same recording, because the day asks two
+    # different questions of it. §5.1's legs run hub-to-site and are looked up
+    # by coordinate — a pickup van's position is wherever the last bag was.
+    # §5.3.2's circuits run depot-to-depot and are looked up by id. Both come
+    # from the gateway (`tests/matrices.py`); neither is computed here.
+    #
+    # The network is real and the places are not, so nothing below measures
+    # this operation's geography — §3.1 still does not supply it.
     points = [facilities[0], *requests]
     return {"facilities": facilities, "bikes": bikes, "vans": vans,
             "requests": requests, "inflow": inflow,
             "travel": road.over(road_matrix(points), road.index_of(points)),
+            "transit": road.between(road_matrix(facilities), rows(facilities)),
             "allocation": peak_day.BIKE_ALLOCATION,
             "_pools": {f: tuple(p) for f, p in pools.items()},
             "_day": day}
@@ -356,14 +362,6 @@ def test_the_van_check_is_over_capacity_on_real_roads(simulated):
 
 # ---------------------------------------------- §5.3.2 wired through the day
 
-def inter_depot(_a: str, _b: str) -> int:
-    """Depot-to-depot seconds. §3.1 gives transit from the hub and nothing
-    between depots, so a circuit's second leg has to be told. Forty minutes is
-    a caller's number, not the document's; it is here to exercise the wiring,
-    and no figure below depends on its value."""
-    return 40 * HOUR // 60
-
-
 @pytest.fixture(scope="module")
 def corrected(inputs):
     """§6's "incorrect address" postponements at D1, re-geocoded to D2.
@@ -384,9 +382,23 @@ def corrected(inputs):
         seen.append(envelope["package_id"])
         return "D2"
 
-    report, tomorrow = run_day(state, seed=7, regeocode=regeocode,
-                               transit=inter_depot, **kwargs)
+    report, tomorrow = run_day(state, seed=7, regeocode=regeocode, **kwargs)
     return report, tomorrow, seen
+
+
+def test_the_day_is_timed_on_real_inter_depot_road_travel(inputs):
+    """§5.3.2's circuits read the gateway's table, not a constant.
+
+    It was a 40-minute fake, and the two depots it stood for happen to be 40
+    minutes apart — so the transfer figures below did not move when the real
+    table replaced it. What the fake was hiding is the spread: D5 to D6 is six
+    and a half hours on this network, and a circuit that thought it was forty
+    minutes would promise an arrival before a release it cannot make.
+    """
+    transit = inputs["transit"]
+    assert transit("D1", "D2") // 60 == 40
+    assert transit("D2", "D1") // 60 == 43, "road travel is not symmetric"
+    assert transit("D5", "D6") // 60 == 381
 
 
 def test_a_day_with_no_regeocode_raises_no_transfer(simulated):
@@ -442,9 +454,9 @@ def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
     day = inputs["_day"]
     state = State(day=day.delivery_day, pools=inputs["_pools"])
     kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
-    report, _ = run_day(state, seed=7, transit=inter_depot,
+    report, _ = run_day(state, seed=7, **kwargs,
                         regeocode=lambda e: "D6" if e["facility_id"] != "D6"
-                        else None, **kwargs)
+                        else None)
 
     assert report.transfers_declined, "not every origin is on a D6 circuit"
     assert set(report.transfers_declined.values()) == {

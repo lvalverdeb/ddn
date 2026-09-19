@@ -6,7 +6,9 @@ gateway built, keyed by the coordinates the records carry.
 
 Keyed by coordinate rather than by id because a pickup van's position *is* a
 coordinate — it is wherever the last bag was — so there is no id to look up
-once it has left the hub.
+once it has left the hub. §5.3.2's circuits are the case where there *is* an
+id: a depot is a fixed place with a name, and `between` reads those pairs out
+of the same matrix.
 """
 
 from __future__ import annotations
@@ -17,6 +19,12 @@ from typing import Any
 from vrp.model import TravelMatrix, UnreachableArc
 
 Travel = Callable[[float, float, float, float], int]
+
+#: What §5.3.2's circuits ask for: seconds from one facility to another.
+#: Restated here rather than imported from `linehaul`, which would put the
+#: model package below a stage that depends on it. The two match structurally,
+#: which is all `linehaul.plan` requires of what it is handed.
+Transit = Callable[[str, str], int]
 
 #: Six decimal places is ~0.1 m, finer than any address. Coordinates arrive
 #: from JSON and from records built at different times, so they are matched at
@@ -59,3 +67,41 @@ def over(matrix: TravelMatrix,
                 "no reason code for an unreachable address") from unreachable
 
     return travel
+
+
+def between(matrix: TravelMatrix, rows: Mapping[str, int]) -> Transit:
+    """Seconds between two facilities, for §5.3.2's inter-depot legs.
+
+    §3.1 gives transit *from the hub* and nothing between depots, and the
+    circuit planner declines every transfer rather than guess one. This is
+    where the missing half comes from: the same gateway matrix §3.3 already
+    needs to rank facilities by road distance, read by id.
+
+    Road travel is not symmetric and the numbers say so — one-way streets and
+    divided highways make the return leg a different drive. A circuit that
+    timed `a -> b` by the `b -> a` figure would depart on the wrong minute, so
+    the lookup is ordered and never averaged.
+
+    Args:
+        matrix: a table spanning at least every facility in `rows`.
+        rows: facility id -> its row, as `tests.matrices.rows` builds it.
+
+    Returns:
+        A `transit(from_id, to_id)` for `linehaul.plan`.
+
+    Raises (when called):
+        KeyError: for a facility the matrix was not built over. Same reason as
+            `over`: the nearest row is not a safe guess.
+        ValueError: for a pair with no road path between them.
+    """
+    def transit(origin_id: str, destination_id: str) -> int:
+        origin, destination = rows[origin_id], rows[destination_id]
+        try:
+            return int(matrix.duration(origin, destination))
+        except UnreachableArc as unreachable:
+            raise ValueError(
+                f"no road path from {origin_id} to {destination_id}; a "
+                "circuit cannot be timed over an arc that does not exist"
+            ) from unreachable
+
+    return transit
