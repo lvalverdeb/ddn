@@ -123,6 +123,15 @@ standard envelope worth 15,000 against 2,000 per kilometre travelled —
 its 15,000. Declining is arithmetically correct given the prices it was handed.
 §8 ranks delivered work first and distance third; those numbers invert it.
 
+**Where those prices came from, established 19 September 2026.** The 1 cost unit
+per metre above is right, but it was never DDN's setting: `ddn` has never put a
+cost on a vehicle, and `vrp/solve/pyvrp_adapter.py:600` omits the key when the
+cost is zero, so PyVRP applied its own `unit_distance_cost` default of 1. The
+arithmetic in this section is unaffected. What did *not* apply is
+`vehicle_fixed_cost` — `models/ddn-lastmile.json` declares 50,000 and the solver
+never saw it, so deploying a bike was free in this run. **Wiring it will move the
+12.8**, and the figure should be re-measured rather than carried across.
+
 **Two inputs are missing, neither a solver problem.**
 
 1. **§8's ratio** — what a delivered envelope is worth against a kilometre

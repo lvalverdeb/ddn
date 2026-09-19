@@ -811,13 +811,23 @@ mistaken for coverage of the *value* or the *wiring*, and that is where every to
 
 ### The ten most consequential gaps
 
-#### 1. §8 — the entire objective is disconnected from the solver
+#### 1. §8 — the declared objective never reaches the solver
 
 *Spec: §8, §8.1*
 
-All three solve paths call `servicemodel.build`, which prices its generated vehicles from the model's `run.objective`, and then **replace every one of those vehicles** with a locally-built `Vehicle` that never sets `fixed_cost`, `cost_per_metre` or `cost_per_second` — `contract.py:402`, `solver_adapter/problem.py:116`, `returns/run.py:195`. `grep -rn 'fixed_cost\|cost_per_metre' ddn/` returns **only** `api/runner.py:74-78`, which edits the model dict that is then discarded. I verified by execution: a problem built from the shipped model reaches the solver with `fixed_cost=0, cost_per_metre=0, cost_per_second=0`. **Objective 3 — "minimise total route time / distance" — therefore carries zero weight**; nothing prices a kilometre, and only the shift duration bounds a route. Three artefacts describe the mechanism as live and are all inert: the `run.objective` block in all three `models/*.json`; `runner._priced()`, whose docstring offers callers an override of it; and `tests/test_solver_adapter.py:72-85`'s `deployable()` fixture, whose premise — "sets `vehicle_fixed_cost` to 50,000 … so the solver declines everything" — I disproved by solving with both models and getting the identical result, 6 of 6 served, `fixed_cost=0` in both.
+> **Corrected 19 September 2026.** This gap first read "the entire objective is
+> disconnected" and "objective 3 therefore carries zero weight". That overstated it,
+> and the correction is below. The defect is real but narrower. The row at
+> `8-model-objective-block-is-inert` and the notes under §8 had it right; this summary
+> did not.
 
-**A fix touches:** `ddn/contract.py:330-342` (`_vehicle`), `ddn/solver_adapter/problem.py:120+` (`_van`), `ddn/returns/run.py` (`_vehicle`), plus whichever of `models/*.json`, `runner._priced` and `deployable()` survive the decision.
+All three solve paths call `servicemodel.build` and then **replace every vehicle it generated** with a locally-built `Vehicle` that never sets `fixed_cost`, `cost_per_metre` or `cost_per_second` — `contract.py:402`, `solver_adapter/problem.py:116`, `returns/run.py:195`. `grep -rn 'fixed_cost\|cost_per_metre' ddn/` returns **only** `api/runner.py:74-78`, which edits a model dict that is then discarded, and `git log -S` over the whole history shows no commit has ever set one. Verified by execution: a problem built from the shipped model reaches the solver with `fixed_cost=0, cost_per_metre=0, cost_per_second=0`.
+
+**What that does and does not cost.** `vrp/solve/pyvrp_adapter.py:600` tests `if vehicle.cost_per_metre:` — truthiness — so a zero cost omits the key and PyVRP applies its own default, and `pyvrp/Model.py:439` defaults `unit_distance_cost=1`. The objective in force is therefore `1 × distance + Σ uncollected prizes`: **distance is minimised, at exactly 1 per metre, by accident.** Objective 3 is not unweighted. What is genuinely dropped is `fixed_cost` — declared 50,000, so deploying a bike is free and the fleet deploys without limit — and `cost_per_second`; and `cost_per_metre` agrees with the solver only because the declared value coincides with PyVRP's default, so changing the model to 2 would change nothing and the file would silently lie. `docs/capacity-finding.md` §2's arithmetic ("charges 1 cost unit per metre… break-even at 7.5 km") is correct as written for that reason.
+
+Three artefacts describe the mechanism as live and are inert: the `run.objective` block in all three `models/*.json` — which is not where per-vehicle costs belong anyway, since `vrp/servicemodel.py:376-382` reads them from `fleet[]` and `pyvrp_adapter` never imports `vrp.objective`; `runner._priced()`, whose docstring offers callers an override of it; and `tests/test_solver_adapter.py:72-85`'s `deployable()` fixture, whose premise — "sets `vehicle_fixed_cost` to 50,000 … so the solver declines everything" — I disproved by solving with both models and getting the identical result, 6 of 6 served, `fixed_cost=0` in both.
+
+**A fix touches:** `ddn/contract.py:330-342` (`_vehicle`), `ddn/solver_adapter/problem.py:120+` (`_van`), `ddn/returns/run.py` (`_vehicle`), the `fleet[]` blocks of `models/*.json`, and `runner._priced()` and `deployable()`, which both go. Note that wiring `cost_per_metre = 1` changes no plan — it is what PyVRP already applies. The behaviour-changing term is `fixed_cost`.
 
 #### 2. §8's blocking unknown is filled anyway, in a module, and the guard test cannot see it
 
