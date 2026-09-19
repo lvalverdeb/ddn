@@ -50,7 +50,13 @@ RETURNED = frozenset({"Rejected", "Returned"})
 # applied per stop rather than per envelope — see the module docstring. The
 # platform can express fixed + per-unit (`StopSpec.service_per_unit`) the day
 # §7.4 supplies both.
-SERVICE_SECONDS = 600
+#
+# Read from the registry rather than written out here. It was `600` for two
+# days before anyone noticed it was an invented service time at all, and
+# `RETURN_STOP_MIN` was added to `docs/assumptions.md` to stop it being
+# invisible — but nothing read it, so the literal stayed in force and the
+# placeholder had no effect on anything.
+SERVICE_SECONDS = assumptions.RETURN_STOP_MIN * 60
 
 
 @dataclass(frozen=True)

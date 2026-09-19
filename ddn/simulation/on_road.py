@@ -23,7 +23,7 @@ from vrp.matrix import PairCache, build_large_matrix
 from vrp.solve.pyvrp_adapter import solve
 from vrp.verify import verify
 
-from ddn import contract, lastmile
+from ddn import assumptions, contract, lastmile
 from ddn.model.facility import nearest_facility
 
 
@@ -74,7 +74,10 @@ for _path, _hint in (
         sys.exit(f"missing {_path} -- build it with: {_hint}")
 
 TODAY = date(2026, 9, 16)
-POOL, BIKES = 4550, 120          # §10: positioned for delivery; shared fleet
+#: §10's pool positioned for delivery. The fleet is the registry's, not a
+#: second copy of it -- see `docs/assumptions.md`.
+POOL = 4550
+BIKES = assumptions.MOTORBIKES_TOTAL
 
 def free() -> int:
     with socket.socket() as s:
@@ -188,7 +191,9 @@ try:
           f"{(served/used if used else 0):>10.1f}"
           f"{f'{ok}/{len(plans)} accepted':>18}")
     print()
-    print(f"§8.3 delivery check: {BIKES} bikes x ~25 = {BIKES*25} nominal capacity")
+    rate = assumptions.ENVELOPES_PER_BIKE
+    print(f"§8.3 delivery check: {BIKES} bikes x ~{rate} = {BIKES * rate} "
+          "nominal capacity")
     print(f"  actually served {served} of {offered} offered "
           f"({served/offered:.0%}); {offered-served} unassigned")
     print(f"  effective envelopes per deployed bike: {served/used:.1f}" if used else "")

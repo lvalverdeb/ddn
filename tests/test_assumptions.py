@@ -8,6 +8,7 @@ the source and the module is the thing checked.
 
 from __future__ import annotations
 
+import ast
 import re
 from datetime import time
 from pathlib import Path
@@ -170,3 +171,121 @@ def test_every_model_prices_its_fleet_from_the_documented_weights(name):
         assert spec["cost_per_metre"] == assumptions.COST_PER_METRE
         assert spec["fixed_cost"] == assumptions.VEHICLE_FIXED_COST
         assert spec["cost_per_second"] == assumptions.COST_PER_SECOND
+
+
+#: The placeholders whose duplication is worth hunting: fleet sizes and
+#: durations. Deliberately not every registered value — see the test's
+#: docstring for why a blanket check is worse than useless.
+GUARDED = frozenset({
+    "MOTORBIKES_TOTAL", "VANS_TOTAL", "ENVELOPES_PER_BIKE", "MAILBAGS_PER_VAN",
+    "PICKUP_STOP_MIN", "RETURN_STOP_MIN", "FACILITY_UNLOAD_MIN",
+    "VAN_IDLE_RETURN_MIN", "REOPT_CADENCE_MIN", "EQUIDISTANT_MARGIN_M",
+    "RECONCILE_PER_HOUR", "ASSEMBLY_PER_HOUR", "SORT_PER_HOUR",
+})
+
+#: Constants that hold a number a placeholder also holds, legitimately: each is
+#: a figure the spec states outright, not a stand-in for one it withholds.
+#: §4.1's 200 g default weight, §7.4's ten-minute delivery, §11's 20–30 band.
+NOT_A_DUPLICATE = frozenset({
+    "DEFAULT_WEIGHT_G", "DEFAULT_SERVICE_MIN", "EXPECTED_PER_BIKE",
+})
+
+
+def _guarded_values() -> dict[int, list[str]]:
+    """Every guarded placeholder, in the units a module might spell it in.
+
+    A value maps to *every* name that holds it, not the first: 120 is both
+    `MOTORBIKES_TOTAL` and `ASSEMBLY_PER_HOUR`, and naming one of them in a
+    failure would send a reader to the wrong constant.
+    """
+    found: dict[int, list[str]] = {}
+    for name in sorted(GUARDED):
+        value = getattr(assumptions, name)
+        found.setdefault(value, []).append(name)
+        # The codebase's own idiom for a minutes placeholder is `X * 60`, so a
+        # duplicate is as likely to be in seconds as in minutes.
+        found.setdefault(value * 60, []).append(f"{name} * 60")
+    return found
+
+
+def _planted_literals(tree: ast.AST) -> list[tuple[int, int, str]]:
+    """`(value, line, what)` for every literal a placeholder could have been.
+
+    Module-level assignments and default arguments only. That is where a
+    placeholder gets copied — someone needs a number, types it, and moves on —
+    and it keeps the check away from loop bounds, tuple indices, rounding
+    digits and format widths, which is where a blanket scan drowns.
+    """
+    found = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            targets = node.targets[0]
+            values = (node.value.elts
+                      if isinstance(node.value, ast.Tuple) else [node.value])
+            if isinstance(targets, ast.Tuple):
+                names = [e.id for e in targets.elts if isinstance(e, ast.Name)]
+            for name, value in zip(
+                    names or [""] * len(values), values, strict=False):
+                if (isinstance(value, ast.Constant)
+                        and isinstance(value.value, int)
+                        and not isinstance(value.value, bool)
+                        and name not in NOT_A_DUPLICATE):
+                    found.append((value.value, value.lineno, name or "assignment"))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        args = node.args
+        for default in (*args.defaults, *(d for d in args.kw_defaults if d)):
+            if (isinstance(default, ast.Constant)
+                    and isinstance(default.value, int)
+                    and not isinstance(default.value, bool)):
+                found.append((default.value, default.lineno,
+                              f"{node.name}() default"))
+    return found
+
+
+def test_no_module_repeats_a_registered_placeholder():
+    """A placeholder written out in a module is a placeholder nobody can find.
+
+    `docs/assumptions.md` claims to carry every stand-in value. It can only be
+    true if no module quietly holds its own copy, and nothing checked that: the
+    test that used to sit here looked for names matching `COST|RATIO` inside
+    `ddn.assumptions` itself, so it could not have seen a duplicate anywhere
+    else, and it passed for months while §8's ratio sat in `contract.py` and
+    three JSON files.
+
+    **What this deliberately does not do.** A blanket "no literal in `ddn/` may
+    equal any registered value" is unusable — 0 is a facility's transit from the
+    hub and matches a hundred literals, 2 and 6 are the van earmarks and match
+    every tuple index and coordinate precision, and 200 is both
+    `POSTPONED_BAD_ADDRESS_PER_MILLE` and §4.1's default envelope weight.
+    Measured before writing this: two real findings against eighteen false ones.
+    So it checks a named set of fleet sizes and durations, at module-level
+    assignments and default arguments, and exempts the constants that hold a
+    figure the spec actually supplies.
+
+    And it checks `value * 60`, because minutes-to-seconds is how these get
+    copied. Without that it misses the one the repository already knew about:
+    `returns.SERVICE_SECONDS = 600` is `RETURN_STOP_MIN`, and `600 != 10`.
+    """
+    guarded = _guarded_values()
+    root = Path(__file__).resolve().parent.parent / "ddn"
+    offences = []
+
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "assumptions.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for value, line, what in _planted_literals(tree):
+            if value in guarded:
+                names = " or ".join(f"assumptions.{n}" for n in guarded[value])
+                offences.append(
+                    f"{path.relative_to(root.parent)}:{line} {what} = {value} "
+                    f"is {names}")
+
+    assert not offences, (
+        "a registered placeholder is written out again in a module; read it "
+        "from ddn.assumptions so that docs/assumptions.md stays the one place "
+        "a stand-in can be found and changed:\n  " + "\n  ".join(offences))
