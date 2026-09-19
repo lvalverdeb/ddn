@@ -352,3 +352,110 @@ def test_the_van_check_is_over_capacity_on_real_roads(simulated):
     assert report.checks.vans.load > 1.0
     assert report.checks.vans.required == pytest.approx(121, abs=1)
     assert -report.checks.vans.headroom == pytest.approx(11, abs=1)
+
+
+# ---------------------------------------------- §5.3.2 wired through the day
+
+def inter_depot(_a: str, _b: str) -> int:
+    """Depot-to-depot seconds. §3.1 gives transit from the hub and nothing
+    between depots, so a circuit's second leg has to be told. Forty minutes is
+    a caller's number, not the document's; it is here to exercise the wiring,
+    and no figure below depends on its value."""
+    return 40 * HOUR // 60
+
+
+@pytest.fixture(scope="module")
+def corrected(inputs):
+    """§6's "incorrect address" postponements at D1, re-geocoded to D2.
+
+    The correction is the caller's: `run_day` has no ground truth to correct
+    *to*, so it raises nothing without a `regeocode`. Restricting it to D1
+    keeps the set deterministic — every transfer below is one envelope whose
+    real address belongs to another depot.
+    """
+    day = inputs["_day"]
+    state = State(day=day.delivery_day, pools=inputs["_pools"])
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    seen: list[str] = []
+
+    def regeocode(envelope):
+        if envelope["facility_id"] != "D1":
+            return None
+        seen.append(envelope["package_id"])
+        return "D2"
+
+    report, tomorrow = run_day(state, seed=7, regeocode=regeocode,
+                               transit=inter_depot, **kwargs)
+    return report, tomorrow, seen
+
+
+def test_a_day_with_no_regeocode_raises_no_transfer(simulated):
+    """§5.3.2's trigger is an address *correction*, and inventing one would
+    invent the trigger. The `simulated` run passes no `regeocode`."""
+    report, _ = simulated
+    assert report.transfers_raised == 0
+    assert report.transfers_carried == 0
+    assert report.transfers_declined == {}
+
+
+def test_a_correction_that_changes_depot_raises_a_transfer(corrected):
+    """Nine corrections, eight transfers — §7.1 refuses the ninth.
+
+    MRN-01761's SLA is the delivery day itself, so §9.1's
+    min(receiving depot's next morning release, SLA date) lands on a deadline
+    that has already passed. §7.1 forbids raising a transfer that cannot make
+    it, so that envelope goes back through §5.5 instead of onto a van.
+    """
+    report, _, seen = corrected
+    assert len(seen) == 9
+    assert report.transfers_raised == 8
+
+
+def test_every_transfer_is_carried_or_declined(corrected):
+    """§9.2 accounts for each one; none may simply vanish between stages."""
+    report, _, _ = corrected
+    assert (report.transfers_carried + len(report.transfers_declined)
+            == report.transfers_raised)
+
+
+def test_a_carried_transfer_starts_tomorrow_at_its_new_depot(corrected):
+    """§5.2.6 ends a transfer at "Ready (at new depot)", and §7.1 keeps the
+    envelope unroutable until it arrives — so the move shows up in tomorrow's
+    pools, not today's."""
+    report, tomorrow, seen = corrected
+    assert report.transfers_carried == 8
+    at = {e["package_id"]: (facility, e["facility_id"])
+          for facility, pool in tomorrow.pools.items() for e in pool}
+    moved = {p: at[p] for p in seen if at.get(p) == ("D2", "D2")}
+    assert len(moved) == 8, "carried transfers are pooled at the destination"
+    assert at["MRN-01761"] == ("D1", "D1"), "the refused one never left"
+
+
+def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
+    """§5.3.2 rides the *existing* line-haul; it does not add a van run.
+
+    Sending every depot's corrections to D6 raises transfers whose origin is
+    not on a circuit that goes on to reach D6, and those are refused rather
+    than carried. The reason is reported, because a silent drop reads as a
+    delivery that simply never happened.
+    """
+    day = inputs["_day"]
+    state = State(day=day.delivery_day, pools=inputs["_pools"])
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    report, _ = run_day(state, seed=7, transit=inter_depot,
+                        regeocode=lambda e: "D6" if e["facility_id"] != "D6"
+                        else None, **kwargs)
+
+    assert report.transfers_declined, "not every origin is on a D6 circuit"
+    assert set(report.transfers_declined.values()) == {
+        "no van circuit reaches the destination depot tonight"}
+    assert (report.transfers_carried + len(report.transfers_declined)
+            == report.transfers_raised)
+
+
+def test_the_report_renders_the_transfer_block(corrected):
+    """§5.3.2 is a stage of the day, so it reports with the others."""
+    report, _, _ = corrected
+    page = render(report)
+    assert "TRANSFERS (§5.3.2)" in page
+    assert "raised" in page and "carried" in page

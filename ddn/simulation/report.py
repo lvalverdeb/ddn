@@ -61,6 +61,19 @@ def render(report: DayReport) -> str:
     for facility, reason in sorted(report.rolled.items()):
         out.append(f"  rolled at {facility}: {reason}")
 
+    if report.transfers_raised:
+        out += [
+            "",
+            "TRANSFERS (§5.3.2)",
+            f"  raised                    {report.transfers_raised:>8,}",
+            f"  carried tonight           {report.transfers_carried:>8,}",
+            f"  declined                  {len(report.transfers_declined):>8,}",
+        ]
+        for reason in sorted(set(report.transfers_declined.values())):
+            count = sum(1 for r in report.transfers_declined.values()
+                        if r == reason)
+            out.append(f"    {reason[:40]:<40}{count:>6,}")
+
     out += [
         "",
         f"  return run                {report.return_stops:>8,} stops",

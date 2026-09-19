@@ -28,13 +28,15 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ddn import assumptions, linehaul, pickups, processing, returns
 from ddn.allocation import EFFECTIVE_PER_BIKE, FleetPlan, allocate, place
 from ddn.contract import Excluded
 from ddn.lastmile import select
+from ddn.linehaul import Transit
+from ddn.model import TransferReason, TransferRequest
 from ddn.simulation.capacity import Checks, check
 from ddn.simulation.metrics import Metrics, Tally, measure
 
@@ -46,6 +48,11 @@ DELIVERED, REJECTED, DEFECTIVE, POSTPONED = (
 #: §6's three reasons an attempt is not completed, and the invented split
 #: between them. The middle one is the one with a consequence: §6 sends an
 #: incorrect address back for re-geocoding.
+#: §5.3.2's first trigger needs a corrected facility, which only the caller
+#: can supply: given a postponed envelope, the facility its real address
+#: belongs to, or `None` if the correction changes nothing.
+Regeocode = Callable[[dict[str, Any]], str | None]
+
 UNAVAILABLE = "recipient unavailable"
 BAD_ADDRESS = "incorrect address"
 OUT_OF_TIME = "driver out of time"
@@ -122,6 +129,10 @@ class DayReport:
     rolled: dict[str, str] = field(default_factory=dict)
     return_stops: int = 0
     carried_into_tomorrow: int = 0
+    #: §5.3.2: raised today, carried tonight, and declined with §9.2's reason.
+    transfers_raised: int = 0
+    transfers_carried: int = 0
+    transfers_declined: dict[str, str] = field(default_factory=dict)
 
 
 def _served_everything(offered: Sequence[dict[str, Any]], _facility: str,
@@ -218,16 +229,73 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
                      first_attempt)
 
 
+def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
+                     *, today: date, regeocode: Regeocode | None
+                     ) -> list[TransferRequest]:
+    """§5.3.2's first trigger: an address correction moves the facility.
+
+    §6 sends a postponement with sub-reason "incorrect address" back for
+    re-geocoding, "which may change facility". The correction itself is not
+    this module's to make -- it has no ground truth to correct *to* -- so
+    `regeocode` is the caller's, and without one no transfer is raised. A
+    simulator that invented corrected addresses would be inventing the very
+    thing the trigger is about.
+
+    §9.1 defines the deadline as min(receiving depot's next morning release,
+    SLA date), and §7.1 forbids raising one that cannot make it -- so a
+    correction whose SLA has already passed produces no transfer, and the
+    envelope goes back through §5.5 instead.
+    """
+    if regeocode is None:
+        return []
+
+    releases = {f["id"]: f.get("route_release_time", 7 * HOUR)
+                for f in facilities}
+    raised: list[TransferRequest] = []
+    for envelope in doorstep.postponed:
+        if envelope.get("postponed_reason") != BAD_ADDRESS:
+            continue
+        corrected = regeocode(envelope)
+        if corrected is None or corrected == envelope["facility_id"]:
+            continue
+
+        release = datetime.combine(today + timedelta(days=1), time()) + timedelta(
+            seconds=int(releases.get(corrected, 7 * HOUR)))
+        sla = envelope.get("sla_date")
+        deadline = min(release, datetime.combine(date.fromisoformat(sla), time())
+                       ) if sla else release
+        if deadline <= datetime.combine(today, time()):
+            continue
+
+        raised.append(TransferRequest(
+            transfer_id=f"TR-{envelope['package_id']}",
+            package_id=envelope["package_id"],
+            from_facility_id=envelope["facility_id"],
+            to_facility_id=corrected,
+            reason=TransferReason.ADDRESS_CORRECTION,
+            created_at=datetime.combine(today, time()),
+            deadline=deadline,
+            weight_g=int(envelope.get("weight_g", 200))))
+    return raised
+
+
 def _collect(facilities: Sequence[dict[str, Any]],
              requests: Sequence[dict[str, Any]],
              inflow: Sequence[dict[str, Any]],
              vans: Sequence[dict[str, Any]], *,
              travel: Callable[[float, float, float, float], int] | None,
-             hub_id: str) -> _Collection:
+             hub_id: str,
+             transfers: Sequence[TransferRequest] = (),
+             transit: Transit | None = None) -> _Collection:
     """§5.1 collects, §5.2 times, §5.3 positions. The other half of the day."""
     positioned: dict[str, list[dict[str, Any]]] = {f["id"]: [] for f in facilities}
     if not requests:
-        return _Collection(None, linehaul.LinehaulPlan(), positioned)
+        # §5.3.2's circuits still run for transfers alone: a van goes out for
+        # them whether or not the hub has anything to send.
+        night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
+                              [], vans, transfers=transfers, transit=transit,
+                              unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
+        return _Collection(None, night, positioned)
 
     if travel is None:
         raise ValueError(
@@ -244,7 +312,8 @@ def _collect(facilities: Sequence[dict[str, Any]],
                    for e in inflow
                    if e["package_id"] in ready_at and e["facility_id"] != hub_id]
     night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
-                          depot_bound, vans,
+                          depot_bound, vans, transfers=transfers,
+                          transit=transit,
                           unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
 
     rolled = {pid for ids in night.rolled.values() for pid in ids}
@@ -300,14 +369,35 @@ def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
 
 def _handover(pools: Mapping[str, list[dict[str, Any]]],
               collection: _Collection, doorstep: _Doorstep,
-              unassigned: Sequence[Excluded]
+              unassigned: Sequence[Excluded],
+              transfers: Sequence[TransferRequest] = ()
               ) -> dict[str, tuple[dict[str, Any], ...]]:
-    """Tomorrow's pools: what was positioned, what was held, what was left."""
+    """Tomorrow's pools: what was positioned, what was held, what moved depot.
+
+    §5.2.6 ends a transfer at "Ready (at new depot)", so an envelope whose
+    transfer was carried starts tomorrow at its destination. One that was
+    declined stays where it is -- §7.1: an envelope in transfer is not routable
+    until it arrives, and one that never left has not moved either.
+    """
     declined = {u.package_id for u in unassigned}
+    carried = {t.package_id: t.to_facility_id for t in transfers
+               if t.transfer_id in {tid for trip in collection.night.trips
+                                    for tid in trip.transfer_ids}}
+
+    def held(facility: str) -> list[dict[str, Any]]:
+        moved = []
+        for envelope in doorstep.postponed:
+            destination = carried.get(envelope["package_id"],
+                                      envelope["facility_id"])
+            if destination == facility:
+                moved.append(dict(envelope, facility_id=destination)
+                             if destination != envelope["facility_id"]
+                             else envelope)
+        return moved
+
     return {
         facility: (*collection.positioned.get(facility, ()),
-                   *[e for e in doorstep.postponed
-                     if e["facility_id"] == facility],
+                   *held(facility),
                    *[e for e in yesterdays if e["package_id"] in declined])
         for facility, yesterdays in pools.items()}
 
@@ -349,6 +439,8 @@ def run_day(
     rates: Rates | None = None,
     deliver: Callable[..., tuple[list, list]] = _served_everything,
     allocation: Mapping[str, int] | None = None,
+    regeocode: Regeocode | None = None,
+    transit: Transit | None = None,
     seed: int = 0,
 ) -> tuple[DayReport, State]:
     """One D / D+1 cycle: deliver yesterday's pool, position tomorrow's.
@@ -371,6 +463,13 @@ def run_day(
             counts", and the forecast belongs to the day *before* the one being
             delivered -- so a caller replaying a known day supplies what was
             decided then rather than letting today's pool re-derive it.
+        regeocode: §5.3.2's first trigger -- given a postponed envelope whose
+            address was wrong, the facility it really belongs to. Without one
+            no transfer is raised, because the correction is not this module's
+            to invent.
+        transit: seconds between two facilities, for §5.3.2's inter-depot
+            legs. §3.1 gives hub transit only, so without this every transfer
+            is declined with that as its reason.
         seed: fixes the outcome sampling, so a day replays identically.
 
     Returns:
@@ -390,10 +489,13 @@ def run_day(
     attempt = _attempt(pools, per_facility, today=state.day, deliver=deliver)
     doorstep = _doorstep(attempt, rates=rates, rng=rng, today=state.day,
                          hub_id=hub_id)
+    transfers = _raise_transfers(doorstep, facilities, today=state.day,
+                                 regeocode=regeocode)
     collection = _collect(facilities, requests, inflow, vans, travel=travel,
-                          hub_id=hub_id)
+                          hub_id=hub_id, transfers=transfers, transit=transit)
     stops = _return_run(doorstep.going_back, hub_id)
-    tomorrow = _handover(pools, collection, doorstep, attempt.unassigned)
+    tomorrow = _handover(pools, collection, doorstep, attempt.unassigned,
+                         transfers)
 
     dispatch, night = collection.dispatch, collection.night
     tally = _count(state, attempt, doorstep, collection, requests, inflow,
@@ -411,7 +513,11 @@ def run_day(
         positioned={f: len(p) for f, p in collection.positioned.items()},
         rolled=dict(night.reasons),
         return_stops=len(stops),
-        carried_into_tomorrow=sum(len(p) for p in tomorrow.values()))
+        carried_into_tomorrow=sum(len(p) for p in tomorrow.values()),
+        transfers_raised=len(transfers),
+        transfers_carried=sum(len(trip.transfer_ids) for trip in night.trips),
+        transfers_declined={d.transfer_id: d.reason
+                            for d in night.declined})
 
     return report, State(
         day=state.day + timedelta(days=1),
