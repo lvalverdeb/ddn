@@ -1,6 +1,10 @@
 # §8.3's capacity checks: one answered, one not
 
 **Status:** measured 17 September 2026 against problem definition v0.10.
+**Current spec: v0.14**, and §10 has moved since — v0.13 restated the end of
+day (2,750 delivered of 2,950 dispatched, 150 unassigned, tomorrow's pool
+4,820). The van check below rests on §10's shape, so re-read its figures as
+measured against v0.10's and not against today's.
 **Audience:** the author of the problem definition.
 
 ---

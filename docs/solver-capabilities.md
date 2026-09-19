@@ -1,6 +1,7 @@
 # Open Question 5, answered
 
-**Question (§12.5 of the problem definition, v0.10):** *"Solver capabilities to
+**Question (§12.5 of the problem definition; answered against v0.10,
+still current at v0.14):** *"Solver capabilities to
 confirm: dynamic stop insertion; flexible vehicle-to-depot assignment; native
 due-date handling; locked assignments; ready-time constraints on stops."*
 

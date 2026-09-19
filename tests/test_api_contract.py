@@ -210,3 +210,37 @@ def test_endpoints_without_a_key_do_not_document_a_400_for_one(spec):
             if not has_header and path not in IDEMPOTENT:
                 assert "400" not in operation["responses"], (
                     f"{verb.upper()} {path} documents a 400 it cannot return")
+
+
+def test_the_published_version_is_the_specs_version(spec):
+    """§13.1: "the OpenAPI document is the published form of §9".
+
+    It said 0.11 for three revisions while the service already served v0.12's
+    whole Transfers resource, so a generated client reading the version field
+    would have concluded transfers did not exist. Nothing read it — the audit
+    found the staleness by grepping, not by a failure.
+
+    Read from the spec's own `**Status:**` line, so the next revision moves it
+    or fails here.
+    """
+    from ddn.api.app import SPEC_VERSION
+
+    stated = re.search(r"\*\*Status:\*\* Draft v([\d.]+)", SPEC)[1]
+    assert SPEC_VERSION == stated
+    assert spec["info"]["version"] == stated
+
+
+def test_every_front_door_states_the_specs_version():
+    """CLAUDE.md and README name the version a reader takes on trust.
+
+    README said v0.10 through four revisions. The failure mode is the one
+    `tests/test_front_doors.py` was written for on the test count: a number in
+    a document goes stale without anything breaking.
+    """
+    stated = re.search(r"\*\*Status:\*\* Draft v([\d.]+)", SPEC)[1]
+    root = Path(__file__).resolve().parent.parent
+
+    for name in ("CLAUDE.md", "README.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert f"v{stated}" in text, (
+            f"{name} does not name the spec version; it is v{stated}")

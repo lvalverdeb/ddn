@@ -2,7 +2,9 @@
 
 ## What this repo is
 Integration between our document delivery operation and an existing VRP solver.
-The operational problem is fully defined in `docs/vrp-problem-definition.md`.
+The operational problem is fully defined in `docs/vrp-problem-definition.md`
+(**Draft v0.14**; `tests/test_api_contract.py` holds the API's published
+version to it).
 Read it before any substantive task. Section numbers below refer to that file.
 
 ## Source of truth
@@ -35,7 +37,7 @@ API rules (§13): solver-invoking endpoints are async jobs returning 202; never 
 ## Commands
 
 ```sh
-make test       # 778 tests; no gateway, no Redis, no routing data
+make test       # 780 tests; no gateway, no Redis, no routing data
 make check      # and ruff
 make bootstrap  # §13's stack: redis, the API, an Arq worker
 ```

@@ -8,8 +8,10 @@ decision about the operation at all.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from arq import ArqRedis
 from arq.connections import RedisSettings, create_pool
@@ -28,6 +30,15 @@ from ddn.api.routers import (
     transfers,
 )
 from ddn.api.store import Store
+
+#: §13.1: "the OpenAPI document is the published form of §9". Read from the
+#: spec rather than written here, because a version typed twice is a version
+#: that drifts -- this said 0.11 for three revisions while the service already
+#: served v0.12's whole Transfers resource, and nothing read it to notice.
+SPEC = (Path(__file__).resolve().parents[2]
+        / "docs" / "vrp-problem-definition.md")
+SPEC_VERSION = re.search(r"\*\*Status:\*\* Draft v([\d.]+)",
+                         SPEC.read_text(encoding="utf-8"))[1]
 
 TITLE = "Document Delivery Network"
 DESCRIPTION = """\
@@ -54,7 +65,7 @@ def create_app(*, queue: ArqRedis | None = None,
             app.state.queue = await create_pool(settings or redis_settings())
         yield
 
-    app = FastAPI(title=TITLE, description=DESCRIPTION, version="0.11",
+    app = FastAPI(title=TITLE, description=DESCRIPTION, version=SPEC_VERSION,
                   lifespan=lifespan)
     app.state.store = store or Store()
     app.state.queue = queue
