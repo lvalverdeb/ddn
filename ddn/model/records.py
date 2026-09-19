@@ -143,6 +143,8 @@ class Envelope:
     attempt_number: int = 0
     previous_outcome: Outcome | None = None
     locked_vehicle_id: str | None = None
+    #: §8.2's other direction: withheld from the plan by operations.
+    excluded_by_ops: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "priority", _numeric(self.priority, "priority"))

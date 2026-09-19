@@ -167,6 +167,37 @@ def test_an_envelope_both_stuck_and_expired_is_reported_as_expired():
         ("P1", contract.SLA_EXPIRED)]
 
 
+def test_an_envelope_operations_pulled_out_is_withheld_and_reported():
+    """§8.2: "Operations may force an envelope in or out of the plan."
+
+    Out is not a lock. §8.2 says why: no single lock kind expresses "this
+    envelope, on no vehicle", and the one-forbid-per-vehicle encoding would be
+    forty-eight locks at the hub. So the envelope is withheld before the solve
+    and appears in §9.2's unassigned list with its own reason — an override the
+    operator can see in the output, rather than an envelope that silently is
+    not there.
+    """
+    routable, excluded = contract.triage(
+        [package("P1"), package("P2", excluded_by_ops=True)], today=TODAY)
+
+    assert [p["package_id"] for p in routable] == ["P1"]
+    assert [(e.package_id, e.reason) for e in excluded] == [
+        ("P2", contract.EXCLUDED_BY_OPS)]
+
+
+def test_an_operations_exclusion_outranks_the_pipelines_own_reasons():
+    """An operator who pulled an envelope out has said something about *this*
+    envelope; "not ready by cut-off" would send them to the hub to chase a
+    state nobody is waiting on. The actionable reason wins, as it does between
+    `SLA_EXPIRED` and `NOT_READY` above."""
+    withheld = package("P1", status="Reconciled", excluded_by_ops=True)
+
+    _, excluded = contract.triage([withheld], today=TODAY)
+
+    assert [(e.package_id, e.reason) for e in excluded] == [
+        ("P1", contract.EXCLUDED_BY_OPS)]
+
+
 def test_a_reason_is_one_of_the_codes_the_output_contract_names():
     """§9.2's unassigned list has a fixed vocabulary. A reason invented here
     would be a reason no consumer of that output knows how to read.

@@ -59,7 +59,15 @@ from ddn import assumptions
 LOW_GEOCODE_CONFIDENCE = "low geocode confidence"
 SLA_EXPIRED = "SLA expired"
 NOT_READY = "not ready by cut-off"
-REASONS = frozenset({LOW_GEOCODE_CONFIDENCE, SLA_EXPIRED, NOT_READY})
+#: §8.2's other half. An envelope operations have forced *out* is withheld here
+#: rather than locked out at the solver: no single lock kind says "this
+#: envelope, on no vehicle", and the one-forbid-per-vehicle encoding would mean
+#: forty-eight locks at the hub and an undiagnosable conflict when two
+#: overrides disagree. Withholding it keeps the decision where the other
+#: pre-routing decisions are, and §9.2 reports it rather than losing it.
+EXCLUDED_BY_OPS = "excluded by operations"
+REASONS = frozenset({LOW_GEOCODE_CONFIDENCE, SLA_EXPIRED, NOT_READY,
+                     EXCLUDED_BY_OPS})
 
 # §5.2.6: "Only envelopes in Ready (at the hub or at a depot) are solver inputs
 # for delivery routing." Every other state in that lifecycle is either upstream
@@ -133,7 +141,14 @@ def triage(packages: Sequence[dict[str, Any]], *,
     for package in packages:
         sla = _sla(package)
         status = package.get("status")
-        if package.get("geocode_confidence") == "low":
+        # §8.2 first: an operator who has pulled an envelope out has said so
+        # about this envelope on this day, and that outranks every reason the
+        # pipeline would otherwise give for the same outcome. Reporting "not
+        # ready" for an envelope somebody deliberately withheld would send them
+        # to the hub to chase a state nobody is waiting on.
+        if package.get("excluded_by_ops"):
+            excluded.append(Excluded(package["package_id"], EXCLUDED_BY_OPS))
+        elif package.get("geocode_confidence") == "low":
             excluded.append(Excluded(package["package_id"],
                                      LOW_GEOCODE_CONFIDENCE))
         elif sla is not None and sla < today:

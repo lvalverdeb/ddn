@@ -180,6 +180,47 @@ async def test_the_audit_records_actor_and_time_on_a_lock(client, store, pool):
     assert entry.at is not None
 
 
+async def test_operations_can_force_an_envelope_out_and_it_is_audited(client, store):
+    """§8.2's other half, over the same endpoint as the lock.
+
+    Half of §8.2 had no representation at all: `Lock` required a
+    `locked_vehicle_id`, so the body could only ever say "in". The envelope is
+    marked rather than locked -- see §8.2 -- and the audit says `exclude`, not
+    `lock`, because an operator reading the trail needs to know which way the
+    override went.
+    """
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+    response = await client.post("/routes/runs/run-1/locks", json={
+        "package_id": "PKG-1", "excluded_by_ops": True, "actor": "ops-anna"})
+
+    assert response.status_code == 202, "§8.2 re-runs, so it is a job"
+    assert store.envelopes["PKG-1"]["excluded_by_ops"] is True
+    assert store.envelopes["PKG-1"]["locked_vehicle_id"] is None
+    entry = next(store.audit_for("PKG-1"))
+    assert (entry.actor, entry.action) == ("ops-anna", "exclude")
+    assert entry.at is not None
+
+
+@pytest.mark.parametrize("body, why", [
+    ({"package_id": "PKG-1", "actor": "ops-anna"}, "neither direction"),
+    ({"package_id": "PKG-1", "locked_vehicle_id": "MOTO-050",
+      "excluded_by_ops": True, "actor": "ops-anna"}, "both at once"),
+])
+async def test_an_override_that_names_no_single_direction_is_refused(
+        client, body, why):
+    """§8.2 forces an envelope in *or* out. A body saying both is asking for an
+    envelope pinned to a vehicle it is also withheld from, and a body saying
+    neither is a re-run wearing an override's clothes. Refused at the schema so
+    no handler has to invent a precedence."""
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+
+    response = await client.post("/routes/runs/run-1/locks", json=body)
+
+    assert response.status_code == 422, why
+
+
 async def test_the_pickup_plan_is_empty_until_the_worker_has_run(client):
     """§13.3 publishes it on a cadence; before the first cycle there is none."""
     plan = (await client.get("/pickups/plan")).json()

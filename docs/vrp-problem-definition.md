@@ -1,6 +1,6 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.13
+**Status:** Draft v0.14
 **Date:** 16 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
@@ -374,6 +374,8 @@ The solver receives a **numeric score**: weighted-sum objectives are universally
 
 Operations may force an envelope in or out of the plan. The solver must support re-running with **locked** assignments.
 
+The two directions are not symmetric in the solver. *In* is a lock on a vehicle (`locked_vehicle_id`, §9.1). *Out* is **not** a lock: no single lock kind expresses "this envelope, on no vehicle", and encoding it as one forbid-lock per vehicle would mean one per motorbike at the hub and would make a conflicting override impossible to diagnose. An envelope marked `excluded_by_ops` is therefore withheld before the solve and reported in §9.2's unassigned list with the reason *excluded by operations* — visible in the output, and never silently dropped.
+
 ### 8.3 Structural capacity gaps
 
 Two capacity checks should be made before the solver is expected to meet SLA targets:
@@ -409,7 +411,8 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | service_time_min | number | Default 10 |
 | attempt_number | integer | |
 | previous_outcome | enum, optional | Postponed + sub-reason |
-| locked_vehicle_id | string, optional | Operations override |
+| locked_vehicle_id | string, optional | Operations override: force in, onto this vehicle |
+| excluded_by_ops | boolean, optional | Operations override: force out. Not offered to the solver; reported unassigned |
 
 **Mailbags / pickup requests** (arrive incrementally)
 | Field | Type | Notes |
@@ -460,7 +463,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 
 - **Fleet allocation** (if solved by the tool): vehicle_id, facility_id, role per day.
 - **Routes:** vehicle_id; ordered stops (package_id / mailbag_id / customer site) with ETA and stop type; total distance and time.
-- **Unassigned envelopes:** package_id; reason (time / count / not ready by cut-off / low geocode confidence / SLA expired / in dispute).
+- **Unassigned envelopes:** package_id; reason (time / count / not ready by cut-off / low geocode confidence / SLA expired / in dispute / excluded by operations).
 - **Line-haul plan:** per van, an ordered list of legs (from_facility, to_facility, departure, expected arrival) and per leg the loads on board (hub-origin package_ids by destination, transfer_ids, return package_ids) with total weight; transfers not carried, with reason.
 
 ---
@@ -570,6 +573,7 @@ Reconciliation, assembly and sorting are physical hub processes; the API only re
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.14 | 2026-09-19 | [TBD] | §8.2's "out" direction given a representation: `excluded_by_ops` in §9.1 and an "excluded by operations" reason in §9.2, withheld upstream of the solver rather than encoded as locks |
 | 0.13 | 2026-09-19 | [TBD] | Corrections from conformance audit: §10 arithmetic closed (10 discrepancies; D2–D6 leave 130 unassigned; 2,750 delivered; tomorrow's pool 4,820); §5.2.6 gains cancel, transfer-to-return and SLA-expiry edges; §5.1.6 late-request rule stated; §7.1 bullet count stated |
 | 0.12 | 2026-09-18 | [TBD] | Inter-depot transfers: triggers, rules, multi-leg van circuits, lifecycle state, transfer request entity, constraints, API resource |
 | 0.11 | 2026-09-18 | [TBD] | Added §13 service interface: FastAPI resources, job model, event-based lifecycle, scheduled orchestration |

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ddn.model import (
     CoordSource,
@@ -91,6 +91,9 @@ class Envelope(Strict):
     attempt_number: int = 0
     previous_outcome: Outcome | None = None
     locked_vehicle_id: str | None = None
+    excluded_by_ops: bool = Field(
+        default=False,
+        description="§8.2: forced out of the plan by operations")
 
 
 class EnvelopeBatch(Strict):
@@ -179,11 +182,29 @@ class TransferEvent(Strict):
 
 
 class Lock(Strict):
-    """§8.2: operations force an envelope onto a vehicle, and the plan re-runs."""
+    """§8.2: operations force an envelope in or out, and the plan re-runs.
+
+    `locked_vehicle_id` is the *in* direction and is optional only so that the
+    *out* direction can be expressed at all -- exactly one of the two must be
+    given. §8.2's two halves are not symmetric in the solver: in is a lock on a
+    vehicle, out is a withholding before the solve, because no lock kind says
+    "this envelope, on no vehicle".
+    """
 
     package_id: str
-    locked_vehicle_id: str
+    locked_vehicle_id: str | None = None
+    excluded_by_ops: bool = Field(
+        default=False, description="§8.2: force this envelope out of the plan")
     actor: str
+
+    @model_validator(mode="after")
+    def _one_direction(self) -> Lock:
+        if bool(self.locked_vehicle_id) == self.excluded_by_ops:
+            raise ValueError(
+                "§8.2 is an override in one direction: give "
+                "locked_vehicle_id to force the envelope in, or "
+                "excluded_by_ops to force it out, not both and not neither")
+        return self
 
 
 class RunRequest(Strict):

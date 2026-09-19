@@ -116,11 +116,19 @@ independently by the verifier, so §8.2's override survives re-optimisation and
 is not merely requested. `ddn.contract` maps §9.1's `locked_vehicle_id` to it
 directly.
 
-**Half of §8.2 is missing.** "Force a package in" works as above. "Pull one
-out" — force a package to be unassigned — has no lock kind:
-`FORBID_ORDER_ON_VEHICLE` names one vehicle, so excluding a package at a
-48-bike hub means 48 locks, and the platform's minimal-conflict diagnosis over
-48 synthetic locks is noise. Worth raising upstream if operations will use it.
+**Half of §8.2 is not a solver feature, and is no longer missing.** "Force a
+package in" works as above. "Pull one out" — force a package to be unassigned —
+has no lock kind: `FORBID_ORDER_ON_VEHICLE` names one vehicle, so excluding a
+package at a 48-bike hub means 48 locks, and the platform's minimal-conflict
+diagnosis over 48 synthetic locks is noise. `FORBID_DEPLOY` is vehicle-scoped
+and does not express it at all.
+
+So it is not encoded as a lock. v0.14 of the problem definition gives §9.1 an
+`excluded_by_ops` field and §9.2 an "excluded by operations" reason, and
+`contract.triage` withholds the envelope before the solve — the documented
+fallback rather than an invented capability. The override is visible in the
+output where an operator can find it, and the solver is never asked a question
+it has no way to answer. Nothing needs raising upstream.
 
 ## 5. Ready-time constraints on stops — yes, and independently verified
 

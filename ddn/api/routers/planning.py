@@ -105,7 +105,7 @@ async def routes_state(job_id: str, pool: PoolDep):
 
 @router.post("/routes/runs/{job_id}/locks", response_model=JobAccepted,
              status_code=http.HTTP_202_ACCEPTED,
-             summary="Force an envelope onto a vehicle and re-run (§8.2)")
+             summary="Force an envelope in or out of the plan and re-run (§8.2)")
 async def add_lock(job_id: str, lock: Lock, request: Request, pool: PoolDep,
                    store: StoreDep):
     """§8.2: "The solver must support re-running with locked assignments."
@@ -118,9 +118,15 @@ async def add_lock(job_id: str, lock: Lock, request: Request, pool: PoolDep,
     if envelope is None:
         raise HTTPException(status_code=http.HTTP_404_NOT_FOUND,
                             detail=f"no envelope {lock.package_id}")
+    # §8.2's two directions are mutually exclusive -- the schema refuses a body
+    # carrying both -- so each override clears the other rather than layering
+    # on it. An envelope pulled out and then pinned to a vehicle is pinned.
     store.envelopes[lock.package_id] = dict(
-        envelope, locked_vehicle_id=lock.locked_vehicle_id)
-    store.record(actor=lock.actor, action="lock", subject=lock.package_id,
+        envelope, locked_vehicle_id=lock.locked_vehicle_id,
+        excluded_by_ops=lock.excluded_by_ops)
+    store.record(actor=lock.actor,
+                 action="exclude" if lock.excluded_by_ops else "lock",
+                 subject=lock.package_id,
                  vehicle_id=lock.locked_vehicle_id, run_id=job_id)
 
     payload = dict(store.runs.get(job_id, {}))

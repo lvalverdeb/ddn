@@ -51,6 +51,7 @@ SECTION_9_1_ENVELOPE = {
     "geocode_confidence", "facility_id", "priority", "weight_g", "sla_date",
     "time_window_start", "time_window_end", "service_time_min",
     "attempt_number", "previous_outcome", "locked_vehicle_id",
+    "excluded_by_ops",
 }
 
 
