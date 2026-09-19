@@ -30,7 +30,7 @@ SECTION_10 = (
         "HUB 48, D1 24, D2 18, D3 14, D4 8, D5 6, D6 2",
         "180 bag requests", "70 customer sites", "4,800 envelopes",
         "900 of which need assembly", "1,300 zip-only",
-        "40 low-confidence", "12 discrepancies",
+        "40 low-confidence", "10 discrepancies",
         "clears 700 of the 900", "200 rolled",
         "4,550 envelopes are Ready",
         "HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180",
@@ -54,17 +54,18 @@ def test_transcribed_constants_match_those_words():
     assert sum(peak_day.BIKE_ALLOCATION.values()) == peak_day.MOTORBIKES
 
 
-def test_section_10_does_not_close_and_the_fixture_says_so():
-    """4,800 - 200 - 40 - 12 is 4,548, but §10 states 4,550 Ready.
+def test_section_10_closes_and_the_fixture_checks_it():
+    """4,800 - 200 - 40 - 10 is 4,550, which is what §10 states as Ready.
 
-    The gap is real and belongs to the document. The fixture holds ten disputed
-    rather than twelve so its own arithmetic closes, and records the difference
-    instead of quietly absorbing it.
+    v0.12 said twelve discrepancies and was two short of its own total; the
+    fixture carried ten against it and recorded the difference. v0.13 states
+    the subtraction outright and lands on ten, so there is nothing left to
+    record -- but the arithmetic is still worth asserting, because it is the
+    property the document got wrong once.
     """
-    assert peak_day.SPEC_DISPUTED == 12
-    assert peak_day.SPEC_SHORTFALL == 2
     held = peak_day.ASSEMBLY_ROLLED + peak_day.LOW_CONFIDENCE_HELD + peak_day.DISPUTED
     assert peak_day.READY + held == peak_day.INFLOW
+    assert peak_day.READY == sum(peak_day.READY_BY_FACILITY.values())
 
 
 # ------------------------------------------------------------ what it builds

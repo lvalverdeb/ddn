@@ -7,14 +7,14 @@ rename once passed twelve tests in this repository. The figures below are
 transcribed from the document and the assertions in `tests/test_peak_day.py`
 check the build against them.
 
-**§10 does not close arithmetically, and this fixture does not hide it.** The
-section states 4,800 envelopes arriving, 200 rolled by the clean room, 40 held
-for low geocode confidence, 12 flagged in reconciliation, and 4,550 Ready by
-cut-off -- but 4,800 - 200 - 40 - 12 is 4,548. The per-facility split also sums
-to 4,550, so the Ready figure is corroborated twice and the shortfall of two
-sits in the held groups. The fixture holds 10 disputed rather than 12 so the
-totals close, and `SPEC_DISPUTED` / `SPEC_SHORTFALL` record what was changed.
-Resolving it properly is a question for the document, not for this file.
+**§10 closes arithmetically, as of v0.13.** The section states 4,800 envelopes
+arriving, 200 rolled by the clean room, 40 held for low geocode confidence, 10
+flagged in reconciliation, and 4,550 Ready by cut-off: 4,800 - 200 - 40 - 10 is
+4,550, and the per-facility split sums to the same, so the Ready figure is
+corroborated twice. It did not always: v0.12 said 12 flagged, which left the
+document two short of its own total. This fixture carried 10 against that 12 and
+recorded the difference, and v0.13 resolved it the same way -- which is the
+argument for transcribing a document rather than deriving from it.
 
 The other reading is §10's "1,300 zip-only envelopes are geocoded before
 collection (40 low-confidence, held)": zip-only is where those envelopes
@@ -83,11 +83,8 @@ ASSEMBLY_ROLLED = 200
 ZIP_ONLY = 1300
 LOW_CONFIDENCE_HELD = 40
 
-#: §10 says 12; the fixture holds 10 so that the day's arithmetic closes. See
-#: the module docstring -- this is a defect in the document, recorded not fixed.
-SPEC_DISPUTED = 12
+#: §10: "on arrival reconciliation flags 10 discrepancies (held)".
 DISPUTED = 10
-SPEC_SHORTFALL = SPEC_DISPUTED - DISPUTED
 
 READY = sum(READY_BY_FACILITY.values())
 

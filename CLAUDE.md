@@ -32,6 +32,17 @@ Stack: Python [version TBD], FastAPI, [queue library TBD: Arq / RQ / Celery / Dr
 
 API rules (§13): solver-invoking endpoints are async jobs returning 202; never use FastAPI BackgroundTasks for solver work; lifecycle changes only via event endpoints; Idempotency-Key required on ingest and events; handlers contain no routing logic.
 
+## Commands
+
+```sh
+make test       # 730 tests; no gateway, no Redis, no routing data
+make check      # and ruff
+make bootstrap  # §13's stack: redis, the API, an Arq worker
+```
+
+`tests/test_front_doors.py` holds this number to the suite that produces it, and
+README.md to the same number, because it went stale three times in one sitting.
+
 ## How to work here
 - Plan before code on anything touching more than one module: propose the change, wait for approval.
 - Every module ships with tests. The worked example in §10 is the integration fixture; keep `tests/fixtures/peak_day.*` in sync with it.
