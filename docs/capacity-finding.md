@@ -163,7 +163,7 @@ Independent of both unknowns:
 
 ---
 
-## 4. Two gaps in the data contract
+## 4. Three gaps in the data contract
 
 **§9.2 has no reason code for an address with no road path.** The published
 reasons are *time, count, cut-off missed, low geocode confidence, SLA expired*.
@@ -180,6 +180,70 @@ return stop aggregates them by construction: §9.2's return record carries a
 *list* of package_ids. One handover of a bundle is not N signings, so the
 delivery figure does not transfer. We borrowed it per stop and flagged it.
 A fixed-plus-per-envelope figure would be expressible as-is.
+
+**§7.1's shift bullet has no shift to check line-haul against.** §7.1 requires
+that "a vehicle's route starts and ends at its home facility within its shift
+(service time + travel time ≤ shift)", and §9.1 gives every vehicle a
+`shift_start / end` to check it against. No line-haul trip is inside one.
+Planning a night for all six depots on recorded road travel:
+
+| depot | departs | arrives |
+|---|---|---|
+| D6 | D+1 02:30 | D+1 06:30 |
+| D5 | D+1 03:15 | D+1 06:30 |
+| D4 | D+1 05:00 | D+1 06:30 |
+| D2 | D+1 05:45 | D+1 06:30 |
+| D3 | D+1 05:50 | D+1 06:30 |
+| D1 | D+1 06:00 | D+1 06:30 |
+
+**The shift these are outside of is a placeholder, and the finding does not
+rest on its value.** The fixture's vans run `SHIFT_START` to
+`PROCESSING_CUTOFF`, 07:00 to 18:00 — the first *derived* from §7.4's eight
+hours, the second marked **invented** in `assumptions.md`. Neither is §9.1's
+and neither is §10's; the document gives no van shift window. What the table
+shows is structural rather than numeric: every departure falls between 02:30
+and 06:00, which is outside any daytime window, whatever its end.
+
+These are not §1.1's departures and should not be read against them. §1.1 runs
+§10's shape — 06:00 releases, one depot per van, and the clock carried on until
+the van is back at the hub. This table is the peak-day fixture: 07:00 releases,
+arrival at the last depot, no return leg. The two agree on the only thing this
+section needs, which is that the whole of line-haul happens at night.
+
+That is not a planning error. §5 puts line-haul on D and delivery on D+1, and a
+van must arrive before the receiving depot's morning release, so line-haul is
+overnight by construction. The bullet is simply never applied: it is delegated
+to `vrp.verify`'s INV-6, INV-3, INV-4 and INV-7, which run only in
+`check_route_constraints` on a *solved* route. §5.3 is an assignment problem
+and is planned rather than solved, so no route object reaches the verifier, and
+the four cross-stage bullets in `check_day_constraints` include no shift check.
+`ddn/linehaul/` never reads `shift_end` at all.
+
+Nothing has been invented to close it, because **Open Question 8** already asks
+the question it depends on — "whether overnight line-haul drivers are the same
+pool as daytime van drivers". A separate night crew makes 02:30 to 06:30 an
+ordinary shift and there is nothing to check. The same pool makes it the tail
+of a day that began at 07:00, and the longest circuit found on real road data —
+a §5.3.2 transfer from D5 to D6, 9.6 hours of driving, departing 20:53 and
+arriving 06:30 — ends 23.5 hours after that van signed on. The data contract
+cannot currently express either answer: a vehicle carries one shift window and
+there is no field for a second crew.
+
+The aggregate is not hidden, which is why this is a contract gap rather than a
+silent one. §8.3's van-hours check, run over the peak day on recorded road
+travel, reads **121 hours required against 110 available** — the fleet's own
+§9.1 shifts, and the check that binds hardest of the three
+(`tests/test_simulation.py::test_the_van_check_is_over_capacity_on_real_roads`
+pins both figures). The day-level number sees the overload. The per-trip
+planner has no rule with which to refuse a trip.
+
+Suggested addition: a **crew or driver-pool field on the vehicle record**, or a
+second shift window for overnight work. Either makes the bullet checkable for
+line-haul; neither can be chosen here.
+
+This one surfaced only when real inter-depot road times replaced a flat
+40-minute placeholder in the tests. Under the placeholder, hub → D5 → D6 read
+as 3.9 hours and looked ordinary.
 
 ---
 

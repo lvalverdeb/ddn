@@ -144,8 +144,9 @@ not supplied, and they cannot be settled in the solver:
 - **§3.1's coordinates** — the real customer geography. Depot placement moves
   the delivery answer more than any solver setting does.
 - **§7.4** has no service time for a return stop; **§9.2** has no reason code
-  for an address with no road path. Both are described in `capacity-finding.md`
-  §4 with a suggested fix.
+  for an address with no road path; **§7.1**'s "within its shift" bullet has no
+  shift that contains line-haul, which runs overnight by construction. All
+  three are described in `capacity-finding.md` §4 with a suggested fix.
 - **Open Questions 1, 7, 9 and 13** — mailbag capacity per van, the pickup
   taper, total van fleet, and whether the return run is van-only.
 

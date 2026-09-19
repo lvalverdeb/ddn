@@ -90,7 +90,7 @@ Still open and still on operations, none of them settleable in the solver:
 **§3.1's real coordinates** (the placeholders are synthetic Costa Rican towns —
 depot placement moves the delivery answer more than any solver setting does),
 **§7.4's** service times, **§7.1's** van mailbag capacity, and **Open Questions
-1, 7, 9 and 13**. `capacity-finding.md` §4 carries two more with suggested fixes.
+1, 7, 9 and 13**. `capacity-finding.md` §4 carries three more with suggested fixes.
 
 Naming a value as a placeholder does not make a number measured on it a
 measurement. The next section is the standing case.
