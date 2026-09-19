@@ -1,6 +1,6 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.12
+**Status:** Draft v0.13
 **Date:** 16 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
@@ -172,7 +172,7 @@ The pickup fleet operates as a **dynamic VRP**:
 #### 5.1.6 Timing and cut-off
 
 - Bags collected and delivered to the hub before the **processing cut-off** [TBD] can be made ready the same day.
-- Bags arriving after it are processed next day. Whether late requests are still collected the same day is to be confirmed.
+- Bags that cannot be back at the hub before the processing cut-off are **not admitted to today's pickup plan** and are scheduled for next-day collection. *(Working rule; confirm — Open Question 12.)*
 - Target responsiveness: request to collection within [TBD] hours (service metric, not a solver constraint).
 
 #### 5.1.7 Exceptions
@@ -222,6 +222,9 @@ Requested (upload file received; geocoded and pre-sorted) → Collected → Rece
    → (Line-haul → At depot) → Dispatched → {Delivered | Rejected | Returned | Postponed}
    → Postponed: back to Ready for next attempt, until SLA date
    → Postponed with facility change, or misassignment found: Transfer requested → In transfer → Ready (at new depot)
+   → Transfer requested → Ready (transfer cancelled: address corrected again, or operations override)
+   → Transfer requested → Return run (destination cannot be reached before SLA date)
+   → Ready → Return run (SLA date passed without delivery)
    → Rejected / Returned / SLA expired: Return run → Returned to customer
 ```
 
@@ -312,7 +315,7 @@ The priority score **already incorporates SLA proximity**, so the solver uses pr
 
 ## 7. Constraints
 
-### 7.1 Hard constraints
+### 7.1 Hard constraints (thirteen)
 
 - A motorbike never carries more than 35 envelopes.
 - A van never carries more than 500 kg.
@@ -469,11 +472,11 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 - Shared fleet: 120 motorbikes, 10 vans. Motorbike allocation: HUB 48, D1 24, D2 18, D3 14, D4 8, D5 6, D6 2. Vans: 6 on pickups from shift start, tapering to 2 by mid-afternoon as 4 are released to line-haul; 4 held for line-haul from the outset.
 - Morning: delivery routes at all facilities run on the 3,100 envelopes made ready and transported yesterday (2,700 new + 400 postponed held locally).
 - During the day: 180 bag requests arrive from 70 customer sites, totalling 4,800 envelopes, 900 of which need assembly. The 6 pickup vans collect them over several trips each, carrying up to [TBD] bags per trip.
-- Hub processing: upload files arrive ahead of the bags, so the 1,300 zip-only envelopes are geocoded before collection (40 low-confidence, held) and the clean room schedules its 900 assembly jobs by priority; on arrival reconciliation flags 12 discrepancies (held); assembly clears 700 of the 900 by cut-off, and the 200 rolled to tomorrow are the lowest-priority ones. By cut-off 4,550 envelopes are Ready and sorted: HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180.
+- Hub processing: upload files arrive ahead of the bags, so the 1,300 zip-only envelopes are geocoded before collection (40 low-confidence, held) and the clean room schedules its 900 assembly jobs by priority; on arrival reconciliation flags 10 discrepancies (held); assembly clears 700 of the 900 by cut-off, and the 200 rolled to tomorrow are the lowest-priority ones. Ready = 4,800 − 200 − 40 − 10 = 4,550. By cut-off 4,550 envelopes are Ready and sorted: HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180.
 - Line-haul: the 4 held vans plus 3 released from pickups depart for D1–D5 through the afternoon and evening, each timed to arrive before its depot's morning release; one late van takes late-ready envelopes to D1 and D2; D6's 180 go on an overnight run. The 4-hour D6 transit ties up one van and driver until the next day. All 4,550 ready envelopes — hub-direct and depot-bound, including the 700 assembled — are positioned for delivery tomorrow.
-- Delivery (today's routes, on the morning pool of 3,100): HUB 48 bikes × 25 = 1,200 vs 1,150 hub-direct → all assigned. D1 24 × 25 = 600 vs 620 → 20 unassigned. Other depots clear their pools.
-- End of day: 2,880 delivered, 50 rejected, 30 defective, 120 postponed. Return run: 80 envelopes to 30 customer sites, 2 vans.
-- Tomorrow's delivery pool: 4,550 positioned today + 20 unassigned + 120 postponed. This exceeds fleet capacity (120 × 25 = 3,000), so tomorrow's routes will leave ~1,700 envelopes unassigned by priority — see §8.3.
+- Delivery (today's routes, on the morning pool of 3,100 = HUB 1,150; D1 620; D2–D6 1,330): HUB 48 bikes × 25 = 1,200 vs 1,150 → all assigned. D1 24 × 25 = 600 vs 620 → 20 unassigned. D2–D6 48 bikes × 25 = 1,200 vs 1,330 → 130 unassigned across the five. Total unassigned 150; dispatched 2,950.
+- End of day: 2,750 delivered, 50 rejected, 30 defective, 120 postponed (= 2,950 dispatched). Return run: 80 envelopes to 30 customer sites, 2 vans. Envelopes rejected at depots ride back to the hub on the return line-haul leg and join the *following* evening's run.
+- Tomorrow's delivery pool: 4,550 positioned today + 150 unassigned + 120 postponed = 4,820. This exceeds fleet capacity (120 × 25 = 3,000), so tomorrow's routes will leave ~1,800 envelopes unassigned by priority — see §8.3.
 
 ---
 
@@ -519,7 +522,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 
 The workflow is exposed as an HTTP API built with FastAPI. The API is a thin layer: it accepts inputs, starts jobs, reports status and returns results. Stage logic lives in the modules of §5 and is never implemented inside request handlers.
 
-### 13.1 Principles
+### 14.1 Principles
 
 - **Jobs, not synchronous calls.** Any endpoint that invokes the solver returns `202 Accepted` with a job id; callers poll `GET …/{id}` or register a webhook. Jobs run on a dedicated queue with retry and visibility, not in-process background tasks.
 - **Schemas are the data contract.** Request and response models are generated from §9 and shared with the internal model; the OpenAPI document is the published form of §9.
@@ -528,7 +531,7 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 - **Constraint visibility.** Every routing result carries its §7.1 violation list (empty on success).
 - **Audit.** Overrides (§8.2) and outcome events record the actor and time.
 
-### 13.2 Resources
+### 14.2 Resources
 
 | Resource | Endpoints | Spec |
 |---|---|---|
@@ -544,14 +547,14 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 | Metrics | `GET /metrics?day=` | §11 |
 | Health | `GET /health`; `GET /solver/capabilities` | §12 Q5 |
 
-### 13.3 Scheduled orchestration
+### 14.3 Scheduled orchestration
 
 Two processes run on a schedule and call the same internal functions as the endpoints; they do not call the API over HTTP:
 
 - **Pickup re-optimisation** every [TBD, default 30] minutes during the collection window, publishing the plan read by `GET /pickups/plan`.
 - **Nightly cycle**: allocation → line-haul plan → next-day delivery routes for every facility, on the pool that will be positioned by morning release.
 
-### 13.4 Out of scope for the API
+### 14.4 Out of scope for the API
 
 Reconciliation, assembly and sorting are physical hub processes; the API only receives their events. Customer-facing pickup booking and the driver app are separate clients of this API, not part of it.
 
@@ -567,6 +570,7 @@ Reconciliation, assembly and sorting are physical hub processes; the API only re
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.13 | 2026-09-19 | [TBD] | Corrections from conformance audit: §10 arithmetic closed (10 discrepancies; D2–D6 leave 130 unassigned; 2,750 delivered; tomorrow's pool 4,820); §5.2.6 gains cancel, transfer-to-return and SLA-expiry edges; §5.1.6 late-request rule stated; §7.1 bullet count stated |
 | 0.12 | 2026-09-18 | [TBD] | Inter-depot transfers: triggers, rules, multi-leg van circuits, lifecycle state, transfer request entity, constraints, API resource |
 | 0.11 | 2026-09-18 | [TBD] | Added §13 service interface: FastAPI resources, job model, event-based lifecycle, scheduled orchestration |
 | 0.10 | 2026-09-16 | [TBD] | One-day lag confirmed: pickup, processing, sorting and line-haul on day D, all delivery on D+1; depot cut-off replaced by morning route release and latest van departure; assembled envelopes follow the same routing |

@@ -1,0 +1,137 @@
+uv sync --extra dev --extra api
+uv run pytest tests/ -q
+.............................................................F.......... [  9%]
+F....................................................................... [ 19%]
+....................................................................FF.. [ 29%]
+........................................................................ [ 39%]
+........................................................................ [ 49%]
+........................................................................ [ 59%]
+........................................................................ [ 69%]
+........................................................................ [ 78%]
+.......................F................................................ [ 88%]
+........................................................................ [ 98%]
+..........                                                               [100%]
+=================================== FAILURES ===================================
+______________ test_the_table_has_no_row_this_service_is_missing _______________
+
+    def test_the_table_has_no_row_this_service_is_missing():
+        """Derived from §13.2's table, so a resource added there fails here.
+    
+        v0.12 added a whole Transfers resource and the previous version of this
+        test — a hard-coded list — passed anyway.
+        """
+>       documented = {p.split()[-1].rstrip("/") for p in paths_in_section_13_2()}
+                                                         ^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_api_contract.py:98: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def paths_in_section_13_2() -> set[str]:
+        """Every endpoint §13.2's table names, read out of the table.
+    
+        Hard-coding the list is how v0.12's whole Transfers resource was added to
+        the document without a single test noticing. The table is the contract;
+        this reads it.
+        """
+>       table = SECTION_13.split("### 13.2 Resources")[1].split("### 13.3")[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/test_api_contract.py:40: IndexError
+_____________ test_section_13s_subsections_are_numbered_13_not_14 ______________
+
+    def test_section_13s_subsections_are_numbered_13_not_14():
+        """They were 14.1-14.4, colliding with §14 Revision history.
+    
+        A copy-paste when §13 was inserted ahead of the old §13. It is the kind of
+        defect that survives because nothing executes a heading — every reader
+        understood which section they were in, and only a test that splits the file
+        on section boundaries ever tripped over it.
+        """
+        for n, title in enumerate(("Principles", "Resources",
+                                   "Scheduled orchestration",
+                                   "Out of scope for the API"), start=1):
+>           assert f"### 13.{n} {title}" in SECTION_13
+E           AssertionError: assert '### 13.1 Principles' in ' (API)\n\nThe workflow is exposed as an HTTP API built with FastAPI. The API is a thin layer: it accepts inputs, star...r events. Customer-facing pickup booking and the driver app are separate clients of this API, not part of it.\n\n---\n'
+
+tests/test_api_contract.py:165: AssertionError
+________________ test_the_front_doors_state_the_real_test_count ________________
+
+request = <FixtureRequest for <Function test_the_front_doors_state_the_real_test_count>>
+
+    def test_the_front_doors_state_the_real_test_count(request):
+        """`make test` runs `pytest tests/ -q`; both files say how many that is."""
+        if _narrowed(request.config):
+            pytest.skip("a narrowed run does not know the whole suite's size")
+    
+        collected = request.session.testscollected
+>       for name, counts in _claimed().items():
+                            ^^^^^^^^^^
+
+tests/test_front_doors.py:62: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _claimed() -> dict[str, list[int]]:
+        """Every test count each front door states."""
+        found = {}
+        for name in FRONT_DOORS:
+            hits = COUNT.findall((ROOT / name).read_text(encoding="utf-8"))
+>           assert hits, (
+                f"{name} no longer states a test count. If that is deliberate, "
+                "delete this test rather than leaving it matching nothing.")
+E           AssertionError: CLAUDE.md no longer states a test count. If that is deliberate, delete this test rather than leaving it matching nothing.
+E           assert []
+
+tests/test_front_doors.py:33: AssertionError
+_________________ test_both_front_doors_agree_with_each_other __________________
+
+    def test_both_front_doors_agree_with_each_other():
+        """Two copies of a number drift apart before either is noticed — which is
+        how 718 survived in README after CLAUDE.md was corrected."""
+>       claimed = _claimed()
+                  ^^^^^^^^^^
+
+tests/test_front_doors.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _claimed() -> dict[str, list[int]]:
+        """Every test count each front door states."""
+        found = {}
+        for name in FRONT_DOORS:
+            hits = COUNT.findall((ROOT / name).read_text(encoding="utf-8"))
+>           assert hits, (
+                f"{name} no longer states a test count. If that is deliberate, "
+                "delete this test rather than leaving it matching nothing.")
+E           AssertionError: CLAUDE.md no longer states a test count. If that is deliberate, delete this test rather than leaving it matching nothing.
+E           assert []
+
+tests/test_front_doors.py:33: AssertionError
+____ test_the_fixtures_figures_are_section_10s_own_words[12 discrepancies] _____
+
+figure = '12 discrepancies'
+
+    @pytest.mark.parametrize(
+        "figure",
+        [
+            "120 motorbikes", "10 vans",
+            "HUB 48, D1 24, D2 18, D3 14, D4 8, D5 6, D6 2",
+            "180 bag requests", "70 customer sites", "4,800 envelopes",
+            "900 of which need assembly", "1,300 zip-only",
+            "40 low-confidence", "12 discrepancies",
+            "clears 700 of the 900", "200 rolled",
+            "4,550 envelopes are Ready",
+            "HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180",
+        ],
+    )
+    def test_the_fixtures_figures_are_section_10s_own_words(figure):
+>       assert figure in SECTION_10
+E       assert '12 discrepancies' in " Worked example (illustrative — peak day)\n\n*Fleet and throughput numbers are placeholders.*\n\n- Shared fleet: 120 ...ity (120 × 25 = 3,000), so tomorrow's routes will leave ~1,800 envelopes unassigned by priority — see §8.3.\n\n---\n\n"
+
+tests/test_peak_day.py:40: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_api_contract.py::test_the_table_has_no_row_this_service_is_missing
+FAILED tests/test_api_contract.py::test_section_13s_subsections_are_numbered_13_not_14
+FAILED tests/test_front_doors.py::test_the_front_doors_state_the_real_test_count
+FAILED tests/test_front_doors.py::test_both_front_doors_agree_with_each_other
+FAILED tests/test_peak_day.py::test_the_fixtures_figures_are_section_10s_own_words[12 discrepancies]
+5 failed, 725 passed in 3.86s
