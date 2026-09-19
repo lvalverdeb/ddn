@@ -34,6 +34,14 @@ SECTION_10 = (
         "clears 700 of the 900", "200 rolled",
         "4,550 envelopes are Ready",
         "HUB 1,600; D1 850; D2 650; D3 550; D4 400; D5 320; D6 180",
+        # §10's end of day. Absent from this list until now, which is exactly
+        # why v0.13 could restate every one of them without a test moving:
+        # the figures that *are* here are checked against the document, and
+        # the ones that were not were checked against a copy of themselves.
+        "Total unassigned 150", "dispatched 2,950",
+        "2,750 delivered", "50 rejected", "30 defective", "120 postponed",
+        "80 envelopes to 30 customer sites, 2 vans",
+        "4,550 positioned today + 150 unassigned + 120 postponed = 4,820",
     ],
 )
 def test_the_fixtures_figures_are_section_10s_own_words(figure):

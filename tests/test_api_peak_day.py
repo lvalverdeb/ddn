@@ -195,7 +195,7 @@ async def test_the_peak_day_through_the_api_matches_task_5(
     # ---- Task 5's numbers, through HTTP.
     assert tally["ready_pool"] == peak_day.MORNING_POOL == 3100
     assert tally["dispatched"] == 2910
-    assert tally["delivered"] == 2717
+    assert tally["delivered"] == 2711
     assert tally["unassigned"] == 190
     # §10 positions all 4,550; on the recorded road table 4,140 arrive,
     # because §5.1.6's cut-off meets legs that are 1.4x the crow-flies
@@ -204,7 +204,7 @@ async def test_the_peak_day_through_the_api_matches_task_5(
     # change them.
     assert sum(report["positioned"].values()) == 4140
     assert report["rolled"] == {}
-    assert state["result"]["tomorrow_pool"] == 4440
+    assert state["result"]["tomorrow_pool"] == 4446
     assert report["binding"] == "van-hours", (
         "§8.3's prediction, visible only once travel is road travel")
     assert report["moves"] == 0

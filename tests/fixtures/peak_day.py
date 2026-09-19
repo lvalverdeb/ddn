@@ -95,7 +95,13 @@ TIERS = ((1000, 1999), (100, 199), (1, 99))
 # outcomes of *today's* delivery on the morning pool of 3,100, while the inflow
 # above is what was collected today for delivery tomorrow. §10 carries both and
 # they do not add up to each other.
-DELIVERED, REJECTED, DEFECTIVE, POSTPONED = 2880, 50, 30, 120
+DELIVERED, REJECTED, DEFECTIVE, POSTPONED = 2750, 50, 30, 120
+#: "Total unassigned 150; dispatched 2,950." D1's 20 and 130 across D2-D6.
+UNASSIGNED_D1, UNASSIGNED_OTHER_DEPOTS = 20, 130
+UNASSIGNED = UNASSIGNED_D1 + UNASSIGNED_OTHER_DEPOTS
+DISPATCHED = MORNING_POOL_TOTAL = 3100
+#: "4,550 positioned today + 150 unassigned + 120 postponed = 4,820."
+TOMORROW_POOL = 4550 + UNASSIGNED + POSTPONED
 #: "Return run: 80 envelopes to 30 customer sites, 2 vans."
 RETURN_SITES, RETURN_VANS = 30, 2
 RETURN_POOL = REJECTED + DEFECTIVE

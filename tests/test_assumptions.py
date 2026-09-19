@@ -107,9 +107,10 @@ def test_the_absent_gaps_have_no_placeholder():
     forbidden = re.compile(r"SLA_TARGET|_TARGET_RATE|_COMPLIANCE")
     assert not [name for name in vars(assumptions) if forbidden.search(name)]
     assert "Deliberately absent" in DOC
-    assert "PICKUP_RESPONSE_TARGET_H" in vars(assumptions), (
-        "the one §11-shaped value that is a service metric rather than a "
-        "commitment should stay registered, not be caught by the pattern above")
+    assert not hasattr(assumptions, "PICKUP_RESPONSE_TARGET_H"), (
+        "§5.1.6's response target is §11's first row, so it is a commitment "
+        "and not a stand-in; an earlier version of this test argued the "
+        "opposite and kept it registered")
 
 
 def test_the_module_docstring_counts_the_absent_list_correctly():

@@ -51,7 +51,6 @@ Three provenances are used, and they are not equally trustworthy:
 | `PROCESSING_CUTOFF` | 18:00 | §5.1.6, §5.6 | **invented** |
 | `RETURN_RUN_DISPATCH` | 16:30 | §5.6 | **invented** |
 | `VAN_IDLE_RETURN_MIN` | 45 | §5.1.5 | **invented** |
-| `PICKUP_RESPONSE_TARGET_H` | 4 | §5.1.6 | **invented.** A service metric, not a solver constraint |
 
 ## Processing throughput (§5.2.5, Open Question 4)
 
@@ -86,20 +85,24 @@ case, so it is off the critical path for readiness.
 ## Outcomes (§6, §11)
 
 Rates, not counts. §6 names the four outcomes and gives no frequencies; §10's
-worked day does, so these are read off it: of the 3,080 envelopes §10
-dispatches (its 3,100 morning pool less D1's 20 unassigned) it delivers 2,880,
-rejects 50, finds 30 defective and postpones 120.
+worked day does, so these are read off it: of the 2,950 envelopes §10
+dispatches (its 3,100 morning pool less 150 unassigned — D1's 20 and 130 across
+D2–D6) it delivers 2,750, rejects 50, finds 30 defective and postpones 120.
 
 **That makes any simulated delivery total a restatement of §10, not a
-prediction.** A run that reproduces 2,880 has confirmed the stages are wired
+prediction.** A run that reproduces 2,750 has confirmed the stages are wired
 together, and nothing about the operation.
+
+They were 935/16/10/39 until v0.13 closed §10's arithmetic — derived from
+2,880 of 3,080. Nothing noticed for two revisions, because a rate read off a
+document is checked by nothing that reads the document.
 
 | Key | Value | Spec gap | Provenance |
 |---|---|---|---|
-| `DELIVERED_PER_MILLE` | 935 | §6 gives no rates | document — §10's 2,880 of 3,080 |
-| `REJECTED_PER_MILLE` | 16 | §6 | document — §10's 50 |
+| `DELIVERED_PER_MILLE` | 932 | §6 gives no rates | document — §10's 2,750 of 2,950 |
+| `REJECTED_PER_MILLE` | 17 | §6 | document — §10's 50 |
 | `RETURNED_PER_MILLE` | 10 | §6 | document — §10's 30 defective |
-| `POSTPONED_PER_MILLE` | 39 | §6 | document — §10's 120 |
+| `POSTPONED_PER_MILLE` | 41 | §6 | document — §10's 120 |
 | `POSTPONED_UNAVAILABLE_PER_MILLE` | 500 | §6 names three reasons and splits them nowhere | **invented** |
 | `POSTPONED_BAD_ADDRESS_PER_MILLE` | 200 | as above; the remainder is "driver out of time" | **invented.** §6 re-geocodes these, which can move an envelope to another facility |
 
@@ -168,5 +171,15 @@ and no figure measured on them describes the operation.
   Inventing "SLA compliance ≥ 98%" fabricates a customer promise. The one
   figure the spec does supply — 20–30 envelopes per bike per day — is in §11
   already.
-- **§9.2's reason code for an unreachable address.** Needs a spec change, not a
-  value. Currently invented at `lastmile.py:45`.
+
+  One had crept in anyway. `PICKUP_RESPONSE_TARGET_H = 4` was registered
+  against §5.1.6, whose third bullet reads "request to collection within [TBD]
+  hours" — and that bullet *is* §11's first row, *Pickup responsiveness*. The
+  argument for keeping it was that §5.1.6 calls it "a service metric, not a
+  solver constraint", which is true and beside the point: the objection to a
+  target is not that the solver reads it. Nothing read it at all, in four
+  months. Deleted.
+- **§9.2's reason code for an unreachable address.** Needs a spec change, not
+  a value. `ddn/lastmile/plan.py` carried one, unemitted and in neither
+  `REASONS` set; it is gone, and `docs/spec-proposals/v0.15.md` proposes the
+  reason so the pruned envelopes it was meant to explain can be reported.

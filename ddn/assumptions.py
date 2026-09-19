@@ -59,14 +59,18 @@ FACILITY_UNLOAD_MIN = 30
 # here so that it stops being invisible.
 RETURN_STOP_MIN = 10
 
-# §6's four outcomes as rates, read off §10's own end of day: of the 3,080
-# envelopes it dispatches (3,100 in the morning pool less D1's 20 unassigned),
-# 2,880 are delivered, 50 rejected, 30 defective and 120 postponed. Per mille so
-# that they are integers and sum to 1,000.
-DELIVERED_PER_MILLE = 935
-REJECTED_PER_MILLE = 16
+# §6's four outcomes as rates, read off §10's own end of day: of the 2,950
+# envelopes it dispatches (3,100 in the morning pool less 150 unassigned --
+# D1's 20 and 130 across D2-D6), 2,750 are delivered, 50 rejected, 30 defective
+# and 120 postponed. Per mille so that they are integers and sum to 1,000.
+#
+# These were 935/16/10/39 against v0.12's 2,880 of 3,080. v0.13 closed §10's
+# arithmetic and nothing followed it here, because a rate derived from a
+# document is not checked by anything that reads the document.
+DELIVERED_PER_MILLE = 932
+REJECTED_PER_MILLE = 17
 RETURNED_PER_MILLE = 10
-POSTPONED_PER_MILLE = 39
+POSTPONED_PER_MILLE = 41
 
 # §6 names three reasons an attempt is not completed -- "recipient unavailable,
 # incorrect address, driver out of time" -- and gives no split. Invented; the
@@ -96,8 +100,6 @@ SHIFT_END = time(15, 0)
 PROCESSING_CUTOFF = time(18, 0)
 RETURN_RUN_DISPATCH = time(16, 30)
 VAN_IDLE_RETURN_MIN = 45
-# §5.1.6. Invented. A service metric, not a solver constraint.
-PICKUP_RESPONSE_TARGET_H = 4
 
 
 # §5.2.5 and Open Question 4: no throughput figure is supplied anywhere. These

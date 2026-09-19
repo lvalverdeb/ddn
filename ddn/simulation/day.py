@@ -7,7 +7,7 @@ date and a van fleet and nothing else, and conflating them is how a plan ends up
 line-hauling envelopes it has already delivered.
 
 **What carries into tomorrow is the point.** §8.3 expects a structural gap, and
-§10 ends by showing one: its next-day pool is 4,690 against a fleet that can
+§10 ends by showing one: its next-day pool is 4,820 against a fleet that can
 serve 3,000. A single day hides that; `run_days` is what makes it accumulate.
 
 **Delivery is not solved here by default.** `deliver` is injected, and the
@@ -18,7 +18,7 @@ bound, and the honest reading of any figure from it is "before routing". Pass a
 solver-backed `deliver` to close that gap.
 
 **Outcome rates come from §10.** They are read off its end of day, so a run that
-reproduces §10's 2,880 has confirmed the stages are wired together and nothing
+reproduces §10's 2,750 has confirmed the stages are wired together and nothing
 about the operation. `docs/assumptions.md` says this under its own heading and
 it is worth repeating wherever a total is produced.
 """

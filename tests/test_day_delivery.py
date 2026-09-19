@@ -233,8 +233,18 @@ def test_the_return_run_solves_from_the_hub(day):
 
 
 def test_the_fixture_still_carries_section_10s_outcomes():
-    """Guards the return tests from drifting off §10."""
+    """Guards the return tests from drifting off §10.
+
+    It did drift, and this test could not see it: it compared the fixture to
+    literals copied from the same revision of §10, so when v0.13 restated the
+    end of day — 2,750 delivered of 2,950 dispatched, where v0.12 had 2,880 of
+    3,080 — both sides stayed at 2,880 and agreed. The figures are checked
+    against §10's own words in `test_peak_day.py` now; what is left here is the
+    arithmetic between them, which no revision should break.
+    """
     assert (peak_day.REJECTED, peak_day.DEFECTIVE) == (50, 30)
-    assert peak_day.RETURN_POOL == 80
-    assert peak_day.DELIVERED == 2880
-    assert peak_day.POSTPONED == 120
+    assert peak_day.RETURN_POOL == peak_day.REJECTED + peak_day.DEFECTIVE == 80
+    assert peak_day.UNASSIGNED == 150
+    assert (peak_day.DELIVERED + peak_day.REJECTED + peak_day.DEFECTIVE
+            + peak_day.POSTPONED) == peak_day.DISPATCHED - peak_day.UNASSIGNED
+    assert peak_day.TOMORROW_POOL == 4820

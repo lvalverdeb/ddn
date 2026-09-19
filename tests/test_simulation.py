@@ -177,14 +177,18 @@ def test_every_facility_gets_no_more_than_section_10_allots_it(simulated):
         assert count <= peak_day.READY_BY_FACILITY[facility]
 
 
-def test_tomorrows_pool_exceeds_the_fleet_by_about_seventeen_hundred(simulated):
-    """§10's closing line: 4,690 against 120 × 25 = 3,000."""
+def test_tomorrows_pool_exceeds_the_fleet_by_about_eighteen_hundred(simulated):
+    """§10's closing line: 4,820 against 120 × 25 = 3,000, leaving ~1,800.
+
+    v0.13 restated it — 4,690 and ~1,700 were v0.12's, before §10 accounted
+    for D2–D6's 130 unassigned.
+    """
     _, tomorrow = simulated
     capacity = FLEET * EFFECTIVE_PER_BIKE
     assert capacity == 3000
-    # Smaller than §10's 4,690, because 410 bags never reached the hub — and
+    # Smaller than §10's 4,820, because 410 bags never reached the hub — and
     # still half again what the fleet can serve.
-    assert tomorrow.pool_size == 4440
+    assert tomorrow.pool_size == 4446
     assert tomorrow.pool_size > capacity * 1.4
 
 
@@ -270,7 +274,7 @@ def test_outcome_rates_must_account_for_every_envelope():
 
 def test_the_default_rates_are_section_10s():
     rates = Rates()
-    assert rates.delivered == assumptions.DELIVERED_PER_MILLE == 935
+    assert rates.delivered == assumptions.DELIVERED_PER_MILLE == 932
     assert (rates.delivered + rates.rejected + rates.defective
             + rates.postponed) == 1000
 
@@ -412,16 +416,18 @@ def test_a_day_with_no_regeocode_raises_no_transfer(simulated):
 
 
 def test_a_correction_that_changes_depot_raises_a_transfer(corrected):
-    """Nine corrections, eight transfers — §7.1 refuses the ninth.
+    """Every correction that moves the facility raises a transfer.
 
-    MRN-01761's SLA is the delivery day itself, so §9.1's
-    min(receiving depot's next morning release, SLA date) lands on a deadline
-    that has already passed. §7.1 forbids raising a transfer that cannot make
-    it, so that envelope goes back through §5.5 instead of onto a van.
+    The count moves with §6's postponement rate, which v0.13 changed: ten
+    corrections now where there were nine. What does not move is the rule —
+    a correction whose deadline has already passed raises nothing, because
+    §7.1 forbids a transfer that cannot arrive in time, and
+    `test_a_transfer_that_cannot_make_its_deadline_goes_back_instead` in
+    `test_transfers.py` pins that without depending on the draw.
     """
     report, _, seen = corrected
-    assert len(seen) == 9
-    assert report.transfers_raised == 8
+    assert len(seen) == 10
+    assert report.transfers_raised == 10
 
 
 def test_every_transfer_is_carried_or_declined(corrected):
@@ -436,12 +442,36 @@ def test_a_carried_transfer_starts_tomorrow_at_its_new_depot(corrected):
     envelope unroutable until it arrives — so the move shows up in tomorrow's
     pools, not today's."""
     report, tomorrow, seen = corrected
-    assert report.transfers_carried == 8
+    assert report.transfers_carried == 10
     at = {e["package_id"]: (facility, e["facility_id"])
           for facility, pool in tomorrow.pools.items() for e in pool}
     moved = {p: at[p] for p in seen if at.get(p) == ("D2", "D2")}
-    assert len(moved) == 8, "carried transfers are pooled at the destination"
-    assert at["MRN-01761"] == ("D1", "D1"), "the refused one never left"
+    assert len(moved) == 10, "carried transfers are pooled at the destination"
+
+
+def test_a_correction_that_cannot_arrive_in_time_raises_nothing():
+    """§7.1: "A transfer is not raised for an envelope that cannot reach the
+    destination before its SLA date; it goes to the return run instead."
+
+    This used to be covered by the peak day happening to contain one such
+    envelope — MRN-01761, whose SLA was the delivery day itself. v0.13's
+    outcome rates moved the draw and that envelope stopped being postponed, so
+    the rule's only test evaporated without failing. A rule worth §7.1 stating
+    should not depend on which envelopes a sample happens to produce.
+    """
+    from ddn.simulation.day import _Doorstep, _raise_transfers
+
+    expired = {"package_id": "PKG-1", "facility_id": "D1",
+               "previous_outcome": "Postponed",
+               "postponed_reason": "incorrect address",
+               "sla_date": "2026-09-16", "lat": 9.99, "lon": -84.11}
+
+    raised = _raise_transfers(
+        _Doorstep({}, {}, [expired], [], 0, 0),
+        [{"id": "D3", "route_release_time": 7 * 3600}],
+        today=date(2026, 9, 16), regeocode=lambda _envelope: "D3")
+
+    assert raised == [], "its deadline is already behind it"
 
 
 def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
