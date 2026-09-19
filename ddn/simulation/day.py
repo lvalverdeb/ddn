@@ -206,7 +206,12 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
     outcomes: dict[str, int] = {}
     reasons: dict[str, int] = {}
     postponed: list[dict[str, Any]] = []
-    going_back: list[dict[str, Any]] = list(attempt.expired)
+    # §6.1: "after that it is returned to the customer via the return run".
+    # The flag is what `returns.goes_back` reads; without it an expired
+    # envelope reached the return run and was filtered straight back out,
+    # which is an envelope destroyed rather than returned.
+    going_back: list[dict[str, Any]] = [dict(e, sla_expired=True)
+                                        for e in attempt.expired]
     within_sla = first_attempt = 0
 
     for envelope in attempt.attempted:
@@ -222,8 +227,11 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
             reasons[reason] = reasons.get(reason, 0) + 1
             postponed.append(replace_record(envelope, reason))
         else:
-            going_back.append(dict(envelope, previous_outcome=outcome,
-                                   facility_id=hub_id))
+            # §5.5: the envelope is where it was refused, which for a depot
+            # reject is the depot. Stamping the hub here made every rejection
+            # hub-resident the instant it happened, so it joined *tonight's*
+            # return run -- the one thing §5.5 says it must not do.
+            going_back.append(dict(envelope, previous_outcome=outcome))
 
     return _Doorstep(outcomes, reasons, postponed, going_back, within_sla,
                      first_attempt)
@@ -286,6 +294,7 @@ def _collect(facilities: Sequence[dict[str, Any]],
              travel: Callable[[float, float, float, float], int] | None,
              hub_id: str,
              transfers: Sequence[TransferRequest] = (),
+             returning: Sequence[dict[str, Any]] = (),
              transit: Transit | None = None) -> _Collection:
     """§5.1 collects, §5.2 times, §5.3 positions. The other half of the day."""
     positioned: dict[str, list[dict[str, Any]]] = {f["id"]: [] for f in facilities}
@@ -293,7 +302,8 @@ def _collect(facilities: Sequence[dict[str, Any]],
         # §5.3.2's circuits still run for transfers alone: a van goes out for
         # them whether or not the hub has anything to send.
         night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
-                              [], vans, transfers=transfers, transit=transit,
+                              [], vans, transfers=transfers,
+                              returning=returning, transit=transit,
                               unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
         return _Collection(None, night, positioned)
 
@@ -313,7 +323,7 @@ def _collect(facilities: Sequence[dict[str, Any]],
                    if e["package_id"] in ready_at and e["facility_id"] != hub_id]
     night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
                           depot_bound, vans, transfers=transfers,
-                          transit=transit,
+                          returning=returning, transit=transit,
                           unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
 
     rolled = {pid for ids in night.rolled.values() for pid in ids}
@@ -357,14 +367,19 @@ def _position(positioned: dict[str, list[dict[str, Any]]],
 
 
 def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
-    """§5.5, and a refusal to guess where an envelope came from."""
+    """§5.5, and a refusal to guess where an envelope came from.
+
+    Takes everything going back and returns stops for the ones at the hub
+    tonight. `returns.sites` applies §5.5's own gate, so a depot reject handed
+    here is not returned and not lost -- it is simply not at the hub yet.
+    """
     missing = [e["package_id"] for e in going_back if "customer_lat" not in e]
     if missing:
         raise ValueError(
             f"{len(missing)} envelope(s) going back carry no customer site "
             f"({', '.join(missing[:3])}...); §5.5 returns them to the sender, "
             "which is not the address they were delivered to")
-    return returns.sites([dict(e, facility_id=hub_id) for e in going_back])
+    return returns.sites(going_back, hub_id=hub_id)
 
 
 def _handover(pools: Mapping[str, list[dict[str, Any]]],
@@ -491,9 +506,16 @@ def run_day(
                          hub_id=hub_id)
     transfers = _raise_transfers(doorstep, facilities, today=state.day,
                                  regeocode=regeocode)
+    # §5.5: yesterday's depot rejects ride tonight's circuits home. The
+    # line-haul plan is built before the return run is solved, which is the
+    # order the operation runs in and the reason this works in one day.
     collection = _collect(facilities, requests, inflow, vans, travel=travel,
-                          hub_id=hub_id, transfers=transfers, transit=transit)
-    stops = _return_run(doorstep.going_back, hub_id)
+                          hub_id=hub_id, transfers=transfers,
+                          returning=state.returns_queue, transit=transit)
+    rode_home = set(collection.night.returned)
+    arrived = [dict(e, facility_id=hub_id) for e in state.returns_queue
+               if e["package_id"] in rode_home]
+    stops = _return_run([*doorstep.going_back, *arrived], hub_id)
     tomorrow = _handover(pools, collection, doorstep, attempt.unassigned,
                          transfers)
 
@@ -522,7 +544,13 @@ def run_day(
     return report, State(
         day=state.day + timedelta(days=1),
         pools=tomorrow,
-        returns_queue=(),
+        # §5.5: refused at a depot today, home on a van tomorrow. Plus
+        # anything queued yesterday that found no circuit tonight.
+        returns_queue=tuple(
+            [e for e in doorstep.going_back
+             if e.get("facility_id") != hub_id]
+            + [e for e in state.returns_queue
+               if e["package_id"] not in rode_home]),
         placement={a.vehicle_id: a.facility_id for a in fleet.allocations})
 
 

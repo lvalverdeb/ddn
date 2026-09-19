@@ -471,3 +471,58 @@ def test_the_report_renders_the_transfer_block(corrected):
     page = render(report)
     assert "TRANSFERS (§5.3.2)" in page
     assert "raised" in page and "carried" in page
+
+
+# ------------------------------------------- §5.5's day boundary for returns
+
+
+def test_a_depot_rejection_waits_for_the_following_evening(inputs):
+    """§5.5: "envelopes rejected at a secondary depot travel back to the hub on
+    the van's return leg and join the *following* evening's return run".
+
+    Every rejection used to be stamped `facility_id=hub_id` the instant the
+    outcome was drawn, so a D3 refusal was at the hub before the van was, and
+    went out on the same night's run. The envelope was never at D3 in the data
+    at all, so `returns.eligible`'s own rule -- which this repository has always
+    had a passing test for -- could never fire in the pipeline that feeds it.
+
+    Two days, one seed. The D3 rejects are absent from day one's stops and
+    present on day two's.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    only_d3 = {"D3": inputs["_pools"]["D3"]}
+
+    first, tomorrow = run_day(State(day=day.delivery_day, pools=only_d3),
+                              seed=7, **kwargs)
+
+    queued = {e["package_id"] for e in tomorrow.returns_queue}
+    assert queued, "a day of D3 deliveries produces some rejections"
+    assert all(e["facility_id"] == "D3" for e in tomorrow.returns_queue), (
+        "they are where they were refused, not at the hub")
+    assert first.return_stops == 0, (
+        "nothing was at the hub tonight, so nothing goes out tonight")
+
+    second, _ = run_day(tomorrow, seed=7, **kwargs)
+
+    assert second.return_stops > 0, "home on tonight's van, out on tonight's run"
+
+
+def test_an_expired_envelope_is_returned_rather_than_dropped(inputs):
+    """§6.1: past its SLA date it "is returned to the customer via the return
+    run".
+
+    `returns.eligible` reads `sla_expired`, and nothing set it — so an expired
+    envelope was put on the pile going back and filtered straight out of it
+    again. Not returned, not retried, not counted anywhere: destroyed.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    stale = [dict(e, sla_date="2000-01-01", facility_id="HUB")
+             for e in inputs["_pools"]["HUB"][:5]]
+
+    report, _ = run_day(State(day=day.delivery_day, pools={"HUB": stale}),
+                        seed=7, **kwargs)
+
+    assert report.tally.sla_expired == 5
+    assert report.return_stops > 0, "§6.1 sends them back, so they are stops"
