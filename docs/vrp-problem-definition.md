@@ -1,6 +1,6 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.11
+**Status:** Draft v0.12
 **Date:** 16 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
@@ -44,7 +44,8 @@ This document defines the operational problem that the existing Vehicle Routing 
 | **Sorting** | Grouping ready envelopes by target facility (hub or D1–D6) by proximity of their coordinates. |
 | **Ready** | An envelope that has been reconciled, assembled if required, and sorted. Ready envelopes are line-hauled the same day (if depot-bound) and delivered the next day. |
 | **Secondary depot** | One of six regional facilities. Receives ready envelopes by van from the hub and dispatches them by motorbike. |
-| **Line-haul** | Van movement from the hub to a secondary depot carrying sorted envelopes. |
+| **Line-haul** | Van movement between facilities carrying sorted envelopes: hub → depot (primary), depot → depot (transfer), depot → hub (returns). |
+| **Transfer** | Movement of an envelope from the depot where it currently sits to a different depot, because its correct dispatching facility has changed or was wrongly assigned. Carried on inter-depot van legs. |
 | **Last mile** | Motorbike delivery from the hub or a secondary depot to the recipient. |
 | **Priority** | A numeric score from the existing prioritisation algorithm; already incorporates SLA proximity. |
 | **SLA date** | Latest delivery date for an envelope. After this date it is returned to the customer. |
@@ -121,7 +122,7 @@ Fleet allocation is a planning decision made before routing. A two-stage approac
 
 ### 4.3 Van usage
 
-Vans perform three roles: mailbag pickups (throughout the day, exclusively by van), hub → depot line-haul (once envelopes are ready), and the end-of-day return run. A van on pickups is available for line-haul only after it has returned to the hub and unloaded. Because all vans are hub-based, the daily plan must decide how many run pickups and how many are held for line-haul, and at what time pickup vans are released to line-haul. On high-inflow days these two demands collide in the afternoon; the pickup earmark and line-haul departure times must be planned together.
+Vans perform four roles: mailbag pickups (throughout the day, exclusively by van), hub → depot line-haul (once envelopes are ready), inter-depot transfers (§5.3.2), and the end-of-day return run. Vans run between depots as well as from the hub, so a line-haul trip may be a multi-leg circuit (e.g. hub → D1 → D3 → hub) carrying hub-origin loads, transfer loads and returns on the same vehicle. A van on pickups is available for line-haul only after it has returned to the hub and unloaded. Because all vans are hub-based, the daily plan must decide how many run pickups and how many are held for line-haul, and at what time pickup vans are released to line-haul. On high-inflow days these two demands collide in the afternoon; the pickup earmark and line-haul departure times must be planned together.
 
 ---
 
@@ -220,19 +221,44 @@ Processing throughput per hour for reconciliation, geocoding, assembly and sorti
 Requested (upload file received; geocoded and pre-sorted) → Collected → Received at hub → Reconciled → [Assembled] → Sorted → Ready
    → (Line-haul → At depot) → Dispatched → {Delivered | Rejected | Returned | Postponed}
    → Postponed: back to Ready for next attempt, until SLA date
+   → Postponed with facility change, or misassignment found: Transfer requested → In transfer → Ready (at new depot)
    → Rejected / Returned / SLA expired: Return run → Returned to customer
 ```
 
 Only envelopes in **Ready** (at the hub or at a depot) are solver inputs for delivery routing.
 
-### 5.3 Stage 3 — Hub → Secondary depots (line-haul)
+### 5.3 Stage 3 — Line-haul between facilities
+
+#### 5.3.1 Hub → depot
 
 Sorted, ready depot-bound envelopes are loaded onto vans.
 
-- **Problem type:** Primarily an assignment problem; each van serves one depot per trip.
+- **Problem type:** Assignment of loads to van trips. In the simple case each van serves one depot per trip; with transfers (§5.3.2) a trip may visit several facilities in sequence.
 - **Inputs:** ready envelopes per depot and their ready times, vans available after pickups, depot cut-off times, hub → depot transit times (minutes to several hours).
 - **Decision:** which van goes to which depot and when. A van may wait for more envelopes to become ready if it can still reach the depot before its morning release; otherwise it departs with what is ready and later envelopes roll to the next day's line-haul.
 - **Constraint:** arrival at the depot before its morning route release, so its envelopes are delivered on day D+1. For distant depots this is an overnight run and the van (and driver) are unavailable until they return. A van that cannot make the release deadline should not depart; its load waits for the next day's line-haul.
+
+#### 5.3.2 Depot → depot (transfers)
+
+An envelope already at a depot may need to move to another depot. Vans run between depots, so this is served by inter-depot legs.
+
+**Triggers**
+
+| Trigger | Source | Spec |
+|---|---|---|
+| Address correction after a postponement changes the nearest facility | Outcome event with sub-reason "incorrect address", then re-geocode | §6 |
+| Zip-centroid pre-sort was wrong: address-level geocode places the envelope nearer another depot, discovered after line-haul | Late geocoding / low-confidence resolution | §3.2, §12 Q14 |
+| Operational rebalancing: a depot has more ready envelopes than its allocated motorbikes can deliver before SLA, and a neighbouring depot has slack | Allocation step or operations override | §4.2, §8.3 |
+
+**Rule per trigger.** For the first two, the envelope is transferred if it can reach the correct depot before its SLA date; otherwise it is returned to the customer via the hub. For rebalancing, the choice between moving envelopes and moving motorbikes is a cost comparison made by the allocation step: transfer if a van leg between the two depots already exists or can be added within van-hours, and the moved envelopes arrive before the receiving depot's morning release; otherwise reallocate motorbikes or leave the envelopes unassigned by priority.
+
+**How transfers ride.** A transfer is a load with an origin facility, a destination facility and a deadline (receiving depot's morning release, bounded by SLA date). The line-haul planner builds each van's trip as an ordered sequence of facility legs starting and ending at the hub (or ending at a depot overnight and returning next day), carrying on each leg: hub-origin loads for facilities still ahead on the circuit, transfer loads picked up at earlier depots, and returns bound for the hub. Capacity is 500 kg across all loads on board.
+
+**Problem type.** This generalises §5.3.1 from an assignment into a small pickup-and-delivery VRP over at most seven nodes (hub + six depots) with per-load deadlines. Node count is tiny; the difficulty is timing against release deadlines and van-hours, not combinatorics.
+
+**Timing.** Transfer requests known before the evening line-haul plan are included in that night's circuits. Requests arising after departures wait for the next day's plan. A transfer therefore normally costs one day; via the hub it would cost two.
+
+**Priority.** When van capacity or van-hours are short, hub-origin loads and transfers compete. Both are ranked by the same priority score as delivery (§8.1); a transfer for an SLA-today envelope is a hard inclusion, like an SLA-today delivery.
 
 ### 5.4 Stage 4 — Last mile (Hub and each depot → recipient)
 
@@ -272,7 +298,7 @@ Once delivery routes are closed, rejected, defective and SLA-expired envelopes a
 | **Delivered** | Accepted by the recipient. | Closed. | None. |
 | **Rejected** | Recipient refuses. | Back to facility, then customer via return run. | Removed. |
 | **Returned** | Defective or incomplete; customer must reprocess. | Back to facility, then customer via return run. | Removed; re-enters as a new envelope if resubmitted. |
-| **Postponed** | Attempt not completed (recipient unavailable, incorrect address, driver out of time…). | Held at facility in Ready state. | Retried while SLA date not passed. Incorrect address → re-geocode (may change facility). |
+| **Postponed** | Attempt not completed (recipient unavailable, incorrect address, driver out of time…). | Held at facility in Ready state. | Retried while SLA date not passed. Incorrect address → re-geocode; if the nearest facility changes, a transfer request is raised (§5.3.2) and the envelope enters *In transfer* until it arrives. |
 
 ### 6.1 Attempt limits and SLA
 
@@ -293,7 +319,9 @@ The priority score **already incorporates SLA proximity**, so the solver uses pr
 - A vehicle's route starts and ends at its home facility within its shift (service time + travel time ≤ shift).
 - An envelope is assigned to at most one vehicle per day.
 - Only **ready** envelopes are assigned to line-haul or delivery.
-- Depot-bound envelopes are dispatched from a depot only after physical arrival.
+- Depot-bound envelopes are dispatched from a depot only after physical arrival; an envelope in transfer is not routable until it arrives at the destination depot.
+- A van's combined load across hub-origin, transfer and return envelopes never exceeds 500 kg on any leg.
+- A transfer is not raised for an envelope that cannot reach the destination before its SLA date; it goes to the return run instead.
 - A van does not depart on line-haul until back from any pickup route and unloaded.
 - An envelope is not dispatched for delivery after its SLA date.
 - Mailbags are collected by vans only; motorbikes are never assigned pickup stops.
@@ -307,6 +335,8 @@ The priority score **already incorporates SLA proximity**, so the solver uses pr
 - Envelopes approaching SLA date left unassigned.
 - Fleet reallocation between facilities on consecutive days.
 - Line-haul departing with capacity to spare when more envelopes would be ready shortly.
+- Transfers deferred a day when a same-night circuit could have carried them.
+- Rebalancing by transfer when reallocating motorbikes would have been cheaper, or vice versa.
 
 ### 7.3 Time windows
 
@@ -346,7 +376,7 @@ Operations may force an envelope in or out of the plan. The solver must support 
 Two capacity checks should be made before the solver is expected to meet SLA targets:
 
 - **Delivery:** total motorbikes × ~25 versus the 2,500–5,000 daily range.
-- **Vans:** van-hours available per day versus the sum of pickup route hours and line-haul round-trip hours (including transit of several hours to distant depots). This is now the most likely operational bottleneck after clean-room assembly.
+- **Vans:** van-hours available per day versus the sum of pickup route hours and line-haul circuit hours, including inter-depot legs for transfers and transit of several hours to distant depots. This is the most likely operational bottleneck after clean-room assembly; transfers add to it, so their historical volume should be measured (§12 Q15).
 - **Processing:** hub throughput per day for reconciliation, geocoding, assembly and sorting versus the same range. If processing, and especially assembly, cannot make the day's inflow ready by cut-off, a backlog forms upstream of the solver and no routing quality will recover it.
 
 ---
@@ -391,6 +421,17 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | pickup_window_start / end | datetime, optional | |
 | seal_id | string | Safety device identifier |
 
+**Transfer requests**
+| Field | Type | Notes |
+|---|---|---|
+| transfer_id | string | |
+| package_id | string | |
+| from_facility_id, to_facility_id | string | |
+| reason | enum | address_correction / misassignment / rebalancing |
+| created_at | datetime | |
+| deadline | datetime | min(receiving depot's next morning release, SLA date) |
+| weight_g | integer | |
+
 **Return-run stops** (built at end of day)
 | Field | Type | Notes |
 |---|---|---|
@@ -417,7 +458,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 - **Fleet allocation** (if solved by the tool): vehicle_id, facility_id, role per day.
 - **Routes:** vehicle_id; ordered stops (package_id / mailbag_id / customer site) with ETA and stop type; total distance and time.
 - **Unassigned envelopes:** package_id; reason (time / count / not ready by cut-off / low geocode confidence / SLA expired / in dispute).
-- **Line-haul plan:** van_id, destination, package_ids, departure time, expected arrival.
+- **Line-haul plan:** per van, an ordered list of legs (from_facility, to_facility, departure, expected arrival) and per leg the loads on board (hub-origin package_ids by destination, transfer_ids, return package_ids) with total weight; transfers not carried, with reason.
 
 ---
 
@@ -470,6 +511,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 12. **Late requests:** collected same day and processed next day, or scheduled for next-day collection?
 13. **Return run:** does the van-only security rule also apply to envelopes returned to customers? Extended shift or separate crew?
 14. **Zip-centroid ambiguity:** how to treat zips whose centroid is near-equidistant from two facilities — hold for address geocoding before sorting?
+15. **Transfers:** historical volume per day and reason; whether vans and drivers are ever based at depots or all circuits start from the hub; whether inter-depot legs run in daytime as well as overnight; the cost basis for comparing an envelope transfer with a motorbike reallocation.
 
 ---
 
@@ -477,7 +519,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 
 The workflow is exposed as an HTTP API built with FastAPI. The API is a thin layer: it accepts inputs, starts jobs, reports status and returns results. Stage logic lives in the modules of §5 and is never implemented inside request handlers.
 
-### 13.1 Principles
+### 14.1 Principles
 
 - **Jobs, not synchronous calls.** Any endpoint that invokes the solver returns `202 Accepted` with a job id; callers poll `GET …/{id}` or register a webhook. Jobs run on a dedicated queue with retry and visibility, not in-process background tasks.
 - **Schemas are the data contract.** Request and response models are generated from §9 and shared with the internal model; the OpenAPI document is the published form of §9.
@@ -486,7 +528,7 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 - **Constraint visibility.** Every routing result carries its §7.1 violation list (empty on success).
 - **Audit.** Overrides (§8.2) and outcome events record the actor and time.
 
-### 13.2 Resources
+### 14.2 Resources
 
 | Resource | Endpoints | Spec |
 |---|---|---|
@@ -494,21 +536,22 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 | Pickups | `POST /pickups` (mailbag ready); `POST /pickups/{id}/events` (collected, seal check, failed); `GET /pickups/plan` (current van routes) | §5.1 |
 | Processing | `POST /processing/events` (reconciled, discrepancy, assembled, sorted); `GET /processing/ready?facility=&by=` (expected ready counts) | §5.2 |
 | Allocation | `POST /allocation/runs`; `GET /allocation/runs/{id}` | §4.2 |
-| Line-haul | `POST /linehaul/plans`; `GET /linehaul/plans/{id}`; `POST /linehaul/plans/{id}/events` (departed, arrived) | §5.3 |
+| Line-haul | `POST /linehaul/plans`; `GET /linehaul/plans/{id}`; `POST /linehaul/plans/{id}/events` (leg departed, leg arrived) | §5.3 |
+| Transfers | `POST /transfers` (raise, with reason); `GET /transfers?status=`; `POST /transfers/{id}/events` (loaded, arrived, cancelled) | §5.3.2 |
 | Delivery routes | `POST /routes/runs` (facility, day); `GET /routes/runs/{id}`; `POST /routes/runs/{id}/locks` (overrides, triggers re-run) | §5.4, §8.2 |
 | Returns | `POST /returns/runs`; `GET /returns/runs/{id}` | §5.5 |
 | Simulation | `POST /simulation/days`; `GET /simulation/days/{id}` | §5.6, §10 |
 | Metrics | `GET /metrics?day=` | §11 |
 | Health | `GET /health`; `GET /solver/capabilities` | §12 Q5 |
 
-### 13.3 Scheduled orchestration
+### 14.3 Scheduled orchestration
 
 Two processes run on a schedule and call the same internal functions as the endpoints; they do not call the API over HTTP:
 
 - **Pickup re-optimisation** every [TBD, default 30] minutes during the collection window, publishing the plan read by `GET /pickups/plan`.
 - **Nightly cycle**: allocation → line-haul plan → next-day delivery routes for every facility, on the pool that will be positioned by morning release.
 
-### 13.4 Out of scope for the API
+### 14.4 Out of scope for the API
 
 Reconciliation, assembly and sorting are physical hub processes; the API only receives their events. Customer-facing pickup booking and the driver app are separate clients of this API, not part of it.
 
@@ -524,6 +567,7 @@ Reconciliation, assembly and sorting are physical hub processes; the API only re
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.12 | 2026-09-18 | [TBD] | Inter-depot transfers: triggers, rules, multi-leg van circuits, lifecycle state, transfer request entity, constraints, API resource |
 | 0.11 | 2026-09-18 | [TBD] | Added §13 service interface: FastAPI resources, job model, event-based lifecycle, scheduled orchestration |
 | 0.10 | 2026-09-16 | [TBD] | One-day lag confirmed: pickup, processing, sorting and line-haul on day D, all delivery on D+1; depot cut-off replaced by morning route release and latest van departure; assembled envelopes follow the same routing |
 | 0.9 | 2026-09-16 | [TBD] | Upload file precedes bag: pre-geocoding, pre-sorting, assembly scheduling, ready-time computed at request |
