@@ -103,10 +103,31 @@ def step(location_id, *, kind="DELIVERY", order_id=None, arrival=28800,
 
 
 def handmade(problem: Problem, routes) -> Solution:
-    """A solution built to break something. See the module docstring."""
-    return Solution(problem_id=problem.id, routes=tuple(routes), unassigned=(),
-                    objective_breakdown={}, status="FEASIBLE", degraded=None,
-                    solver=None)
+    """A solution built to break something. See the module docstring.
+
+    Every order the routes do not serve is listed unassigned. Left out, the
+    platform reports INV-1 "neither served nor listed unassigned" once per
+    dropped order, and `INVARIANT_BULLET` maps INV-1 onto
+    `ONE_VEHICLE_PER_DAY` -- so a test asserting that bullet was satisfied by
+    bookkeeping noise before it ever reached the thing it was about. A handmade
+    solution should break exactly what it means to break.
+    """
+    served = {s.order_id for route in routes for s in route.steps if s.order_id}
+    return Solution(
+        problem_id=problem.id, routes=tuple(routes),
+        unassigned=tuple({"order_id": order.id, "reason_code": "NOT_PLACED"}
+                         for order in problem.orders if order.id not in served),
+        objective_breakdown={}, status="FEASIBLE", degraded=None, solver=None)
+
+
+def details_in(violations, bullet):
+    """What was actually said about one bullet, not merely that it was named.
+
+    Four of §7.1's bullets share their reported string with a `vrp.verify`
+    invariant, so `bullet in bullets_in(...)` cannot tell the local check from
+    the platform's. The detail can.
+    """
+    return [v.detail for v in violations if v.bullet == bullet]
 
 
 def bullets_in(violations):
@@ -241,46 +262,86 @@ def test_a_van_over_its_weight_is_a_violation():
     assert postcheck.VAN_WEIGHT in bullets_in(found)
 
 
+# Each step is 600s of service and each hop 240s on `matrix`, so a route whose
+# arrivals do not chain 28800 -> 29640 -> 30480 is one `vrp.verify` reports on
+# INV-4 before any local check runs. INV-4 maps to ROUTE_WITHIN_SHIFT, which is
+# how these tests used to pass with the check they name switched off.
+START, VISIT, HOME = 28800, 29640, 30480
+
+
 def test_a_route_that_does_not_start_at_its_facility_is_a_violation():
+    """§7.1: "starts and ends at its home facility".
+
+    The arrivals chain against `matrix` so INV-4 stays quiet, and the assertion
+    is on the detail. Both matter: with neither, disabling `_home_bullets`
+    entirely left this test green, because INV-4 was reporting under the same
+    bullet string for a route that was merely mistimed.
+    """
     problem, _, _ = solved_last_mile()
     broken = handmade(problem, [Route(vehicle_id="M1", steps=(
-        step("P0", kind="START"),
-        step("P1", order_id="P1"),
-        step("HUB", kind="END")))])
-    assert postcheck.ROUTE_WITHIN_SHIFT in bullets_in(check(problem, broken))
+        step("P0", kind="START", arrival=START),
+        step("P1", order_id="P1", arrival=VISIT),
+        step("HUB", kind="END", arrival=HOME)))])
+
+    found = check(problem, broken)
+    assert details_in(found, postcheck.ROUTE_WITHIN_SHIFT) == [
+        "starts at P0, not its home HUB"]
 
 
-def test_a_route_longer_than_its_shift_is_a_violation():
-    """The duration half of the same bullet, which INV-6 owns."""
+def test_a_route_that_does_not_end_at_its_facility_is_a_violation():
+    """The other half of the same sentence, which had no test at all."""
     problem, _, _ = solved_last_mile()
     broken = handmade(problem, [Route(vehicle_id="M1", steps=(
-        step("HUB", kind="START", arrival=28800),
-        step("P0", order_id="P0", arrival=57000),
-        step("HUB", kind="END", arrival=90000)))])
-    assert postcheck.ROUTE_WITHIN_SHIFT in bullets_in(check(problem, broken))
+        step("HUB", kind="START", arrival=START),
+        step("P1", order_id="P1", arrival=VISIT),
+        step("P0", kind="END", arrival=HOME)))])
+
+    found = check(problem, broken)
+    assert details_in(found, postcheck.ROUTE_WITHIN_SHIFT) == [
+        "ends at P0, not its home HUB"]
+
+
+def test_a_route_outside_its_shift_is_a_violation():
+    """The duration half of the same bullet, which INV-6 owns and this module
+    delegates. Asserted as INV-6 so the row says who actually judged it."""
+    problem, _, _ = solved_last_mile()
+    broken = handmade(problem, [Route(vehicle_id="M1", steps=(
+        step("HUB", kind="START", arrival=57000),
+        step("P0", order_id="P0", arrival=57840),
+        step("HUB", kind="END", arrival=58680)))])
+
+    found = details_in(check(problem, broken), postcheck.ROUTE_WITHIN_SHIFT)
+    assert any(d.startswith("INV-6:") and "outside shift" in d for d in found), (
+        f"the shift window is INV-6's to report; got {found}")
 
 
 def test_one_envelope_on_two_vehicles_is_a_violation():
     problem, _, _ = solved_last_mile()
     broken = handmade(problem, [
-        Route(vehicle_id="M1", steps=(step("HUB", kind="START"),
-                                      step("P0", order_id="P0"),
-                                      step("HUB", kind="END"))),
-        Route(vehicle_id="M2", steps=(step("HUB", kind="START"),
-                                      step("P0", order_id="P0"),
-                                      step("HUB", kind="END")))])
-    assert postcheck.ONE_VEHICLE_PER_DAY in bullets_in(check(problem, broken))
+        Route(vehicle_id="M1", steps=(step("HUB", kind="START", arrival=START),
+                                      step("P0", order_id="P0", arrival=VISIT),
+                                      step("HUB", kind="END", arrival=HOME))),
+        Route(vehicle_id="M2", steps=(step("HUB", kind="START", arrival=START),
+                                      step("P0", order_id="P0", arrival=VISIT),
+                                      step("HUB", kind="END", arrival=HOME)))])
+
+    found = check(problem, broken)
+    assert "served by M1, M2 in one solve" in details_in(
+        found, postcheck.ONE_VEHICLE_PER_DAY)
 
 
 def test_the_same_envelope_at_two_facilities_is_a_day_violation():
     """The per-*day* half, which one solve cannot see."""
     problem, _, _ = solved_last_mile()
     one = handmade(problem, [Route(vehicle_id="M1", steps=(
-        step("HUB", kind="START"), step("P0", order_id="P0"),
-        step("HUB", kind="END")))])
+        step("HUB", kind="START", arrival=START),
+        step("P0", order_id="P0", arrival=VISIT),
+        step("HUB", kind="END", arrival=HOME)))])
     found = sa.check_day_constraints(sa.Day(
         today=TODAY, solutions={"HUB": one, "D1": one}, packages=packages()))
-    assert postcheck.ONE_VEHICLE_PER_DAY in bullets_in(found)
+
+    assert details_in(found, postcheck.ONE_VEHICLE_PER_DAY) == [
+        "served 2 times today, by D1/M1, HUB/M1"]
 
 
 def test_serving_an_envelope_that_is_not_ready_is_a_violation():
