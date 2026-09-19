@@ -377,6 +377,28 @@ def test_the_same_envelope_at_two_facilities_is_a_day_violation():
         "served 2 times today, by D1/M1, HUB/M1"]
 
 
+def test_serving_an_envelope_that_is_not_ready_is_a_day_violation():
+    """The same bullet across the day, which `_across_the_day` checks.
+
+    `READY_ONLY` is checked twice — once per solve and once over the day — and
+    only the per-solve half had a test. Disabling the day-level one left the
+    whole suite green, which is how a check comes to be trusted for something
+    it is not doing. Found by re-running the audit's M3 against both sites
+    rather than the first one.
+    """
+    pool = packages(6, status="Sorted")
+    problem, _, _ = solved_last_mile()
+    one = handmade(problem, [Route(vehicle_id="M1", steps=(
+        step("HUB", kind="START", arrival=START),
+        step("P0", order_id="P0", arrival=VISIT),
+        step("HUB", kind="END", arrival=HOME)))])
+
+    found = sa.check_day_constraints(sa.Day(
+        today=TODAY, solutions={"HUB": one}, packages=pool))
+
+    assert details_in(found, postcheck.READY_ONLY) == ["is Sorted, not Ready"]
+
+
 def test_serving_an_envelope_that_is_not_ready_is_a_violation():
     pool = packages(6, status="Sorted")
     problem, _, _ = solved_last_mile()
