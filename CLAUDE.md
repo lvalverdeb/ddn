@@ -36,6 +36,13 @@ file; cite them the same way in docstrings, comments and commit messages.
   **Never apply an SLA weighting on top of it:** §6.1 makes priority the solver's
   sole ranking signal because it already incorporates SLA proximity, and SLA date
   = today is a hard constraint, not a weight.
+- **§5.3.2's transfers are planned, not solved.** §5.3.2 calls a circuit "a
+  small pickup-and-delivery VRP over at most seven nodes" and then says what
+  matters: "node count is tiny; the difficulty is timing against release
+  deadlines and van-hours, not combinatorics".
+  `docs/solver-capabilities.md` confirms five capabilities and says nothing
+  about shipments, so per the rule below it gets the documented fallback. A
+  circuit departs as late as its *tightest* stop allows, not its first.
 - **§3.3 is road distance.** "Nearest facility by road distance" — not straight
   line. `model/facility.py` ranks from a matrix the caller supplies, as every
   other stage does, and offers no straight-line fallback: one silently wrong
@@ -111,7 +118,7 @@ where the target says, and when you move a stage, move one boundary at a time.
 | `allocation/` | `ddn/allocation/` | 4.2, 4.3 | bikes per facility, §7.2's relocation cost, the van pickup/line-haul split and its taper | no |
 | `pickups/` | `ddn/pickups/` | 5.1 | admission, and the day on §5.1.5's cadence with §5.1.7's exceptions | no |
 | `processing/` | `ddn/processing/` | 5.2 | expected-ready-time computation and §5.2.4's pre-sort **only** — not reconciliation or assembly themselves | no |
-| `linehaul/` | `ddn/linehaul/` | 5.3 | van-to-depot assignment against morning release times | no |
+| `linehaul/` | `ddn/linehaul/` | 5.3 | facility-to-facility circuits: hub loads, §5.3.2 transfers, returns | no |
 | `lastmile/` | `ddn/lastmile/` | 5.4, 8 | per-facility delivery routing, and which envelopes are left when capacity is short | yes |
 | `returns/` | `ddn/returns/` | 5.5 | end-of-day return run; static CVRP, stops aggregated by customer site | yes |
 | `simulation/` | `ddn/simulation/` | 5.6, 10, 11 | the day end to end, its metrics and §8.3's checks | — |
@@ -163,7 +170,7 @@ something is a handler doing another module's job.
 ## Commands
 
 ```sh
-make test                    # 627 tests; no gateway, no Redis, no routing data
+make test                    # 718 tests; no gateway, no Redis, no routing data
 make check                   # and ruff
 make bootstrap               # §13's stack: redis, the API, an Arq worker
 ```

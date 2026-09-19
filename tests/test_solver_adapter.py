@@ -117,29 +117,23 @@ def bullets_in(violations):
 
 def test_every_bullet_checked_is_section_7_1s_own_words():
     """A reworded §7.1 fails here first, which is how v0.12 was noticed."""
-    assert len(postcheck.BULLETS) == 11
+    assert len(postcheck.BULLETS) == 13
     for bullet in postcheck.BULLETS:
         assert bullet in SECTION_7_1, f"§7.1 no longer says {bullet!r}"
 
 
-def test_the_two_bullets_nobody_checks_are_named_and_still_unchecked():
-    """v0.12 added inter-depot transfers and three constraints with them.
+def test_nothing_is_left_unenforced():
+    """v0.12's transfer bullets have checks now, so this list is empty.
 
-    One extended the arrival bullet, which `AFTER_ARRIVAL` now carries. The
-    other two describe a feature this repository does not implement: there is
-    no transfer leg to measure a combined load across, and no transfer request
-    to test against an SLA date.
-
-    Naming them keeps the gap visible. Covering eleven of thirteen bullets
-    silently is how a post-check comes to be trusted for something it never
-    did, and implementing transfers will fail this test until they move into
-    `BULLETS` with checks behind them.
+    It existed because covering eleven of thirteen bullets silently is how a
+    post-check comes to be trusted for something it never did. It stays empty
+    rather than deleted, so the next bullet added to §7.1 has somewhere honest
+    to sit for as long as it takes to write its check.
     """
-    for bullet in postcheck.NOT_YET_ENFORCED:
-        assert bullet in SECTION_7_1, f"§7.1 no longer says {bullet!r}"
-        assert bullet not in postcheck.BULLETS, (
-            "this bullet is now enforced; move it into BULLETS and delete it "
-            "from NOT_YET_ENFORCED")
+    assert postcheck.NOT_YET_ENFORCED == ()
+    for bullet in postcheck.NOT_YET_ENFORCED:  # pragma: no cover - empty today
+        assert bullet in SECTION_7_1
+        assert bullet not in postcheck.BULLETS
 
 
 def test_section_7_1s_bullets_are_all_accounted_for():

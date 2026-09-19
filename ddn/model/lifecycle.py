@@ -21,6 +21,14 @@ ambiguous"):
 4. **At depot -> Dispatched only.** Nothing in §5.3 or §5.5 moves an envelope
    back out of a depot except by being dispatched; the depot's own rejects
    travel back on the van's return leg as new return-run stops (§5.5).
+5. **Transfer requested -> Ready** is a cancellation. §5.2.6 draws the happy
+   path only, but §13.2's event list includes `cancelled` and §5.3.2 has
+   rebalancing transfers that operations may drop; an envelope whose transfer
+   is cancelled is still Ready where it stands.
+6. **Transfer requested -> Return run.** §5.3.2: a transfer that cannot reach
+   the destination before the SLA date "is returned to the customer via the
+   hub" instead. §7.1 forbids raising one in that state, so this edge covers a
+   transfer already raised when the deadline moves.
 
 Postponed returns to Ready "for next attempt, until SLA date" (§5.2.6, §6.1);
 the SLA test itself is `Envelope.must_deliver_today` and the expiry edge is
@@ -49,6 +57,10 @@ class Status(StrEnum):
     REJECTED = "Rejected"
     RETURNED = "Returned"
     POSTPONED = "Postponed"
+    #: §5.3.2's transfer, as §5.2.6 draws it: an envelope already at a depot
+    #: that belongs at a different one.
+    TRANSFER_REQUESTED = "Transfer requested"
+    IN_TRANSFER = "In transfer"
     RETURN_RUN = "Return run"
     RETURNED_TO_CUSTOMER = "Returned to customer"
 
@@ -70,7 +82,17 @@ TRANSITIONS: dict[Status, frozenset[Status]] = {
     Status.DISPATCHED: frozenset(
         {Status.DELIVERED, Status.REJECTED, Status.RETURNED, Status.POSTPONED}
     ),
-    Status.POSTPONED: frozenset({Status.READY}),
+    # §5.2.6: "Postponed: back to Ready for next attempt" and "Postponed with
+    # facility change, or misassignment found: Transfer requested".
+    Status.POSTPONED: frozenset({Status.READY, Status.TRANSFER_REQUESTED}),
+    # A transfer that cannot beat its deadline is not raised at all (§7.1), and
+    # one already raised that cannot be carried goes back to the customer --
+    # §5.3.2: "otherwise it is returned to the customer via the hub".
+    Status.TRANSFER_REQUESTED: frozenset(
+        {Status.IN_TRANSFER, Status.READY, Status.RETURN_RUN}),
+    # §5.2.6 ends the transfer at Ready, "at new depot". The envelope is
+    # routable again the moment it arrives, and not before (§7.1).
+    Status.IN_TRANSFER: frozenset({Status.READY}),
     Status.REJECTED: frozenset({Status.RETURN_RUN}),
     Status.RETURNED: frozenset({Status.RETURN_RUN}),
     Status.RETURN_RUN: frozenset({Status.RETURNED_TO_CUSTOMER}),

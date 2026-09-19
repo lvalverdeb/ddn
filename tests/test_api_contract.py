@@ -7,6 +7,7 @@ document is §9 rather than a second schema that resembles it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import fields
 from pathlib import Path
 
@@ -29,6 +30,17 @@ SPEC = (Path(__file__).resolve().parent.parent
 SECTION_13 = (SPEC.split("## 13. Service interface")[1]
               .split("\n## 14. Revision history")[0])
 
+def paths_in_section_13_2() -> set[str]:
+    """Every endpoint §13.2's table names, read out of the table.
+
+    Hard-coding the list is how v0.12's whole Transfers resource was added to
+    the document without a single test noticing. The table is the contract;
+    this reads it.
+    """
+    table = SECTION_13.split("### 13.2 Resources")[1].split("### 13.3")[0]
+    return set(re.findall(r"`((?:POST|GET|PUT|DELETE)?\s*/[^`?]+)`", table))
+
+
 #: Every row of §13.2, as (method, path, expected status).
 #: §13.1: solver-invoking endpoints are 202 with a job id.
 ENDPOINTS = [
@@ -45,6 +57,9 @@ ENDPOINTS = [
     ("post", "/linehaul/plans", 202),
     ("get", "/linehaul/plans/{job_id}", 200),
     ("post", "/linehaul/plans/{job_id}/events", 200),
+    ("post", "/transfers", 201),
+    ("get", "/transfers", 200),
+    ("post", "/transfers/{transfer_id}/events", 200),
     ("post", "/routes/runs", 202),
     ("get", "/routes/runs/{job_id}", 200),
     ("post", "/routes/runs/{job_id}/locks", 202),
@@ -75,12 +90,17 @@ def test_every_section_13_2_endpoint_exists(spec, method, path, code):
 
 
 def test_the_table_has_no_row_this_service_is_missing():
-    """Read from §13.2 rather than from the list above, which could drift."""
-    for path in ("/envelopes/batch", "/pickups", "/processing/events",
-                 "/allocation/runs", "/linehaul/plans", "/routes/runs",
-                 "/returns/runs", "/simulation/days", "/metrics", "/health",
-                 "/solver/capabilities", "/pickups/plan", "/processing/ready"):
-        assert path in SECTION_13, f"§13.2 no longer lists {path}"
+    """Derived from §13.2's table, so a resource added there fails here.
+
+    v0.12 added a whole Transfers resource and the previous version of this
+    test — a hard-coded list — passed anyway.
+    """
+    documented = {p.split()[-1].rstrip("/") for p in paths_in_section_13_2()}
+    served = {path.split("{")[0].rstrip("/") for _, path, _ in ENDPOINTS}
+    missing = {p for p in documented
+               if not any(s.startswith(p.split("{")[0].rstrip("/"))
+                          or p.startswith(s) for s in served if s)}
+    assert not missing, f"§13.2 lists endpoints this service lacks: {sorted(missing)}"
 
 
 def test_no_endpoint_is_offered_that_section_13_2_does_not_list(spec):

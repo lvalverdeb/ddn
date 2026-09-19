@@ -31,6 +31,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ddn.linehaul.circuit import (
+    NO_VAN_LEG,
+    Declined,
+    Leg,
+    Transit,
+    choose,
+    legs_for,
+    sequence_departure,
+)
+
 # §5's one-day lag: line-haul runs on day D and the depot releases its routes
 # on the morning of D+1. `route_release_time` is a time of day, so the deadline
 # a van is working to is tomorrow's, not today's. Treating it as today's puts
@@ -54,6 +64,11 @@ class Trip:
     # calls van-hours the likely bottleneck, so the outward leg alone cannot
     # answer the question the stage is contested over.
     returns: int
+    #: §5.3.2: the trip as an ordered sequence of legs. A hub-to-depot run with
+    #: no transfers is one leg, which is §5.3.1 unchanged.
+    legs: tuple[Leg, ...] = ()
+    #: §9.1 transfer ids carried on this circuit.
+    transfer_ids: tuple[str, ...] = ()
 
 
 #: Why a depot's envelopes stayed at the hub. §5.3 gives two causes and they
@@ -68,6 +83,8 @@ class LinehaulPlan:
     """The night's line-haul, and what it could not carry."""
 
     trips: tuple[Trip, ...] = ()
+    #: §9.2: "transfers not carried, with reason".
+    declined: tuple[Declined, ...] = ()
     rolled: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: facility id -> why its rolled envelopes rolled.
     reasons: dict[str, str] = field(default_factory=dict)
@@ -116,7 +133,9 @@ def latest_departure(facility: dict[str, Any], *, unload_seconds: int) -> int:
 def plan(facilities: Sequence[dict[str, Any]],
          envelopes: Sequence[dict[str, Any]],
          vans: Sequence[dict[str, Any]], *,
-         unload_seconds: int) -> LinehaulPlan:
+         unload_seconds: int,
+         transfers: Sequence[Any] = (),
+         transit: Transit | None = None) -> LinehaulPlan:
     """Assign vans to depots for one night.
 
     Args:
@@ -127,6 +146,13 @@ def plan(facilities: Sequence[dict[str, Any]],
         vans: §9.1 vehicle records; `linehaul_release_at` is when a van that
             spent the day on pickups is back at the hub.
         unload_seconds: how long unloading takes at the depot.
+        transfers: §9.1 transfer requests to ride on tonight's circuits
+            (§5.3.2). Each is carried when its origin is already on a van's
+            circuit and its destination can be reached in time.
+        transit: seconds between two facilities by id, for the inter-depot
+            legs a transfer needs. §3.1 supplies hub transit only, so without
+            this every transfer is declined with that as the reason rather
+            than run on a guessed figure.
 
     Returns:
         A `LinehaulPlan`. Every envelope appears exactly once, either on a trip
@@ -139,7 +165,13 @@ def plan(facilities: Sequence[dict[str, Any]],
 
     deadlines = {f["id"]: latest_departure(f, unload_seconds=unload_seconds)
                  for f in facilities}
-    transit = {f["id"]: int(f["transit_from_hub_min"]) * 60 for f in facilities}
+    hub_transit = {f["id"]: int(f["transit_from_hub_min"]) * 60
+                   for f in facilities}
+    # §5.3.2 bounds a transfer by "the receiving depot's morning release".
+    releases = {f["id"]: DAY + int(f["route_release_time"]) for f in facilities}
+    waiting_transfers = list(transfers)
+    declined: list[Declined] = []
+    hub_id = "HUB"
 
     free = sorted(vans, key=_released_at)
     trips: list[Trip] = []
@@ -163,19 +195,66 @@ def plan(facilities: Sequence[dict[str, Any]],
             continue
 
         free.remove(chosen)
-        departure = deadline
+
+        # §5.3.2: transfers waiting at the depot this van is already visiting.
+        mine = [t for t in waiting_transfers
+                if t.from_facility_id == facility_id]
+        aboard_all = [e for e in pool]
+        aboard_g = sum(int(e.get("weight_g", 200)) for e in aboard_all)
+        stops, carried, refused = choose(
+            [facility_id], mine, transit=transit, hub_transit=hub_transit,
+            release_of=releases, unload_seconds=unload_seconds,
+            earliest_departure=_released_at(chosen), carried_g=aboard_g)
+        declined.extend(refused)
+        settled = {d.transfer_id for d in refused} | {t.transfer_id for t in carried}
+        waiting_transfers = [t for t in waiting_transfers
+                             if t.transfer_id not in settled]
+
+        # §5.3 departs as late as the whole circuit allows, not just its first
+        # stop -- `sequence_departure` explains why that distinction matters.
+        departure = (deadline if len(stops) == 1 else sequence_departure(
+            stops, hub_transit=hub_transit, transit=transit,
+            release_of=releases, unload_seconds=unload_seconds))
+
         aboard = [e for e in pool if int(e["expected_ready_at"]) <= departure]
         missed = [e for e in pool if int(e["expected_ready_at"]) > departure]
+        aboard_g = sum(int(e.get("weight_g", 200)) for e in aboard)
+
+        timed = legs_for(stops, departure, hub_id=hub_id,
+                         hub_transit=hub_transit, transit=transit)
+        legs, weight = [], aboard_g + sum(t.weight_g for t in carried)
+        for index, (origin, destination, left, arrived) in enumerate(timed):
+            legs.append(Leg(
+                from_facility=origin, to_facility=destination,
+                departure=left, arrival=arrived,
+                hub_loads={facility_id: tuple(e["package_id"] for e in aboard)}
+                if index == 0 else {},
+                transfer_ids=tuple(t.transfer_id for t in carried
+                                   if t.to_facility_id == destination),
+                weight_g=weight))
+            weight -= sum(t.weight_g for t in carried
+                          if t.to_facility_id == destination)
+            if index == 0:
+                weight -= aboard_g
+
+        last = legs[-1]
         trips.append(Trip(
             van_id=chosen["vehicle_id"],
             destination=facility_id,
             package_ids=tuple(e["package_id"] for e in aboard),
             departure=departure,
-            arrival=departure + transit[facility_id],
-            returns=departure + 2 * transit[facility_id] + unload_seconds,
+            arrival=legs[0].arrival,
+            returns=last.arrival + hub_transit.get(last.to_facility, 0)
+            + unload_seconds,
+            legs=tuple(legs),
+            transfer_ids=tuple(t.transfer_id for t in carried),
         ))
         if missed:
             rolled[facility_id] = tuple(e["package_id"] for e in missed)
             reasons[facility_id] = NOT_READY_IN_TIME
 
-    return LinehaulPlan(trips=tuple(trips), rolled=rolled, reasons=reasons)
+    # Anything still waiting had no circuit that reached its origin (§9.2).
+    declined.extend(Declined(t.transfer_id, NO_VAN_LEG)
+                    for t in waiting_transfers)
+    return LinehaulPlan(trips=tuple(trips), rolled=rolled, reasons=reasons,
+                        declined=tuple(declined))

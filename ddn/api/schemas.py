@@ -24,6 +24,7 @@ from ddn.model import (
     GeocodeConfidence,
     Outcome,
     Status,
+    TransferReason,
     VehicleRole,
     VehicleType,
 )
@@ -50,6 +51,9 @@ __all__ = [
     "RunRequest",
     "SimulationRequest",
     "Status",
+    "Transfer",
+    "TransferEvent",
+    "TransferReason",
     "VehicleRole",
     "VehicleType",
     "Violation",
@@ -147,6 +151,29 @@ class LinehaulEvent(Strict):
     """§5.3: departed and arrived, against a plan already made."""
 
     event: str = Field(description="departed | arrived")
+    actor: str
+    at: datetime | None = None
+
+
+class Transfer(Strict):
+    """§9.1's transfer-request table, plus §13.1's actor."""
+
+    transfer_id: str
+    package_id: str
+    from_facility_id: str
+    to_facility_id: str
+    reason: TransferReason
+    deadline: datetime = Field(
+        description="§9.1: min(receiving depot's next morning release, SLA date)")
+    created_at: datetime | None = None
+    weight_g: int = DEFAULT_WEIGHT_G
+    actor: str = Field(description="§13.1: overrides record who")
+
+
+class TransferEvent(Strict):
+    """§13.2's three: loaded, arrived, cancelled."""
+
+    event: str = Field(description="loaded | arrived | cancelled")
     actor: str
     at: datetime | None = None
 

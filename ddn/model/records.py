@@ -81,6 +81,20 @@ class VehicleRole(StrEnum):
     RETURN = "return"
 
 
+class TransferReason(StrEnum):
+    """§9.1's three, which are §5.3.2's three triggers.
+
+    They differ in more than bookkeeping. The first two are corrections and
+    §5.3.2 rules them the same way -- transfer if the envelope can still beat
+    its SLA date, otherwise return it. The third is a cost comparison the
+    allocation step makes, and may be declined without anything being wrong.
+    """
+
+    ADDRESS_CORRECTION = "address_correction"
+    MISASSIGNMENT = "misassignment"
+    REBALANCING = "rebalancing"
+
+
 class FacilityType(StrEnum):
     """§3.1's Type column, normalised to the distinction §3.3 draws."""
 
@@ -182,6 +196,38 @@ class PickupRequest:
     @property
     def expected_weight_g(self) -> int:
         return sum(bag.expected_weight_g for bag in self.mailbags)
+
+
+@dataclass(frozen=True, slots=True)
+class TransferRequest:
+    """§9.1's transfer-request table: §5.3.2's load, with its deadline.
+
+    `deadline` is §9.1's own definition -- "min(receiving depot's next morning
+    release, SLA date)" -- and is the caller's to compute, because only the
+    caller knows the receiving depot's release. Computing it here from a
+    facility row would make this record disagree with the one a caller already
+    built.
+    """
+
+    transfer_id: str
+    package_id: str
+    from_facility_id: str
+    to_facility_id: str
+    reason: TransferReason
+    created_at: datetime
+    deadline: datetime
+    weight_g: int = DEFAULT_WEIGHT_G
+
+    def __post_init__(self) -> None:
+        if self.from_facility_id == self.to_facility_id:
+            raise ValueError(
+                f"{self.transfer_id} moves {self.package_id} from "
+                f"{self.from_facility_id} to itself; §5.3.2 transfers an "
+                "envelope to a *different* depot")
+
+    def makes(self, arrival: datetime) -> bool:
+        """§7.1: a transfer arriving after its deadline is not one to raise."""
+        return arrival <= self.deadline
 
 
 @dataclass(frozen=True, slots=True)

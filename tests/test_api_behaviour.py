@@ -293,3 +293,89 @@ def test_the_worker_connects_where_the_api_enqueues(monkeypatch):
 def test_the_worker_falls_back_to_localhost_for_a_developer():
     """Unset is a developer running `make worker` beside `make redis`."""
     assert jobs.redis_settings().host == "localhost"
+
+
+# ------------------------------------------------------- §13.2's transfers
+
+async def test_a_transfer_is_raised_and_then_arrives(client, store):
+    """§13.2's three events, and §5.2.6 validating each move."""
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+    store.envelopes["PKG-1"]["status"] = str(Status.POSTPONED)
+    store.envelopes["PKG-1"]["facility_id"] = "D1"
+
+    raised = await client.post("/transfers", headers={"Idempotency-Key": "t1"},
+                               json={"transfer_id": "T1", "package_id": "PKG-1",
+                                     "from_facility_id": "D1",
+                                     "to_facility_id": "D3",
+                                     "reason": "misassignment",
+                                     "deadline": "2026-09-17T07:00:00",
+                                     "actor": "ops-anna"})
+    assert raised.status_code == 201
+    assert raised.json()["status"] == "Transfer requested"
+
+    for event, key, expected in (("loaded", "e1", "In transfer"),
+                                 ("arrived", "e2", "Ready")):
+        moved = await client.post("/transfers/T1/events",
+                                  json={"event": event, "actor": "driver-2"},
+                                  headers={"Idempotency-Key": key})
+        assert moved.status_code == 200
+        assert moved.json()["status"] == expected
+
+    assert store.envelopes["PKG-1"]["facility_id"] == "D3", (
+        "§7.1: the envelope moves depot when it arrives, not when it is loaded")
+
+
+async def test_a_transfer_event_out_of_order_is_refused(client, store):
+    """§5.2.6 draws no Transfer requested -> Ready by way of `arrived`."""
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+    store.envelopes["PKG-1"]["status"] = str(Status.POSTPONED)
+    await client.post("/transfers", headers={"Idempotency-Key": "t1"},
+                      json={"transfer_id": "T1", "package_id": "PKG-1",
+                            "from_facility_id": "D1", "to_facility_id": "D3",
+                            "reason": "address_correction",
+                            "deadline": "2026-09-17T07:00:00",
+                            "actor": "ops"})
+
+    refused = await client.post("/transfers/T1/events",
+                                json={"event": "arrived", "actor": "driver-2"},
+                                headers={"Idempotency-Key": "bad"})
+    assert refused.status_code == 409
+    assert refused.json()["current_state"] == "Transfer requested"
+
+
+async def test_transfers_can_be_listed_by_status(client, store):
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+    store.envelopes["PKG-1"]["status"] = str(Status.POSTPONED)
+    await client.post("/transfers", headers={"Idempotency-Key": "t1"},
+                      json={"transfer_id": "T1", "package_id": "PKG-1",
+                            "from_facility_id": "D1", "to_facility_id": "D3",
+                            "reason": "rebalancing",
+                            "deadline": "2026-09-17T07:00:00", "actor": "ops"})
+
+    every = (await client.get("/transfers")).json()
+    assert every["count"] == 1
+    requested = (await client.get("/transfers",
+                                  params={"status": "Transfer requested"})).json()
+    assert requested["count"] == 1
+    assert (await client.get("/transfers",
+                             params={"status": "Ready"})).json()["count"] == 0
+
+
+async def test_raising_a_transfer_records_who_and_why(client, store):
+    """§13.1: overrides record the actor and the time."""
+    await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
+                      headers={"Idempotency-Key": "ingest"})
+    store.envelopes["PKG-1"]["status"] = str(Status.POSTPONED)
+    await client.post("/transfers", headers={"Idempotency-Key": "t1"},
+                      json={"transfer_id": "T1", "package_id": "PKG-1",
+                            "from_facility_id": "D1", "to_facility_id": "D3",
+                            "reason": "address_correction",
+                            "deadline": "2026-09-17T07:00:00",
+                            "actor": "ops-anna"})
+    entry = next(e for e in store.audit_for("PKG-1")
+                 if e.action == "transfer:raised")
+    assert entry.actor == "ops-anna"
+    assert entry.detail["reason"] == "address_correction"

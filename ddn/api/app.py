@@ -19,7 +19,14 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ddn.api.jobs import redis_settings
-from ddn.api.routers import envelopes, observability, pickups, planning, processing
+from ddn.api.routers import (
+    envelopes,
+    observability,
+    pickups,
+    planning,
+    processing,
+    transfers,
+)
 from ddn.api.store import Store
 
 TITLE = "Document Delivery Network"
@@ -60,7 +67,8 @@ def create_app(*, queue: ArqRedis | None = None,
             "title": "error", "detail": str(detail), "status": exc.status_code}
         return JSONResponse(status_code=exc.status_code, content=body)
 
-    for module in (envelopes, pickups, processing, planning, observability):
+    for module in (envelopes, pickups, processing, transfers, planning,
+                   observability):
         app.include_router(module.router)
 
     app.openapi = _published(app)  # type: ignore[method-assign]

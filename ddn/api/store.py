@@ -42,6 +42,8 @@ class Store:
     envelopes: dict[str, dict[str, Any]] = field(default_factory=dict)
     mailbags: dict[str, dict[str, Any]] = field(default_factory=dict)
     runs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: §9.1 transfer requests, by transfer_id (§5.3.2).
+    transfers: dict[str, dict[str, Any]] = field(default_factory=dict)
     plans: dict[str, dict[str, Any]] = field(default_factory=dict)
     pickup_plan: dict[str, Any] = field(default_factory=dict)
     audit: list[AuditRecord] = field(default_factory=list)

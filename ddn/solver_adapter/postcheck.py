@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from vrp.model import Problem, Solution
@@ -38,7 +38,7 @@ from vrp.verify import verify
 
 from ddn import assumptions, pickups
 from ddn.contract import CLASS_OF, COUNT, READY, WEIGHT
-from ddn.linehaul import LinehaulPlan
+from ddn.linehaul import MAX_LOAD_G, LinehaulPlan
 
 # §7.1's eleven bullets, transcribed. `tests/test_postcheck.py` reads the
 # section and fails if one of these is no longer its words.
@@ -70,22 +70,9 @@ BAGS_WHOLE = (
     "site."
 )
 
-BULLETS = (
-    MOTORBIKE_CAPACITY, VAN_WEIGHT, ROUTE_WITHIN_SHIFT, ONE_VEHICLE_PER_DAY,
-    READY_ONLY, AFTER_ARRIVAL, VAN_UNLOADED_FIRST, NOT_PAST_SLA,
-    PICKUPS_VAN_ONLY, VAN_MAILBAGS, BAGS_WHOLE,
-)
-
-# v0.12 added inter-depot transfers (§5.3.2) and three hard constraints with
-# them. **Nothing here checks these yet**, because nothing here implements
-# transfers: there is no transfer leg to measure a combined load across, and no
-# transfer request to test against an SLA date.
-#
-# They are named rather than omitted. A post-check that silently covers eleven
-# of thirteen bullets is worse than one that says which two it does not, and
-# `tests/test_solver_adapter.py` asserts this list is still §7.1's words and
-# still unenforced -- so implementing transfers will fail a test until these
-# move into `BULLETS` with checks behind them.
+# v0.12's transfer bullets (§5.3.2). Both are checked now, by
+# `check_day_constraints` -- a leg is the only place a combined load exists,
+# and a deadline is only meaningful against a plan.
 COMBINED_LOAD = (
     "A van's combined load across hub-origin, transfer and return envelopes "
     "never exceeds 500 kg on any leg."
@@ -94,7 +81,19 @@ TRANSFER_WITHIN_SLA = (
     "A transfer is not raised for an envelope that cannot reach the "
     "destination before its SLA date; it goes to the return run instead."
 )
-NOT_YET_ENFORCED = (COMBINED_LOAD, TRANSFER_WITHIN_SLA)
+
+BULLETS = (
+    MOTORBIKE_CAPACITY, VAN_WEIGHT, ROUTE_WITHIN_SHIFT, ONE_VEHICLE_PER_DAY,
+    READY_ONLY, AFTER_ARRIVAL, COMBINED_LOAD, TRANSFER_WITHIN_SLA,
+    VAN_UNLOADED_FIRST, NOT_PAST_SLA, PICKUPS_VAN_ONLY, VAN_MAILBAGS,
+    BAGS_WHOLE,
+)
+
+
+#: Nothing, now. Every §7.1 bullet has a check behind it; the tuple stays so a
+#: bullet added tomorrow has somewhere honest to sit before it has one, and so
+#: `tests/test_solver_adapter.py` keeps accounting for all thirteen.
+NOT_YET_ENFORCED: tuple[str, ...] = ()
 
 #: Which §7.1 bullet a platform invariant is evidence for. An invariant absent
 #: from this table is still reported -- it is a real failure that §7.1 simply
@@ -145,6 +144,17 @@ class Day:
     #: van id -> the second it was back at the hub from pickups (§5.1.5).
     van_back_at: Mapping[str, int] = field(default_factory=dict)
     unload_seconds: int = assumptions.FACILITY_UNLOAD_MIN * 60
+    #: §9.1 transfer requests raised for tonight (§5.3.2).
+    transfers: Sequence[Any] = ()
+
+    def at(self, second: int) -> datetime:
+        """A line-haul clock reading as a datetime, for deadline comparisons.
+
+        §5.3 counts seconds from the start of the collection day and a
+        `deadline` is a §9.1 datetime; `DAY` is what bridges them, and it is
+        the same constant `linehaul` plans against.
+        """
+        return datetime.combine(self.today, time()) + timedelta(seconds=second)
 
 
 def _served(solution: Solution) -> dict[str, list[str]]:
@@ -403,6 +413,39 @@ def check_day_constraints(day: Day) -> list[Violation]:
     if day.linehaul is not None:
         found.extend(_arrival_bullets(day))
         found.extend(_van_release_bullets(day))
+        found.extend(_transfer_bullets(day))
+    return found
+
+
+def _transfer_bullets(day: Day) -> list[Violation]:
+    """§5.3.2's two: the load on a leg, and the deadline on a transfer."""
+    assert day.linehaul is not None
+    found: list[Violation] = []
+    wanted = {t.transfer_id: t for t in day.transfers}
+
+    for trip in day.linehaul.trips:
+        for leg in trip.legs:
+            if leg.weight_g > MAX_LOAD_G:
+                found.append(Violation(
+                    COMBINED_LOAD,
+                    f"carries {leg.weight_g} g from {leg.from_facility} to "
+                    f"{leg.to_facility}, above 500 kg",
+                    vehicle_id=trip.van_id))
+
+        for leg in trip.legs:
+            for transfer_id in leg.transfer_ids:
+                transfer = wanted.get(transfer_id)
+                if transfer is None:
+                    continue
+                # §9.1's deadline is already min(release, SLA date), so one
+                # comparison covers §7.1's "before its SLA date".
+                if not transfer.makes(day.at(leg.arrival)):
+                    found.append(Violation(
+                        TRANSFER_WITHIN_SLA,
+                        f"arrives at {leg.to_facility} after its deadline "
+                        f"{transfer.deadline:%Y-%m-%d %H:%M}; §5.3.2 returns "
+                        "such an envelope to the customer instead",
+                        vehicle_id=trip.van_id, order_id=transfer.package_id))
     return found
 
 

@@ -33,7 +33,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 627 tests, no services needed
+make test       # 718 tests, no services needed
 make check      # lint and tests
 ```
 
@@ -81,7 +81,7 @@ line-haul assignment, pickup admission and the return run.
 | `contract.py` | 9.1 | operation records → `Problem`; priority as class plus score | — (a mapping) |
 | `pickups/`    | 5.1 | admission, and the day run on a re-optimisation cadence | no |
 | `processing/` | 5.2 | expected ready times; pre-sort at file receipt | no |
-| `linehaul/`   | 5.3 | assignment against each depot's morning release | no |
+| `linehaul/`   | 5.3 | circuits between facilities: hub loads, transfers, returns | no |
 | `lastmile/`   | 5.4 | static per-facility batch, the one-day lag's gift | yes |
 | `returns/`    | 5.5 | static CVRP, stops aggregated by customer site | yes |
 | `solver_adapter/` | 9.2, 7.1 | §9.2 output; §7.1 post-checks; §5.1's problem | — |
