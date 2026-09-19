@@ -18,6 +18,7 @@ reason rather than served on a guessed speed -- the same refusal
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import date
 from typing import Any
@@ -86,16 +87,38 @@ def deliver(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def linehaul_plan(payload: dict[str, Any]) -> dict[str, Any]:
-    """§5.3: which van goes where, and what stays behind with a reason."""
+    """§5.3: which van goes where, and what stays behind with a reason.
+
+    §13.1 asks every routing result to carry its §7.1 list, and this one
+    returned `[]` as a literal -- a clean bill for a plan nothing had read.
+    `check_day_constraints` is what reads it: the combined-load bullet is a
+    property of a leg, which is exactly what a line-haul plan is made of, and
+    `Leg.overloaded` was being computed and never asserted.
+
+    `van_back_at` is deliberately not supplied. §4.3 makes `linehaul_release_at`
+    the time a van is back **and unloaded**, so feeding it to a check that adds
+    the unload itself would manufacture a violation on every trip. That bullet
+    is honestly unchecked here rather than dishonestly checked, which is what
+    the `Day` docstring means by "anything absent is not claimed to have been".
+    """
     plan = linehaul.plan(payload["facilities"], payload["envelopes"],
                          payload["vans"],
-                         unload_seconds=payload["unload_seconds"])
+                         unload_seconds=payload["unload_seconds"],
+                         transfers=payload.get("transfers", ()),
+                         returning=payload.get("returning", ()))
+    violations = sa.check_day_constraints(sa.Day(
+        today=date.fromisoformat(payload["day"]),
+        linehaul=plan,
+        transfers=payload.get("transfers", ()),
+        unload_seconds=payload["unload_seconds"]))
     return {"day": payload["day"],
             "trips": [asdict(trip) for trip in plan.trips],
             "rolled": {k: list(v) for k, v in plan.rolled.items()},
             "reasons": dict(plan.reasons),
+            # §9.2's fourth clause: "transfers not carried, with reason".
+            "declined": [asdict(d) for d in plan.declined],
             "carried": plan.carried, "held": plan.held,
-            "violations": []}
+            "violations": [asdict(v) for v in violations]}
 
 
 def return_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -123,12 +146,24 @@ def return_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def allocation_plan(payload: dict[str, Any]) -> dict[str, Any]:
-    """§4.2, and §7.2's relocation cost reported rather than hidden."""
+    """§4.2, and §7.2's relocation cost reported rather than hidden.
+
+    **No violation list, deliberately.** §13.1 asks for one on every *routing*
+    result, and §4.2 is not one -- it "is a planning decision made before
+    routing", and the VRP solver routes each facility afterwards. Read §7.1's
+    thirteen bullets against what this returns and every one of them predicates
+    over something that is not here: routes, loads, legs, stops, departures,
+    packages. An empty list would say "checked and clean" about a stage with
+    nothing checkable, which is the claim this repository has just spent a
+    commit removing from three other endpoints.
+
+    Allocation's own failure mode is not §7.1: over-commitment raises in
+    `place`, and §7.2's relocation cost is soft and reported as `moves`.
+    """
     targets = allocate(payload["pools"], len(payload["bikes"]))
     plan = place(targets, payload["bikes"], previous=payload.get("previous") or {})
     return {"day": payload["day"], "targets": targets, "moves": plan.moves,
-            "allocations": [asdict(a) for a in plan.allocations],
-            "violations": []}
+            "allocations": [asdict(a) for a in plan.allocations]}
 
 
 def simulate(payload: dict[str, Any]) -> dict[str, Any]:
@@ -141,12 +176,23 @@ def simulate(payload: dict[str, Any]) -> dict[str, Any]:
 
     if days > 1:
         reports = run_days(days, state, seed=seed, **kwargs)
-        return {"days": [_report(r) for r in reports], "violations": []}
+        return {"days": [_report(r) for r in reports],
+                "violations": _violations(reports)}
     report, tomorrow = run_day(state, seed=seed, **kwargs)
     return {"days": [_report(report)],
             "tomorrow_pool": tomorrow.pool_size,
             "report": render(report),
-            "violations": []}
+            "violations": _violations([report])}
+
+
+def _violations(reports: Sequence[Any]) -> list[dict[str, Any]]:
+    """§7.1 across every simulated day, as §13.1 asks for it.
+
+    `run_day` decides what a violation is, because that is where the night's
+    plan and the vans' return times still exist as objects rather than counts.
+    This only carries the answer out.
+    """
+    return [asdict(v) for report in reports for v in report.violations]
 
 
 def _report(report: Any) -> dict[str, Any]:

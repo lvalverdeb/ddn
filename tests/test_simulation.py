@@ -18,6 +18,7 @@ from ddn.model import travel as road
 from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Tally, measure
+from ddn.solver_adapter import postcheck
 from tests.fixtures import peak_day
 from tests.matrices import road_matrix, rows
 
@@ -526,3 +527,35 @@ def test_an_expired_envelope_is_returned_rather_than_dropped(inputs):
 
     assert report.tally.sla_expired == 5
     assert report.return_stops > 0, "§6.1 sends them back, so they are stops"
+
+
+def test_the_day_reports_the_seven_one_breach_it_causes(inputs):
+    """§13.1: "Every routing result carries its §7.1 violation list".
+
+    `check_day_constraints` existed, was tested in isolation, and had no
+    production caller at all — so the four bullets that span stages were never
+    asked about a real plan. The simulator is where they can be asked: it is
+    the only place the night's circuits, the vans' return times and the day's
+    transfers exist together rather than as counts on a report.
+
+    A kilo an envelope puts D1's share over 500 kg on its first leg, which is
+    §7.1's combined-load bullet and nothing else.
+    """
+    kwargs = dict(inputs)
+    for key in [k for k in kwargs if k.startswith("_")]:
+        del kwargs[key]
+    kwargs["inflow"] = [dict(e, weight_g=1000) for e in inputs["inflow"]]
+    day = inputs["_day"]
+
+    report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+                        seed=7, **kwargs)
+
+    bullets = {v.bullet for v in report.violations}
+    assert postcheck.COMBINED_LOAD in bullets, (
+        f"a van over 500 kg on a leg is a §7.1 breach; reported {bullets}")
+
+
+def test_a_day_within_its_limits_reports_nothing(simulated):
+    """The other half: empty must mean checked and clean, not unchecked."""
+    report, _ = simulated
+    assert report.violations == ()

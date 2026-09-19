@@ -13,6 +13,7 @@ from ddn.api import jobs
 from ddn.api.idempotency import PREFIX, Replays, once
 from ddn.api.store import Store
 from ddn.model import Status
+from ddn.solver_adapter import postcheck
 from tests.api_harness import drain, make_app, make_pool
 
 
@@ -420,3 +421,72 @@ async def test_raising_a_transfer_records_who_and_why(client, store):
                  if e.action == "transfer:raised")
     assert entry.actor == "ops-anna"
     assert entry.detail["reason"] == "address_correction"
+
+
+# --------------------------------------------- §13.1's violation list (§7.1)
+
+
+def test_the_linehaul_endpoint_reports_an_overloaded_leg():
+    """§13.1: "Every routing result carries its §7.1 violation list".
+
+    This endpoint returned `[]` as a literal — a clean §7.1 bill for a plan
+    nothing had read. The combined-load bullet is a property of a leg, and a
+    line-haul plan is made of legs, so it was the one check most obviously
+    owed and least obviously missing.
+
+    Three envelopes at 200 kg are 600 kg on one leg, against §7.1's 500.
+    """
+    from ddn.api import runner
+
+    result = runner.linehaul_plan({
+        "day": "2026-09-16",
+        "facilities": [{"id": "D1", "route_release_time": 7 * 3600,
+                        "transit_from_hub_min": 30}],
+        "envelopes": [{"package_id": f"P{n}", "facility_id": "D1",
+                       "expected_ready_at": 0, "weight_g": 200_000}
+                      for n in range(3)],
+        "vans": [{"vehicle_id": "VAN-01"}],
+        "unload_seconds": 1800,
+    })
+
+    assert [v["bullet"] for v in result["violations"]] == [postcheck.COMBINED_LOAD]
+    assert "600000" in result["violations"][0]["detail"]
+
+
+def test_a_linehaul_plan_within_its_limits_reports_nothing():
+    """Empty has to mean checked and clean, or the list says nothing at all."""
+    from ddn.api import runner
+
+    result = runner.linehaul_plan({
+        "day": "2026-09-16",
+        "facilities": [{"id": "D1", "route_release_time": 7 * 3600,
+                        "transit_from_hub_min": 30}],
+        "envelopes": [{"package_id": "P1", "facility_id": "D1",
+                       "expected_ready_at": 0}],
+        "vans": [{"vehicle_id": "VAN-01"}],
+        "unload_seconds": 1800,
+    })
+
+    assert result["violations"] == []
+    assert result["declined"] == [], "§9.2's fourth clause, and nothing to say"
+
+
+def test_the_allocation_result_claims_no_seven_one_check():
+    """§4.2 is not a routing result, so §13.1 does not ask it for a list.
+
+    Every one of §7.1's thirteen bullets predicates over a route, a load, a
+    leg, a stop, a departure or a package. A fleet allocation produces none of
+    those — it "is a planning decision made before routing". An empty list here
+    would be the same false reassurance this endpoint's siblings just stopped
+    giving, so there is no list.
+    """
+    from ddn.api import runner
+
+    result = runner.allocation_plan(
+        {"day": "2026-09-16", "pools": {"HUB": 10, "D1": 10},
+         "bikes": ["M1", "M2"], "previous": {"M1": "D1", "M2": "D1"}})
+
+    assert "violations" not in result
+    assert result["moves"] >= 1, (
+        "§7.2's relocation cost is what this stage does report, and both "
+        "bikes started at D1")

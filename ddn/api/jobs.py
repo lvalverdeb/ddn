@@ -21,7 +21,6 @@ thin call into `ddn.simulation`, `ddn.allocation`, `ddn.linehaul` or
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
 from datetime import date
 from typing import Any
 
@@ -47,13 +46,16 @@ def redis_settings() -> RedisSettings:
 async def run_allocation(ctx: dict[str, Any], *, day: str,
                          pools: dict[str, int], bikes: list[str],
                          previous: dict[str, str] | None = None) -> dict[str, Any]:
-    """§4.2, as a job. The work is `ddn.allocation`'s; this only carries it."""
-    from ddn.allocation import allocate, place
+    """§4.2, as a job. The work is `ddn.allocation`'s; this only carries it.
 
-    targets = allocate(pools, len(bikes))
-    plan = place(targets, bikes, previous=previous or {})
-    return {"day": day, "targets": targets, "moves": plan.moves,
-            "allocations": [asdict(a) for a in plan.allocations]}
+    Delegates to `runner.allocation_plan` rather than repeating its three
+    lines. They were duplicated, which made the runner's copy unreachable and
+    left two places for §4.2 to be answered differently.
+    """
+    from ddn.api.runner import allocation_plan
+
+    return allocation_plan({"day": day, "pools": pools, "bikes": bikes,
+                            "previous": previous})
 
 
 async def run_simulation(ctx: dict[str, Any], *, payload: dict[str, Any]

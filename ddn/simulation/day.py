@@ -39,6 +39,7 @@ from ddn.linehaul import Transit
 from ddn.model import TransferReason, TransferRequest
 from ddn.simulation.capacity import Checks, check
 from ddn.simulation.metrics import Metrics, Tally, measure
+from ddn.solver_adapter import Day, check_day_constraints
 
 HOUR = 3600
 
@@ -133,6 +134,8 @@ class DayReport:
     transfers_raised: int = 0
     transfers_carried: int = 0
     transfers_declined: dict[str, str] = field(default_factory=dict)
+    #: §7.1's day-spanning bullets, over this day's own plans (§13.1).
+    violations: tuple[Any, ...] = ()
 
 
 def _served_everything(offered: Sequence[dict[str, Any]], _facility: str,
@@ -523,6 +526,18 @@ def run_day(
     tally = _count(state, attempt, doorstep, collection, requests, inflow,
                    per_facility)
 
+    # §7.1's day-spanning bullets. Computed here rather than by the caller
+    # because this is where the night's plan, the vans' return times and
+    # the day's transfers are all in one scope -- `DayReport` reduces each
+    # of them to a count on its way out, and a check cannot be run on a
+    # count. The caller reports what this decides; it does not decide it.
+    violations = check_day_constraints(Day(
+        today=state.day,
+        linehaul=night,
+        transfers=transfers,
+        van_back_at=dispatch.returned_at if dispatch else {},
+        unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60))
+
     report = DayReport(
         day=state.day,
         tally=tally,
@@ -539,7 +554,8 @@ def run_day(
         transfers_raised=len(transfers),
         transfers_carried=sum(len(trip.transfer_ids) for trip in night.trips),
         transfers_declined={d.transfer_id: d.reason
-                            for d in night.declined})
+                            for d in night.declined},
+        violations=tuple(violations))
 
     return report, State(
         day=state.day + timedelta(days=1),
