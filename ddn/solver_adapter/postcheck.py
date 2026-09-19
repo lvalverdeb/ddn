@@ -330,7 +330,24 @@ def check_route_constraints(
 
 def _pickup_bullets(problem: Problem, solution: Solution,
                     kind_of: Mapping[str, str | None]) -> list[Violation]:
-    """§7.1's three mailbag bullets, which only a §5.1 solve can break."""
+    """§7.1's three mailbag bullets, which only a §5.1 solve can break.
+
+    **Nothing in production reaches this, and that is not an oversight.** It
+    guards `solver_adapter.pickup`, and §5.1's production path does not solve:
+    `pickups.run` is a greedy insertion loop that produces routes directly, so
+    there is no `Problem` and no `Solution` to hand here. Synthesising one
+    would submit an object this repository invented to `vrp.verify`'s
+    seventeen invariants, and the first thing that would report is the
+    synthesis.
+
+    The bullets are kept upstream instead, where they bind harder than a report
+    does -- `pickups.admission.can_take` refuses a vehicle that is not a van
+    and a bag that would exceed `capacity_mailbags`, and `admission.load` makes
+    a bag one unit of load whatever it holds, so "half a bag" is not a
+    quantity this operation can express. `tests/test_pickups.py` pins each.
+    This stays because a §5.1 solve is what §5.1.5 asks for, and the day it
+    exists these are the checks it needs.
+    """
     found: list[Violation] = []
     for route in solution.routes:
         declared = kind_of.get(route.vehicle_id)

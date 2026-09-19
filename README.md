@@ -33,7 +33,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 759 tests, no services needed
+make test       # 762 tests, no services needed
 make check      # lint and tests
 ```
 

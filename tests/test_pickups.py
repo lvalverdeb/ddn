@@ -165,3 +165,57 @@ def test_a_bag_no_van_can_take_is_refused_rather_than_forced():
 
     assert len(assigned["V1"]) == 2
     assert len(assigned.unplaced) == 2
+
+
+# ------------------------------- §7.1's three mailbag bullets, where they bind
+
+
+def test_a_motorbike_is_never_offered_a_bag():
+    """§7.1: "Mailbags are collected by vans only; motorbikes are never
+    assigned pickup stops."
+
+    `postcheck` has a `stage="pickup"` branch that reports this, and no
+    production path can reach it: `pickups.run` is a greedy assigner that
+    builds no `Problem` and no `Solution`, and `solver_adapter.pickup` — which
+    does — has no caller outside tests. Fabricating a `Solution` so the branch
+    could run would put `vrp.verify`'s seventeen invariants in judgement over
+    an object this repository made up.
+
+    So the bullet is pinned where it actually binds. §4.1's security rule is
+    kept by refusing the vehicle at admission, which is earlier and harder than
+    reporting it afterwards.
+    """
+    moto = dict(van("MOTO-1"), type="motorbike")
+
+    assert not pickups.can_take(moto, carrying_bags=0, carrying_g=0,
+                                request=pickups.load(bag("BAG-1")))
+
+
+def test_a_van_is_not_given_more_bags_than_it_holds():
+    """§7.1: "A van never carries more than [TBD] mailbags."
+
+    The limit is the vehicle's own `capacity_mailbags`, which
+    `docs/assumptions.md` supplies as a placeholder for Open Question 1.
+    """
+    small = van("VAN-1", bags=2)
+    request = pickups.load(bag("BAG-3"))
+
+    assert pickups.can_take(small, carrying_bags=1, carrying_g=0, request=request)
+    assert not pickups.can_take(small, carrying_bags=2, carrying_g=0,
+                                request=request)
+
+
+def test_a_bag_is_one_bag_however_many_envelopes_it_holds():
+    """§7.1: "Sealed mailbags are collected whole; bags are never split at the
+    customer site."
+
+    A bag cannot be part-collected because it is never more than one unit of
+    load to begin with. Counting envelopes here would let a van take twenty
+    bags of two and refuse two bags of four hundred, and would make "half a
+    bag" a representable quantity.
+    """
+    small = pickups.load(bag("BAG-1", envelopes=2))
+    huge = pickups.load(bag("BAG-2", envelopes=400))
+
+    assert small[pickups.BAGS] == huge[pickups.BAGS] == 1
+    assert huge["envelope_count"] == 400, "§5.2 still needs the count"
