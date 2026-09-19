@@ -79,6 +79,35 @@ def facility(**overrides: object) -> Facility:
 
 # ------------------------------------------------------------------ lifecycle
 
+#: The edges §5.2.6 draws, counted off the diagram in v0.14:
+#: Requested->Collected->Received at hub->Reconciled, then Reconciled to both
+#: Assembled and Sorted and Assembled->Sorted->Ready (7); Ready->Line-haul->
+#: At depot->Dispatched with Ready->Dispatched for the parenthesised depot leg,
+#: and Dispatched to each of §6's four outcomes (8); Postponed->Ready (1);
+#: Postponed->Transfer requested->In transfer->Ready (3); Transfer requested to
+#: Ready and to Return run, and Ready->Return run, all three added in v0.13 (3);
+#: Rejected and Returned to Return run, and Return run->Returned to customer (3).
+SECTION_5_2_6_EDGES = 25
+
+
+def test_the_transition_table_is_not_empty():
+    """The two parametrized suites below are generated from `TRANSITIONS`.
+
+    That makes them vacuous exactly when the thing they check is broken:
+    emptying the table would empty `LEGAL`, leave `ILLEGAL` asserting that
+    every pair raises, and report a pass. A test whose subject is also its
+    fixture has to say how much subject it expects.
+
+    Counted from §5.2.6 rather than from the table — see the enumeration
+    above. `>=` rather than `==` because an edge the code draws and the
+    document does not is a different failure, and
+    `test_every_transition_is_one_section_5_2_6_draws` is what reports it.
+    """
+    assert sum(len(t) for t in TRANSITIONS.values()) >= SECTION_5_2_6_EDGES
+    assert len(LEGAL) >= SECTION_5_2_6_EDGES
+    assert ILLEGAL, "every pair legal would make the refusal suite vacuous too"
+
+
 @pytest.mark.parametrize(("source", "target"), LEGAL, ids=lambda s: str(s))
 def test_every_transition_the_table_draws_is_permitted(source, target):
     assert may(source, target)
