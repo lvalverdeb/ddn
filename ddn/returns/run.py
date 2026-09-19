@@ -29,7 +29,7 @@ invented per envelope.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,11 @@ MODEL_NAME = "ddn-return"
 
 # §6's two return outcomes. Postponed is held, Delivered is closed.
 RETURNED = frozenset({"Rejected", "Returned"})
+
+#: §3.1 names the hub. A parameter rather than a literal because `run_day`
+#: already takes one and two spellings of the same facility is a bug waiting
+#: for the day somebody deploys with a different id.
+HUB = "HUB"
 
 # §7.4 has no figure for a return stop. Borrowed from the delivery figure and
 # applied per stop rather than per envelope — see the module docstring. The
@@ -79,7 +84,8 @@ def load_model(name: str = MODEL_NAME) -> dict[str, Any]:
     return json.loads((MODELS / f"{name}.json").read_text())
 
 
-def eligible(envelopes: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def eligible(envelopes: Sequence[dict[str, Any]], *,
+             hub_id: str = HUB) -> list[dict[str, Any]]:
     """Envelopes that go back to the customer tonight.
 
     Args:
@@ -94,14 +100,26 @@ def eligible(envelopes: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         a visit planned for them would start from a place they are not.
     """
     return [e for e in envelopes
-            if e.get("facility_id") == "HUB"
-            and (e.get("previous_outcome") in RETURNED or e.get("sla_expired"))]
+            if e.get("facility_id") == hub_id and goes_back(e)]
 
 
-def sites(envelopes: Sequence[dict[str, Any]]) -> list[ReturnStop]:
+def goes_back(envelope: Mapping[str, Any]) -> bool:
+    """Whether §6 sends this envelope back to its customer at all.
+
+    The outcome half of `eligible`, on its own because §5.3.2 needs the same
+    question asked at a *depot*: the envelopes riding the van home are these
+    ones, somewhere else. Two copies of the predicate would be two places to
+    forget §6.1's expiry clock.
+    """
+    return (envelope.get("previous_outcome") in RETURNED
+            or bool(envelope.get("sla_expired")))
+
+
+def sites(envelopes: Sequence[dict[str, Any]], *,
+          hub_id: str = HUB) -> list[ReturnStop]:
     """Aggregate eligible envelopes into one stop per customer site."""
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for envelope in eligible(envelopes):
+    for envelope in eligible(envelopes, hub_id=hub_id):
         grouped.setdefault(envelope["customer_id"], []).append(envelope)
 
     return [

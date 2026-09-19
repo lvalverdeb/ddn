@@ -273,3 +273,74 @@ def test_a_van_with_an_explicit_null_release_time_is_still_available():
                           unload_seconds=1800)
     assert night.carried == 1
     assert night.trips[0].van_id == "V1"
+
+
+# ----------------------------------------------------- §5.5 depot returns
+
+
+def reject(package_id: str, facility: str, *, grams: int = 200) -> dict:
+    """An envelope §5.5 sends home, waiting at the depot that refused it."""
+    return {"package_id": package_id, "facility_id": facility,
+            "previous_outcome": "Rejected", "weight_g": grams}
+
+
+def test_a_depot_reject_rides_the_leg_that_leaves_its_depot():
+    """§5.3.2: each leg carries "returns bound for the hub".
+
+    Not the outbound leg — the envelope is not on the van until the van has
+    been to the depot to get it. So it joins at D1 and stays aboard to the hub.
+    """
+    night = linehaul.plan([depot("D1", 7 * HOUR, 30)],
+                          [envelope("E1", "D1", 16 * HOUR)],
+                          [van("V1")], unload_seconds=20 * 60,
+                          returning=[reject("R1", "D1")])
+
+    out, home = night.trips[0].legs
+    assert out.return_ids == (), "nothing is going back on the way out"
+    assert home.return_ids == ("R1",)
+    assert (home.from_facility, home.to_facility) == ("D1", "HUB")
+
+
+def test_the_load_rises_when_the_circuit_picks_returns_up():
+    """§7.1 bounds "hub-origin, transfer **and return** envelopes" on any leg.
+
+    The hub load leaves at D1 and the returns join there, so the run home is
+    not empty — which is the third of the bullet's three components, and the
+    one that was never counted.
+    """
+    night = linehaul.plan([depot("D1", 7 * HOUR, 30)],
+                          [envelope("E1", "D1", 16 * HOUR)],
+                          [van("V1")], unload_seconds=20 * 60,
+                          returning=[reject("R1", "D1", grams=1000),
+                                     reject("R2", "D1", grams=1000)])
+
+    out, home = night.trips[0].legs
+    assert out.weight_g == 200, "one hub-origin envelope at §4.1's default"
+    assert home.weight_g == 2000, "two returns collected at D1"
+
+
+def test_returns_at_a_depot_no_van_reaches_stay_there():
+    """They are not lost and not silently carried: no leg, so no ride.
+
+    §5.5 gives them the *following* evening, and a depot with nothing inbound
+    gets no van tonight — `test_a_depot_with_no_envelopes_gets_no_van` is the
+    other half of that rule.
+    """
+    night = linehaul.plan([depot("D1", 7 * HOUR, 30), depot("D2", 7 * HOUR, 45)],
+                          [envelope("E1", "D1", 16 * HOUR)],
+                          [van("V1")], unload_seconds=20 * 60,
+                          returning=[reject("R1", "D2")])
+
+    assert night.returned == (), "D2 had no van to put them on"
+    assert all(leg.return_ids == () for leg in night.trips[0].legs)
+
+
+def test_what_rode_home_is_read_off_the_legs():
+    """`returned` is what the caller moves to the hub, so it must be what the
+    plan actually carried rather than a second list kept beside it."""
+    night = linehaul.plan([depot("D1", 7 * HOUR, 30)],
+                          [envelope("E1", "D1", 16 * HOUR)],
+                          [van("V1")], unload_seconds=20 * 60,
+                          returning=[reject("R1", "D1"), reject("R2", "D1")])
+
+    assert night.returned == ("R1", "R2")

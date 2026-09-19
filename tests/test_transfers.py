@@ -86,7 +86,8 @@ def test_a_transfer_rides_a_circuit_through_its_origin():
     trip, = night.trips
     assert trip.transfer_ids == ("T1",)
     assert [(leg.from_facility, leg.to_facility) for leg in trip.legs] == [
-        ("HUB", "D1"), ("D1", "D3")]
+        ("HUB", "D1"), ("D1", "D3"), ("D3", "HUB")], (
+        "§5.3.2: the circuit starts and ends at the hub")
     assert night.declined == ()
 
 
@@ -105,7 +106,10 @@ def test_the_circuit_departs_early_enough_for_its_last_stop():
                                   transfers=[transfer()], transit=transit)
 
     assert with_transfer.trips[0].departure < alone.trips[0].departure
-    last = with_transfer.trips[0].legs[-1]
+    # The last *delivering* leg. The circuit now closes with the run home,
+    # which arrives after every release and is not what this bounds.
+    last = with_transfer.trips[0].legs[-2]
+    assert last.to_facility == "D3"
     assert last.arrival <= linehaul.DAY + 7 * HOUR
 
 
@@ -155,9 +159,10 @@ def test_the_load_falls_as_the_circuit_drops_it():
                           envelopes("D1", 3), [{"vehicle_id": "VAN-01"}],
                           unload_seconds=1800, transfers=[transfer()],
                           transit=transit)
-    first, second = night.trips[0].legs
-    assert first.weight_g == 3 * 200 + 200, "hub load plus the transfer"
-    assert second.weight_g == 200, "only the transfer, after D1 is unloaded"
+    out, across, home = night.trips[0].legs
+    assert out.weight_g == 3 * 200 + 200, "hub load plus the transfer"
+    assert across.weight_g == 200, "only the transfer, after D1 is unloaded"
+    assert home.weight_g == 0, "empty on the run home; nothing is going back"
     assert not any(leg.overloaded for leg in night.trips[0].legs)
 
 

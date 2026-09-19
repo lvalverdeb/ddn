@@ -100,13 +100,23 @@ def sequence_departure(stops: Sequence[str], *, hub_transit: Mapping[str, int],
 def legs_for(stops: Sequence[str], departure: int, *,
              hub_id: str, hub_transit: Mapping[str, int],
              transit: Transit) -> list[tuple[str, str, int, int]]:
-    """`(from, to, departure, arrival)` for each leg of a circuit."""
+    """`(from, to, departure, arrival)` for each leg of a circuit.
+
+    §5.3.2: "an ordered sequence of facility legs starting **and ending** at the
+    hub". The closing hop is one of those legs, not bookkeeping: it is the leg
+    §5.5's depot rejects ride home on, and a circuit that stopped at its last
+    depot would have nowhere to put them. `Trip.returns` still reports when the
+    van is back and unloaded, which is a different question from where it went.
+    """
     legs = []
     at, clock = hub_id, departure
     for stop in stops:
         travel = hub_transit[stop] if at == hub_id else transit(at, stop)
         legs.append((at, stop, clock, clock + travel))
         at, clock = stop, clock + travel
+    # Home again. §3.1 gives transit from the hub and the return is the same
+    # road, which is the symmetry `Trip.returns` has always assumed.
+    legs.append((at, hub_id, clock, clock + hub_transit[at]))
     return legs
 
 

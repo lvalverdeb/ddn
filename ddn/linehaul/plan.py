@@ -101,6 +101,21 @@ class LinehaulPlan:
     def held(self) -> int:
         return sum(len(ids) for ids in self.rolled.values())
 
+    @property
+    def returned(self) -> tuple[str, ...]:
+        """§5.5's depot rejects that actually rode home tonight.
+
+        Read off the legs rather than accumulated beside them, so it cannot
+        disagree with what the plan says it carried. A depot no van reached
+        keeps its returns for the next night -- they are not lost, they are
+        simply not on a leg.
+        """
+        return tuple(dict.fromkeys(
+            package_id
+            for trip in self.trips
+            for leg in trip.legs
+            for package_id in leg.return_ids))
+
 
 def _released_at(van: dict[str, Any]) -> int:
     """When a van is free for line-haul; zero if it never went on pickups.
@@ -135,6 +150,7 @@ def plan(facilities: Sequence[dict[str, Any]],
          vans: Sequence[dict[str, Any]], *,
          unload_seconds: int,
          transfers: Sequence[Any] = (),
+         returning: Sequence[dict[str, Any]] = (),
          transit: Transit | None = None) -> LinehaulPlan:
     """Assign vans to depots for one night.
 
@@ -149,6 +165,12 @@ def plan(facilities: Sequence[dict[str, Any]],
         transfers: §9.1 transfer requests to ride on tonight's circuits
             (§5.3.2). Each is carried when its origin is already on a van's
             circuit and its destination can be reached in time.
+        returning: envelopes sitting at a depot that §5.5 sends back to the
+            customer -- rejected, defective or SLA-expired. They ride the
+            leg that departs their facility and are dropped at the hub, and
+            their weight counts against §7.1's 500 kg like anything else on
+            board. `returns.goes_back` is the predicate; this planner does
+            not decide which envelopes qualify.
         transit: seconds between two facilities by id, for the inter-depot
             legs a transfer needs. §3.1 supplies hub transit only, so without
             this every transfer is declined with that as the reason rather
@@ -162,6 +184,11 @@ def plan(facilities: Sequence[dict[str, Any]],
     waiting: dict[str, list[dict[str, Any]]] = {}
     for envelope in envelopes:
         waiting.setdefault(envelope["facility_id"], []).append(envelope)
+
+    # §5.5, by the facility the van will collect them from.
+    homebound: dict[str, list[dict[str, Any]]] = {}
+    for envelope in returning:
+        homebound.setdefault(envelope["facility_id"], []).append(envelope)
 
     deadlines = {f["id"]: latest_departure(f, unload_seconds=unload_seconds)
                  for f in facilities}
@@ -200,11 +227,20 @@ def plan(facilities: Sequence[dict[str, Any]],
         mine = [t for t in waiting_transfers
                 if t.from_facility_id == facility_id]
         aboard_all = [e for e in pool]
-        aboard_g = sum(int(e.get("weight_g", 200)) for e in aboard_all)
+        aboard_g = sum(int(e.get("weight_g", 200))
+                       for e in aboard_all)
+        # §7.1 counts returns against the same 500 kg, so a van already
+        # full of them has no room for a transfer. Only this depot's are
+        # known yet -- `choose` may add stops, and their returns join the
+        # load further down, which is why the leg check below is the one
+        # that binds.
+        homebound_g = sum(int(e.get("weight_g", 200))
+                          for e in homebound.get(facility_id, ()))
         stops, carried, refused = choose(
             [facility_id], mine, transit=transit, hub_transit=hub_transit,
             release_of=releases, unload_seconds=unload_seconds,
-            earliest_departure=_released_at(chosen), carried_g=aboard_g)
+            earliest_departure=_released_at(chosen),
+            carried_g=aboard_g + homebound_g)
         declined.extend(refused)
         settled = {d.transfer_id for d in refused} | {t.transfer_id for t in carried}
         waiting_transfers = [t for t in waiting_transfers
@@ -222,8 +258,18 @@ def plan(facilities: Sequence[dict[str, Any]],
 
         timed = legs_for(stops, departure, hub_id=hub_id,
                          hub_transit=hub_transit, transit=transit)
+        # The load falls as the circuit drops things and rises as it picks them
+        # up: hub-origin envelopes and transfers leave at their destinations,
+        # §5.5's returns join at the depot they are waiting at and stay aboard
+        # until the hub. §7.1 bounds the total on every leg, so the weight has
+        # to be tracked per leg rather than assumed to be the departure load.
+        homeward: list[dict[str, Any]] = []
         legs, weight = [], aboard_g + sum(t.weight_g for t in carried)
         for index, (origin, destination, left, arrived) in enumerate(timed):
+            picked_up = homebound.pop(origin, []) if origin != hub_id else []
+            homeward.extend(picked_up)
+            weight += sum(int(e.get("weight_g", 200))
+                          for e in picked_up)
             legs.append(Leg(
                 from_facility=origin, to_facility=destination,
                 departure=left, arrival=arrived,
@@ -231,6 +277,7 @@ def plan(facilities: Sequence[dict[str, Any]],
                 if index == 0 else {},
                 transfer_ids=tuple(t.transfer_id for t in carried
                                    if t.to_facility_id == destination),
+                return_ids=tuple(e["package_id"] for e in homeward),
                 weight_g=weight))
             weight -= sum(t.weight_g for t in carried
                           if t.to_facility_id == destination)
