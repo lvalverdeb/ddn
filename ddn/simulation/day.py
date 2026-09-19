@@ -260,7 +260,12 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
     if regeocode is None:
         return []
 
-    releases = {f["id"]: f.get("route_release_time", 7 * HOUR)
+    # The facility's own release where it states one; the registry's where it
+    # does not. A literal here was a second copy of `ROUTE_RELEASE` that no
+    # guard could see -- it is a BinOp inside a comprehension, so the
+    # duplication check reads neither it nor the `time` it duplicates.
+    default_release = _seconds(assumptions.ROUTE_RELEASE)
+    releases = {f["id"]: f.get("route_release_time", default_release)
                 for f in facilities}
     raised: list[TransferRequest] = []
     for envelope in doorstep.postponed:
@@ -271,7 +276,7 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
             continue
 
         release = datetime.combine(today + timedelta(days=1), time()) + timedelta(
-            seconds=int(releases.get(corrected, 7 * HOUR)))
+            seconds=int(releases.get(corrected, default_release)))
         sla = envelope.get("sla_date")
         deadline = min(release, datetime.combine(date.fromisoformat(sla), time())
                        ) if sla else release

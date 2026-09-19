@@ -8,7 +8,7 @@ without losing any. Nothing here measures the operation.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -559,3 +559,34 @@ def test_a_day_within_its_limits_reports_nothing(simulated):
     """The other half: empty must mean checked and clean, not unchecked."""
     report, _ = simulated
     assert report.violations == ()
+
+
+def test_a_facility_that_states_no_release_falls_back_to_the_registry():
+    """§9.1's deadline is the receiving depot's next morning release.
+
+    Where a facility row omits one, the fallback used to be a literal `7 *
+    HOUR` sitting next to a registered `ROUTE_RELEASE` of exactly 07:00 — the
+    audit's "registered, and then not used". Every facility in the peak-day
+    fixture carries the registered value, so the literal and the registry were
+    indistinguishable and the duplication could not fail a test. This one
+    hands `_raise_transfers` a facility with no release at all, which is the
+    only shape that tells them apart.
+
+    The duplication guard could not have caught it either: `7 * HOUR` is a
+    BinOp inside a comprehension, and `ROUTE_RELEASE` is a `time`, so neither
+    side of it is something `_planted_literals` inspects.
+    """
+    from ddn.simulation.day import _Doorstep, _raise_transfers
+
+    moved = {"package_id": "PKG-1", "facility_id": "D1",
+             "previous_outcome": "Postponed",
+             "postponed_reason": "incorrect address",
+             "sla_date": "2026-09-30", "lat": 9.99, "lon": -84.11}
+    doorstep = _Doorstep({}, {}, [moved], [], 0, 0)
+
+    raised = _raise_transfers(
+        doorstep, [{"id": "D3"}], today=date(2026, 9, 16),
+        regeocode=lambda _envelope: "D3")
+
+    assert len(raised) == 1
+    assert raised[0].deadline.time() == assumptions.ROUTE_RELEASE

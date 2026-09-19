@@ -74,9 +74,14 @@ for _path, _hint in (
         sys.exit(f"missing {_path} -- build it with: {_hint}")
 
 TODAY = date(2026, 9, 16)
-#: §10's pool positioned for delivery. The fleet is the registry's, not a
-#: second copy of it -- see `docs/assumptions.md`.
+#: §10: "All 4,550 ready envelopes ... are positioned for delivery tomorrow."
+#: A literal rather than a registry read, and the distinction is the point: the
+#: registry holds `[TBD]` stand-ins, and 4,550 is a figure the document states.
+#: Putting it in `docs/assumptions.md` would file a stated number among the
+#: invented ones, which is the confusion that page exists to prevent.
 POOL = 4550
+#: The fleet, by contrast, *is* a placeholder -- §4.2's table is `[TBD]` and
+#: §10 supplies 120 illustratively. So it is read, not copied.
 BIKES = assumptions.MOTORBIKES_TOTAL
 
 def free() -> int:
