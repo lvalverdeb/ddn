@@ -5,5 +5,8 @@ __pycache__/
 .ruff_cache/
 dist/
 
-# Local configuration; may hold GH_TOKEN.
+# Local configuration: DDN_API_PORT, DOCKER_HOST and the like.
 .env
+
+# Linter report, regenerated on demand.
+spaghetti.json
