@@ -115,13 +115,45 @@ def bullets_in(violations):
 
 # --------------------------------------------------------------- round trip
 
-def test_the_bullets_are_section_7_1s_own_words():
-    """Eleven bullets, transcribed. A reworded §7.1 fails here first."""
+def test_every_bullet_checked_is_section_7_1s_own_words():
+    """A reworded §7.1 fails here first, which is how v0.12 was noticed."""
     assert len(postcheck.BULLETS) == 11
     for bullet in postcheck.BULLETS:
         assert bullet in SECTION_7_1, f"§7.1 no longer says {bullet!r}"
-    assert len([line for line in SECTION_7_1.splitlines()
-                if line.startswith("- ")]) == 11
+
+
+def test_the_two_bullets_nobody_checks_are_named_and_still_unchecked():
+    """v0.12 added inter-depot transfers and three constraints with them.
+
+    One extended the arrival bullet, which `AFTER_ARRIVAL` now carries. The
+    other two describe a feature this repository does not implement: there is
+    no transfer leg to measure a combined load across, and no transfer request
+    to test against an SLA date.
+
+    Naming them keeps the gap visible. Covering eleven of thirteen bullets
+    silently is how a post-check comes to be trusted for something it never
+    did, and implementing transfers will fail this test until they move into
+    `BULLETS` with checks behind them.
+    """
+    for bullet in postcheck.NOT_YET_ENFORCED:
+        assert bullet in SECTION_7_1, f"§7.1 no longer says {bullet!r}"
+        assert bullet not in postcheck.BULLETS, (
+            "this bullet is now enforced; move it into BULLETS and delete it "
+            "from NOT_YET_ENFORCED")
+
+
+def test_section_7_1s_bullets_are_all_accounted_for():
+    """Thirteen bullets: eleven checked, two named as not.
+
+    Derived from the document, so a fourteenth added tomorrow fails here rather
+    than being quietly ignored.
+    """
+    written = [line[2:].replace("**", "").strip()
+               for line in SECTION_7_1.splitlines() if line.startswith("- ")]
+    assert len(written) == 13
+    accounted = set(postcheck.BULLETS) | set(postcheck.NOT_YET_ENFORCED)
+    assert set(written) == accounted, (
+        f"unaccounted §7.1 bullets: {sorted(set(written) - accounted)}")
 
 
 def test_six_envelopes_two_bikes_one_facility_round_trips():

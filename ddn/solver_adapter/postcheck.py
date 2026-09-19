@@ -52,7 +52,8 @@ ONE_VEHICLE_PER_DAY = "An envelope is assigned to at most one vehicle per day."
 READY_ONLY = "Only ready envelopes are assigned to line-haul or delivery."
 AFTER_ARRIVAL = (
     "Depot-bound envelopes are dispatched from a depot only after physical "
-    "arrival."
+    "arrival; an envelope in transfer is not routable until it arrives at the "
+    "destination depot."
 )
 VAN_UNLOADED_FIRST = (
     "A van does not depart on line-haul until back from any pickup route and "
@@ -74,6 +75,26 @@ BULLETS = (
     READY_ONLY, AFTER_ARRIVAL, VAN_UNLOADED_FIRST, NOT_PAST_SLA,
     PICKUPS_VAN_ONLY, VAN_MAILBAGS, BAGS_WHOLE,
 )
+
+# v0.12 added inter-depot transfers (§5.3.2) and three hard constraints with
+# them. **Nothing here checks these yet**, because nothing here implements
+# transfers: there is no transfer leg to measure a combined load across, and no
+# transfer request to test against an SLA date.
+#
+# They are named rather than omitted. A post-check that silently covers eleven
+# of thirteen bullets is worse than one that says which two it does not, and
+# `tests/test_solver_adapter.py` asserts this list is still §7.1's words and
+# still unenforced -- so implementing transfers will fail a test until these
+# move into `BULLETS` with checks behind them.
+COMBINED_LOAD = (
+    "A van's combined load across hub-origin, transfer and return envelopes "
+    "never exceeds 500 kg on any leg."
+)
+TRANSFER_WITHIN_SLA = (
+    "A transfer is not raised for an envelope that cannot reach the "
+    "destination before its SLA date; it goes to the return run instead."
+)
+NOT_YET_ENFORCED = (COMBINED_LOAD, TRANSFER_WITHIN_SLA)
 
 #: Which §7.1 bullet a platform invariant is evidence for. An invariant absent
 #: from this table is still reported -- it is a real failure that §7.1 simply
