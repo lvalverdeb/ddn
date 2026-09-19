@@ -13,9 +13,11 @@ coordinates in particular are synthetic towns on the Costa Rican graph that
 `capacity-finding.md` is the standing warning about what follows from measuring
 on placeholders.
 
-Two gaps are deliberately not filled: §8's objective weights, which is the
-blocking unknown, and §11's metric targets, which are commitments rather than
-inputs. See the document's closing section.
+Three gaps are deliberately not filled: §8's objective weights, which is the
+blocking unknown; §11's metric targets, which are commitments rather than
+inputs; and §9.2's reason code for an unreachable address, which needs a spec
+change rather than a value. See the document's closing section, which is the
+list this sentence counts.
 """
 
 from __future__ import annotations

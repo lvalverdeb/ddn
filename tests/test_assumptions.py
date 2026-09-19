@@ -97,6 +97,22 @@ def test_the_blocking_unknowns_have_no_placeholder():
     assert "Deliberately absent" in DOC
 
 
+def test_the_module_docstring_counts_the_absent_list_correctly():
+    """The docstring names how many gaps go unfilled, so it can be wrong.
+
+    It said two for as long as the list had three — §9.2's unreachable-address
+    reason code was added to the document and the sentence counting it was not.
+    A prose count agrees with a stale world silently; only reading the list it
+    claims to count catches it.
+    """
+    absent = DOC.split("## Deliberately absent", 1)[1]
+    bullets = re.findall(r"^- \*\*", absent, re.MULTILINE)
+    words = {2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    assert words[len(bullets)] in assumptions.__doc__, (
+        f"the document lists {len(bullets)} deliberately-absent gaps; "
+        "ddn/assumptions.py's docstring counts a different number")
+
+
 def test_the_pickup_model_carries_the_documented_mailbag_capacity():
     """§7.1's `[TBD]` reaches a model file, which is a second place to drift.
 
