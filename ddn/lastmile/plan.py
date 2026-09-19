@@ -15,8 +15,8 @@ approach §4.2 recommends is the only one, and this module is that shape:
 allocate bikes to facilities, then route each facility independently.
 
 **Allocation is proportional to demand, not to priority-weighted demand.**
-§4.2 suggests either. Proportional-to-count is what `EFFECTIVE_PER_BIKE`
-supports: the binding constraint is shift time (§7.4), which a low-priority
+§4.2 suggests either. Proportional-to-count is what
+`allocation.EFFECTIVE_PER_BIKE` supports: the binding constraint is shift time (§7.4), which a low-priority
 envelope consumes exactly as much of as an urgent one. Weighting by priority
 would allocate capacity to where the valuable work is and leave the cheap work
 unserved *in the same places every day*, which §7.2 already penalises through
@@ -35,12 +35,6 @@ from vrp.model import UNREACHABLE, Problem, Solution, TravelMatrix
 from ddn import contract
 from ddn.contract import Excluded
 from ddn.solver_adapter.output import NO_CAPACITY
-
-# §7.4: "effective capacity will be closer to 20-30 envelopes per motorbike per
-# day depending on stop density". The midpoint, used only to divide the fleet
-# between facilities -- the routes themselves are bounded by shift time, and
-# what a bike actually manages is an output of this run rather than an input.
-UNREACHABLE_ADDRESS = "unreachable address"
 
 
 def reachable_subset(matrix: TravelMatrix, size: int) -> list[int]:
@@ -152,7 +146,7 @@ def select(packages: Sequence[dict[str, Any]], *, capacity: int,
     Args:
         packages: the facility's morning pool, §9.1 records.
         capacity: how many envelopes the facility's bikes can serve --
-            typically `bikes * EFFECTIVE_PER_BIKE`.
+            typically `bikes * allocation.EFFECTIVE_PER_BIKE`.
         today: the delivery date, for the SLA test.
 
     Returns:

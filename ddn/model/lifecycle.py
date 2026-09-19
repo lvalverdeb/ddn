@@ -5,30 +5,28 @@ The diagram in §5.2.6 is the whole specification of legal movement, and
 from what any other module happens to do with `status`, so that it can disagree
 with the code if the code is wrong.
 
-Four readings were needed where the diagram is drawn rather than stated. Each
-is recorded here rather than settled silently (CLAUDE.md, "when the spec is
-ambiguous"):
+Three readings are still needed where the diagram is drawn rather than
+stated. Each is recorded here rather than settled silently (CLAUDE.md, "when
+the spec is ambiguous"):
 
 1. **Ready -> Dispatched.** §5.2.6 parenthesises `(Line-haul -> At depot)`, so
    the depot leg is optional: §3.3's hub-direct envelopes are dispatched from
    the hub without ever being line-hauled.
-2. **Ready -> Return run.** The third line reads
-   `Rejected / Returned / SLA expired: Return run`, but "SLA expired" is not a
-   status -- it is the condition in §6.1 under which an envelope that is still
-   Ready stops being retried. So the edge leaves Ready.
-3. **Return run is a status**, not just an arrow: the diagram names it in the
+2. **Return run is a status**, not just an arrow: the diagram names it in the
    flow, and an envelope sits in it between the facility and the customer.
-4. **At depot -> Dispatched only.** Nothing in §5.3 or §5.5 moves an envelope
+3. **At depot -> Dispatched only.** Nothing in §5.3 or §5.5 moves an envelope
    back out of a depot except by being dispatched; the depot's own rejects
    travel back on the van's return leg as new return-run stops (§5.5).
-5. **Transfer requested -> Ready** is a cancellation. §5.2.6 draws the happy
-   path only, but §13.2's event list includes `cancelled` and §5.3.2 has
-   rebalancing transfers that operations may drop; an envelope whose transfer
-   is cancelled is still Ready where it stands.
-6. **Transfer requested -> Return run.** §5.3.2: a transfer that cannot reach
-   the destination before the SLA date "is returned to the customer via the
-   hub" instead. §7.1 forbids raising one in that state, so this edge covers a
-   transfer already raised when the deadline moves.
+
+Three more were needed until v0.13 and are not any longer -- `Ready -> Return
+run`, `Transfer requested -> Ready` and `Transfer requested -> Return run` are
+now drawn in §5.2.6 itself. They were argued for here, the audit rated all
+three `CONTRADICTS` against v0.12, and the document settled them the same way.
+The arguments are gone; the edges stay, on the spec's authority rather than
+this module's.
+
+(The heading above said "Four readings" while six were listed, for as long as
+there were six. A count in a sentence is not a count anything reads.)
 
 Postponed returns to Ready "for next attempt, until SLA date" (§5.2.6, §6.1);
 the SLA test itself is `Envelope.must_deliver_today` and the expiry edge is
