@@ -1,7 +1,7 @@
 """§9.1 in, §9.2 out, and §7.1 checked on the way back.
 
 `to_solver` is `last_mile` and `pickup`; `from_solver` produces §9.2's records;
-`check_route_constraints` and `check_day_constraints` are §7.1's eleven bullets
+`check_route_constraints` and `check_day_constraints` are §7.1's thirteen bullets
 split by how much of the day each needs to see.
 
 `ddn.contract` is still where §5.4's mapping lives -- this package delegates to

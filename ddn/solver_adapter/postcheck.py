@@ -4,7 +4,7 @@ CLAUDE.md: "Every solver output must be validated against all of them before it
 is accepted. A violation is a failing test, never a warning." This module is
 that validation, and it is split in two because §7.1 is.
 
-**Seven bullets are answerable from one solve. Four are not.** "An envelope is
+**Eight bullets are answerable from one solve. Five are not.** "An envelope is
 assigned to at most one vehicle *per day*" spans seven facility solves;
 "depot-bound envelopes are dispatched only after physical arrival" needs the
 line-haul plan; "a van does not depart on line-haul until back from any pickup
@@ -40,8 +40,11 @@ from ddn import assumptions, pickups
 from ddn.contract import CLASS_OF, COUNT, READY, WEIGHT
 from ddn.linehaul import MAX_LOAD_G, LinehaulPlan
 
-# §7.1's eleven bullets, transcribed. `tests/test_postcheck.py` reads the
-# section and fails if one of these is no longer its words.
+# §7.1's thirteen bullets, transcribed.
+# `tests/test_solver_adapter.py` reads the section and fails if one of
+# these is no longer its words, or if §7.1 gains a bullet this tuple does
+# not. v0.12 took the count from eleven to thirteen and every prose copy
+# of it in this package stayed at eleven, which is what that test is for.
 MOTORBIKE_CAPACITY = "A motorbike never carries more than 35 envelopes."
 VAN_WEIGHT = "A van never carries more than 500 kg."
 ROUTE_WITHIN_SHIFT = (
@@ -416,7 +419,7 @@ def _across_the_day(day: Day) -> list[Violation]:
 
 
 def check_day_constraints(day: Day) -> list[Violation]:
-    """The four §7.1 bullets that need more than one solve to test.
+    """The five §7.1 bullets that need more than one solve to test.
 
     Args:
         day: the day's solves and plans. Anything absent is not checked and is

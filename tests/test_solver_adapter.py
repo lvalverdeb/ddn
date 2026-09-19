@@ -138,37 +138,55 @@ def bullets_in(violations):
 
 def test_every_bullet_checked_is_section_7_1s_own_words():
     """A reworded §7.1 fails here first, which is how v0.12 was noticed."""
-    assert len(postcheck.BULLETS) == 13
+    assert postcheck.BULLETS, "an empty tuple would pass the loop below"
     for bullet in postcheck.BULLETS:
         assert bullet in SECTION_7_1, f"§7.1 no longer says {bullet!r}"
 
 
-def test_nothing_is_left_unenforced():
-    """v0.12's transfer bullets have checks now, so this list is empty.
+def test_the_two_halves_account_for_every_bullet():
+    """The module docstring splits §7.1 by how much of the day each needs.
 
-    It existed because covering eleven of thirteen bullets silently is how a
-    post-check comes to be trusted for something it never did. It stays empty
-    rather than deleted, so the next bullet added to §7.1 has somewhere honest
-    to sit for as long as it takes to write its check.
+    That split is prose, so it can drift from the code exactly as the count
+    did. Eight bullets one solve can answer, five it cannot -- and the second
+    number was four until v0.12 added the two transfer bullets and nobody
+    moved it.
     """
-    assert postcheck.NOT_YET_ENFORCED == ()
-    for bullet in postcheck.NOT_YET_ENFORCED:  # pragma: no cover - empty today
-        assert bullet in SECTION_7_1
-        assert bullet not in postcheck.BULLETS
+    day_spanning = {
+        postcheck.ONE_VEHICLE_PER_DAY, postcheck.AFTER_ARRIVAL,
+        postcheck.VAN_UNLOADED_FIRST, postcheck.COMBINED_LOAD,
+        postcheck.TRANSFER_WITHIN_SLA,
+    }
+
+    assert day_spanning <= set(postcheck.BULLETS)
+    assert len(day_spanning) == 5
+    assert len(postcheck.BULLETS) - len(day_spanning) == 8
+    assert "Eight bullets" in postcheck.__doc__
+    assert "Five are not" in postcheck.__doc__
 
 
 def test_section_7_1s_bullets_are_all_accounted_for():
-    """Thirteen bullets: eleven checked, two named as not.
+    """Every bullet §7.1 writes is one this module transcribes, and no other.
 
-    Derived from the document, so a fourteenth added tomorrow fails here rather
-    than being quietly ignored.
+    The count is read off the section rather than written down here. It used to
+    be the literal 13, which is the wrong shape for it: §7.1 went from eleven
+    bullets to thirteen in v0.12, and what survived that bump was every *other*
+    copy of the number — two comments in `postcheck`, a docstring, and
+    `solver_adapter/__init__.py` — all still saying eleven beside a tuple
+    holding thirteen. A count taken from the section cannot pass while the
+    section and the tuple disagree, whichever way the next revision moves it.
+
+    `NOT_YET_ENFORCED` is in the sum because a bullet parked there is one
+    §7.1 writes and no check answers; it is empty today.
     """
     written = [line[2:].replace("**", "").strip()
                for line in SECTION_7_1.splitlines() if line.startswith("- ")]
-    assert len(written) == 13
     accounted = set(postcheck.BULLETS) | set(postcheck.NOT_YET_ENFORCED)
+
+    assert len(written) == len(postcheck.BULLETS) + len(postcheck.NOT_YET_ENFORCED)
     assert set(written) == accounted, (
         f"unaccounted §7.1 bullets: {sorted(set(written) - accounted)}")
+    assert postcheck.NOT_YET_ENFORCED == (), (
+        "a bullet here is one the module claims and no check answers")
 
 
 def test_six_envelopes_two_bikes_one_facility_round_trips():
