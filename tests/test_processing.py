@@ -7,6 +7,7 @@ import pytest
 from ddn import assumptions
 from ddn.processing import Readiness, presort, requires_assembly, schedule
 from ddn.processing.readiness import ASSEMBLY_TYPES
+from tests.fixtures import peak_day
 from tests.matrices import road_matrix, rows
 
 HOUR = 3600
@@ -190,3 +191,55 @@ def test_an_envelope_with_no_road_path_is_refused():
 def test_sorting_into_no_facilities_is_refused():
     with pytest.raises(ValueError, match="HUB or D1-D6"):
         sorted_over([envelope("P1")], facilities=[])
+
+
+def test_the_clean_room_works_by_priority_not_by_arrival():
+    """§5.2.3: "where the queue exceeds capacity, prioritised by envelope
+    priority and SLA date".
+
+    §10 turns that into a checkable claim — "assembly clears 700 of the 900 by
+    cut-off, and the 200 rolled to tomorrow are **the lowest-priority ones**".
+    The queue was ordered by arrival, so the 200 that rolled were whichever
+    bags reached the hub last, and §5.2.3's sentence had no code behind it.
+
+    §5.2.3 also calls assembly the likely bottleneck on a high-volume day,
+    which is the day the order decides something.
+    """
+    day = peak_day.load()
+    # Every envelope that arrived, not `ready()` -- that is the pool *after*
+    # the cut-off, which is the question being asked rather than the input.
+    pool = [{"package_id": e.package_id, "mailbag_id": e.mailbag_id,
+             "package_type": e.package_type, "priority": float(e.priority),
+             "sla_date": e.sla_date.isoformat()}
+            for e in day.envelopes]
+    arrival_of = {bag.mailbag_id: 0 for request in day.requests
+                  for bag in request.mailbags}
+
+    done = {r.package_id: r for r in schedule(pool, arrival_of)}
+    needs = [e for e in pool if e["package_type"] == "assembly"]
+    assert len(needs) == peak_day.ASSEMBLY_REQUIRED, "§10's 900"
+
+    by_finish = sorted(needs, key=lambda e: done[e["package_id"]].assembled_at)
+    cleared = by_finish[:peak_day.ASSEMBLY_CLEARED]
+    rolled = by_finish[peak_day.ASSEMBLY_CLEARED:]
+    assert len(rolled) == peak_day.ASSEMBLY_ROLLED, "§10's 200"
+
+    assert min(e["priority"] for e in cleared) >= max(
+        e["priority"] for e in rolled), (
+        "§10: the ones that roll are the lowest-priority ones, so no envelope "
+        "that cleared may be worth less than one that rolled")
+
+
+def test_a_closer_sla_date_goes_first_among_equals():
+    """§5.2.3 names priority *and* SLA date. The second breaks the first's
+    ties, and §6.1 is why: the clock is the thing priority cannot express once
+    two envelopes are worth the same."""
+    same = [envelope("LATE", kind="assembly", priority=100,
+                     sla_date="2026-09-30"),
+            envelope("SOON", kind="assembly", priority=100,
+                     sla_date="2026-09-17")]
+
+    done = {r.package_id: r for r in schedule(same, {"BAG-1": 0},
+                                              assembly_per_hour=1)}
+
+    assert done["SOON"].assembled_at < done["LATE"].assembled_at
