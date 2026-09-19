@@ -45,7 +45,10 @@
       "capacities": {
         "envelopes": 2500,
         "grams": 500000
-      }
+      },
+      "fixed_cost": 50000,
+      "cost_per_metre": 1,
+      "cost_per_second": 0
     },
     {
       "class": "MOTO",
@@ -54,7 +57,10 @@
       "capacities": {
         "envelopes": 35,
         "grams": 35000
-      }
+      },
+      "fixed_cost": 50000,
+      "cost_per_metre": 1,
+      "cost_per_second": 0
     }
   ],
   "run": {

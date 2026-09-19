@@ -18,7 +18,6 @@ reason rather than served on a guessed speed -- the same refusal
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict
 from datetime import date
 from typing import Any
@@ -55,30 +54,6 @@ def _matrix(payload: dict[str, Any], expected: int) -> TravelMatrix:
     return matrix
 
 
-def _priced(model: dict[str, Any] | None, payload: dict[str, Any], *,
-            default: Callable[[], dict[str, Any]] = contract.load_model
-            ) -> dict[str, Any]:
-    """A model, with §8's unanswered objective made explicit.
-
-    `default` is required rather than assumed: §5.4 and §5.5 are different
-    operations with different service times and different fleets, and falling
-    back to the delivery model for a return run asks the wrong file what a stop
-    costs.
-
-    `models/ddn-lastmile.json` prices a vehicle at 50,000 against prizes of at
-    most 1,999, so on a small pool the solver declines everything. That is §8's
-    open cost ratio, not a solver setting, and a caller may override it for a
-    run -- but the override is theirs to state, never this module's to assume.
-    """
-    model = model or default()
-    if "vehicle_fixed_cost" in payload:
-        model = dict(model, run=dict(
-            model["run"],
-            objective=dict(model["run"]["objective"],
-                           vehicle_fixed_cost=payload["vehicle_fixed_cost"])))
-    return model
-
-
 def deliver(payload: dict[str, Any]) -> dict[str, Any]:
     """§5.4 for one facility: select, solve, and report §7.1 (§13.1)."""
     facility = payload["facility"]
@@ -92,7 +67,7 @@ def deliver(payload: dict[str, Any]) -> dict[str, Any]:
     matrix = _matrix(payload, len(offered) + 1)
 
     problem = sa.last_mile(facility, offered, bikes, matrix, today=day,
-                           model=_priced(payload.get("model"), payload))
+                           model=payload.get("model"))
     solution = solve(problem)
     report = verify(problem, solution)
     violations = sa.check_route_constraints(
@@ -134,8 +109,7 @@ def return_run(payload: dict[str, Any]) -> dict[str, Any]:
 
     problem = returns.to_problem(
         hub, stops, crew, matrix,
-        model=_priced(payload.get("model"), payload,
-                      default=returns.load_model))
+        model=payload.get("model"))
     solution = solve(problem)
     violations = sa.check_route_constraints(problem, solution, vehicles=crew)
     return {

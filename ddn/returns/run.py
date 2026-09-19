@@ -38,7 +38,7 @@ from vrp import servicemodel
 from vrp.model import Problem, TravelMatrix, Vehicle
 
 from ddn import assumptions
-from ddn.contract import CLASS_OF, DEFAULT_WEIGHT_G, as_depot
+from ddn.contract import CLASS_OF, DEFAULT_WEIGHT_G, as_depot, costs
 
 MODELS = Path(__file__).resolve().parent.parent.parent / "models"
 MODEL_NAME = "ddn-return"
@@ -153,6 +153,9 @@ def _vehicle(record: dict[str, Any], model: dict[str, Any]) -> Vehicle:
         skills={record["role"]},
         start_location_id="HUB",
         end_location_id="HUB",
+        # §8: this builder replaces the vehicle `servicemodel.build` priced, so
+        # it carries the price across or the objective is lost with it.
+        **costs(model, wanted),
     )
 
 

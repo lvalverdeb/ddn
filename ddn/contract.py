@@ -284,6 +284,37 @@ def _capacities(model: dict[str, Any], record: dict[str, Any]) -> dict[str, int]
     return capacities
 
 
+def costs(model: dict[str, Any], kind: str) -> dict[str, int]:
+    """§8's three cost terms for one vehicle class, from the model's fleet.
+
+    The `fleet` block is where the platform puts per-vehicle costs
+    (`vrp/servicemodel.py` reads them there) and it is already where this
+    module reads capacities, so it is one source rather than a second.
+
+    Every builder here replaces `servicemodel.build`'s generated vehicles with
+    §9.1's records, which is why this exists: the costs would otherwise be left
+    behind with the vehicles they were attached to. They were, for the whole
+    life of the repository -- and it did not look broken, because
+    `pyvrp_adapter` omits a zero cost and PyVRP then applies its own
+    `unit_distance_cost=1`. Routes came back sensibly short at a rate nobody
+    had chosen, and a vehicle cost nothing to deploy.
+
+    Absent is refused rather than defaulted, for the reason `_capacities`
+    refuses: a default here is invisible and load-bearing.
+    """
+    declared = {spec["class"]: spec for spec in model["fleet"]}
+    spec = declared[kind]
+    missing = [f for f in ("fixed_cost", "cost_per_metre", "cost_per_second")
+               if f not in spec]
+    if missing:
+        raise ValueError(
+            f"{model['name']}'s {kind} declares no {', '.join(missing)}; §8's "
+            "objective is carried on the vehicle, and a class that prices "
+            "nothing is not free -- it takes PyVRP's defaults instead")
+    return {field: int(spec[field]) for field in
+            ("fixed_cost", "cost_per_metre", "cost_per_second")}
+
+
 def _vehicle(record: dict[str, Any], facility_id: str,
              model: dict[str, Any]) -> Vehicle:
     shift = TimeWindow(start=int(record["shift_start"]),
@@ -300,6 +331,8 @@ def _vehicle(record: dict[str, Any], facility_id: str,
         skills={record["role"]},
         start_location_id=facility_id,
         end_location_id=facility_id,
+        # §8: what a kilometre and a deployed vehicle cost.
+        **costs(model, CLASS_OF[record["type"]]),
     )
 
 

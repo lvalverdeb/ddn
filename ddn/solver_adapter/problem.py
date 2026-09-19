@@ -146,4 +146,7 @@ def _van(record: dict[str, Any], hub_id: str, model: dict[str, Any]):
         skills={record["role"]},
         start_location_id=hub_id,
         end_location_id=hub_id,
+        # §8: the objective rides on the vehicle, and this builder replaces the
+        # one `servicemodel.build` priced.
+        **contract.costs(model, contract.CLASS_OF[record["type"]]),
     )

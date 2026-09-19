@@ -142,3 +142,31 @@ def test_the_pickup_model_carries_the_documented_mailbag_capacity():
          / "models" / "ddn-pickup.json").read_text(encoding="utf-8"))
     capacities = {spec["class"]: spec["capacities"] for spec in model["fleet"]}
     assert capacities["VAN"]["mailbags"] == assumptions.MAILBAGS_PER_VAN
+
+
+@pytest.mark.parametrize("name", ["ddn-lastmile", "ddn-pickup", "ddn-return"])
+def test_every_model_prices_its_fleet_from_the_documented_weights(name):
+    """§8's weights reach the solver through the model files, so they drift.
+
+    `contract.costs` reads the three cost terms off each `fleet[]` entry,
+    because that is where the platform puts a per-vehicle cost and where this
+    repository already reads capacities. That makes the model file a second
+    copy of a registered placeholder, which is exactly the shape
+    `MAILBAGS_PER_VAN` has above -- so it gets the same treatment, and the
+    document stays the source.
+
+    Without this the failure is quiet: a cost changed in one model file and not
+    in `docs/assumptions.md` would simply be what the solver used, and the page
+    claiming to list every stand-in would be wrong about one that decides which
+    envelopes get delivered.
+    """
+    import json
+
+    model = json.loads(
+        (Path(__file__).resolve().parent.parent
+         / "models" / f"{name}.json").read_text(encoding="utf-8"))
+
+    for spec in model["fleet"]:
+        assert spec["cost_per_metre"] == assumptions.COST_PER_METRE
+        assert spec["fixed_cost"] == assumptions.VEHICLE_FIXED_COST
+        assert spec["cost_per_second"] == assumptions.COST_PER_SECOND

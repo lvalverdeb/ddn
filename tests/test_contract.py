@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 from vrp.model import TravelMatrix
 
-from ddn import contract
+from ddn import assumptions, contract
 
 TODAY = date(2026, 9, 16)
 
@@ -289,6 +289,74 @@ def test_a_vehicle_carries_both_limits_and_its_shift():
 
     assert vehicle.capacities == {"envelopes": 35, "grams": 35_000}
     assert (vehicle.shift.start, vehicle.shift.end) == (28800, 57600)
+
+
+def test_the_shipped_model_prices_the_vehicles_it_builds():
+    """§8's objective has to reach the solver, not merely be declared.
+
+    Every path here replaces the vehicles `servicemodel.build` generates with
+    its own, so a cost declared in the model file only arrives if the builder
+    carries it across. For a long time none did: the three cost fields left the
+    factory at zero, and `pyvrp_adapter` omits a zero cost, so PyVRP fell back
+    to its own `unit_distance_cost=1` and the plans looked reasonable. Distance
+    was being minimised at a rate nobody had chosen.
+
+    This asserts the rate is chosen. It is the check that distinguishes a wired
+    objective from an unwired one -- a test that merely watched the solver
+    prefer a shorter route would have passed throughout.
+    """
+    problem, _ = build([package("P1")])
+    vehicle, = problem.vehicles
+
+    assert vehicle.cost_per_metre == assumptions.COST_PER_METRE
+    assert vehicle.fixed_cost == assumptions.VEHICLE_FIXED_COST
+    assert vehicle.cost_per_second == assumptions.COST_PER_SECOND
+    assert vehicle.cost_per_metre, (
+        "a zero here is not 'free', it is PyVRP's default of 1 applied "
+        "silently -- see pyvrp_adapter.py:600")
+
+
+def test_between_two_equal_priority_routings_the_shorter_one_wins():
+    """§8's third objective: "Minimise total route time / distance".
+
+    Four stops on a line out from the hub, all the same priority, one bike with
+    room for all of them. Visiting them in order and coming back is 6 km; every
+    other order is longer, so the solver has an unambiguous right answer and
+    distance is the only thing separating the candidates.
+
+    **This test would have passed before the objective was wired**, and that is
+    worth stating rather than leaving for someone to discover. `pyvrp_adapter`
+    omits a zero cost and PyVRP defaults `unit_distance_cost` to 1, so distance
+    was already being minimised at a rate this repository had not chosen. What
+    pins the rate is
+    `test_the_shipped_model_prices_the_vehicles_it_builds`; this pins the
+    behaviour that rate is supposed to produce.
+    """
+    from vrp.solve.pyvrp_adapter import solve
+
+    km = 1000
+    # Urgent, so that deploying the bike is unambiguously worth its
+    # `VEHICLE_FIXED_COST` and the only question left is the visit order. At
+    # §8.1's standard band three stops are worth 45,000 against a 50,000 bike
+    # and the solver correctly declines all three -- which is the cost term
+    # doing its job, not a failure, but it is not what this test is about.
+    stops = [package(f"P{n}", lat=9.94 + n / 1000, priority=1500)
+             for n in range(1, 4)]
+    # Hub, then three stops at 1, 2 and 3 km along one road.
+    places = [0, 1 * km, 2 * km, 3 * km]
+    rows = tuple(tuple(abs(a - b) for b in places) for a in places)
+    matrix = TravelMatrix(version="ddn-line", distances=rows,
+                          durations=tuple(tuple(d // 10 for d in row)
+                                          for row in rows))
+
+    routable, _ = contract.triage(stops, today=TODAY)
+    problem = contract.to_problem(HUB, routable, [van()], matrix, today=TODAY)
+    solution = solve(problem, 400, 0)
+
+    assert len(solution.routes) == 1, "one bike is enough for three stops"
+    assert solution.objective_breakdown["distance"] == 2 * 3 * km, (
+        "out to the far stop and back is 6 km; any other visit order is "
+        "longer, so a longer answer means distance stopped being priced")
 
 
 def test_route_duration_is_a_hard_limit_and_not_merely_the_shift():
