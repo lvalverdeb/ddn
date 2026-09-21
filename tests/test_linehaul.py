@@ -344,3 +344,56 @@ def test_what_rode_home_is_read_off_the_legs():
                           returning=[reject("R1", "D1"), reject("R2", "D1")])
 
     assert night.returned == ("R1", "R2")
+
+
+# ------------------------------------- §4.3: which vans are available at all
+
+
+def test_a_van_still_out_on_pickups_is_not_given_a_leg():
+    """§4.3: "A van on pickups is available for line-haul only after it has
+    returned to the hub and unloaded."
+
+    §5.1.3's taper releases some pickup vans and leaves the rest collecting to
+    the cut-off — §10 has six on pickups "tapering to 2", so two never return
+    in time to haul anything. Those two were being treated as *the earliest
+    available vans*, because `_released_at` reads a missing release time as
+    zero, and zero sorts first.
+
+    Nothing caught it: the §9.1 `role` reaches the planner from the simulator
+    but the day-pipeline fixture was not passing it, so on the path that did
+    have the field the two vans were simply never the deciding choice.
+    """
+    depots = [depot("D1", 7 * HOUR, 30)]
+    envelopes = [envelope("E1", "D1", 0)]
+    collecting = {"vehicle_id": "VAN-05", "type": "van", "role": "pickup"}
+    held = {"vehicle_id": "VAN-07", "type": "van", "role": "linehaul"}
+
+    night = linehaul.plan(depots, envelopes, [collecting, held],
+                          unload_seconds=20 * 60)
+
+    assert [t.van_id for t in night.trips] == ["VAN-07"], (
+        "the van that never came back cannot carry anything")
+
+
+def test_a_released_pickup_van_is_available_again():
+    """The other half of §4.3: once back and unloaded it may haul."""
+    released = {"vehicle_id": "VAN-01", "type": "van", "role": "pickup",
+                "linehaul_release_at": 0}
+
+    night = linehaul.plan([depot("D1", 7 * HOUR, 30)],
+                          [envelope("E1", "D1", 0)], [released],
+                          unload_seconds=20 * 60)
+
+    assert [t.van_id for t in night.trips] == ["VAN-01"]
+
+
+def test_a_record_that_states_no_role_is_still_available():
+    """§9.1 marks the field optional, so absence must not remove a van.
+
+    The test is by exception — anything not marked `pickup` is available —
+    because the alternative silently shrinks the night's fleet for a caller
+    whose records predate the column.
+    """
+    unmarked = {"vehicle_id": "VAN-99", "type": "van"}
+
+    assert linehaul.available([unmarked]) == [unmarked]

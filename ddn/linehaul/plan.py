@@ -129,6 +129,25 @@ def _released_at(van: dict[str, Any]) -> int:
     return int(van.get("linehaul_release_at") or 0)
 
 
+def available(vans: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The vans §4.3 makes eligible for a line-haul leg tonight.
+
+    §4.3: "A van on pickups is available for line-haul only after it has
+    returned to the hub and unloaded." A van earmarked for pickups and never
+    released has not returned -- §5.1.3's taper leaves some collecting until
+    the cut-off -- so it is not eligible at all, and `_released_at`'s zero for
+    a record with no release time made it look like the *earliest* available
+    van rather than an unavailable one.
+
+    The test is by exception: anything not marked `pickup` is available, so a
+    §9.1 row that omits `role` stays eligible rather than silently vanishing
+    from the night's fleet.
+    """
+    return [van for van in vans
+            if van.get("role") != "pickup"
+            or van.get("linehaul_release_at") is not None]
+
+
 def latest_departure(facility: dict[str, Any], *, unload_seconds: int) -> int:
     """§3.1's derived column: release − transit − unload.
 
@@ -200,7 +219,7 @@ def plan(facilities: Sequence[dict[str, Any]],
     declined: list[Declined] = []
     hub_id = "HUB"
 
-    free = sorted(vans, key=_released_at)
+    free = sorted(available(vans), key=_released_at)
     trips: list[Trip] = []
     rolled: dict[str, tuple[str, ...]] = {}
     reasons: dict[str, str] = {}

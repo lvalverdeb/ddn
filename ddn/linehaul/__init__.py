@@ -15,10 +15,25 @@ from ddn.linehaul.plan import (
     NOT_READY_IN_TIME,
     LinehaulPlan,
     Trip,
+    available,
     latest_departure,
     plan,
 )
 
-__all__ = ["DAY", "MAX_LOAD_G", "MISSES_DEADLINE", "NOT_READY_IN_TIME",
-           "NO_VAN", "NO_VAN_LEG", "OVER_CAPACITY", "Declined", "Leg",
-           "LinehaulPlan", "Transit", "Trip", "latest_departure", "plan"]
+__all__ = [
+    "DAY",
+    "MAX_LOAD_G",
+    "MISSES_DEADLINE",
+    "NOT_READY_IN_TIME",
+    "NO_VAN",
+    "NO_VAN_LEG",
+    "OVER_CAPACITY",
+    "Declined",
+    "Leg",
+    "LinehaulPlan",
+    "Transit",
+    "Trip",
+    "available",
+    "latest_departure",
+    "plan",
+]
