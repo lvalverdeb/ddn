@@ -44,7 +44,7 @@ before anything depends on it.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ddn.contract import Excluded
 from ddn.linehaul.circuit import Declined
 from ddn.model.records import Outcome, Status, TransferRequest
+from ddn.pickups import uncollected as _uncollected_envelopes
 from ddn.simulation.metrics import Tally
 from ddn.solver_adapter.postcheck import Violation
 
@@ -79,7 +80,20 @@ class VanRelease(_Handoff):
 
     vehicle_id: str
     back_at_hub: datetime
-    unloaded: bool
+    #: §7.1 wants both facts and §7.4 leaves the unload time `[TBD]`, so
+    #: nothing here can answer it yet. Row B8 owns it; a `True` written now
+    #: would satisfy half a constraint while reading as the whole one.
+    unloaded: bool = False
+
+    @classmethod
+    def all_of(cls, dispatch, *, day: date) -> tuple[VanRelease, ...]:
+        """One release per van that came back, off §5.1's own record."""
+        if dispatch is None:
+            return ()
+        midnight = datetime.combine(day, datetime.min.time())
+        return tuple(cls(vehicle_id=van,
+                         back_at_hub=midnight + timedelta(seconds=int(at)))
+                     for van, at in sorted(dispatch.returned_at.items()))
 
 
 class ReadyPool(_Handoff):
@@ -102,6 +116,29 @@ class ReadyPool(_Handoff):
     #: are not held and not rolled — they never arrived, so they appear in no
     #: other field here and the day's envelopes would not otherwise add up.
     uncollected: int = 0
+
+    @classmethod
+    def of(cls, dispatch, positioned, inflow, *, day: date) -> ReadyPool:
+        """Assemble the hand-off from what §5.1 and §5.2 just produced.
+
+        This is a shape mapping and nothing else — it groups, names and counts,
+        and it decides nothing. It lives here rather than in
+        `ddn/e2e/pickups_to_hub/run.py` because a runner may only call: a
+        comprehension there would be the first place slice logic could hide,
+        and `tests/e2e/test_run_purity.py` forbids it outright.
+
+        `held` and `rolled_assembly` stay empty. Nothing in `ddn/` produces
+        either yet — `processing.schedule` applies no cut-off and
+        `Sorted.straddles` is a bool nobody converts — so rows A3, A4 and A6
+        own them, not this constructor. Filling them from something plausible
+        here is how a hand-off starts carrying invented figures.
+        """
+        return cls(
+            collection_day=day,
+            ready=positioned,
+            uncollected=_uncollected_envelopes(dispatch, inflow),
+            released=VanRelease.all_of(dispatch, day=day),
+        )
     #: e2e-1 §4: "Held envelopes with reason (disputed / low-confidence geocode
     #: / straddling zip)".
     held: tuple[Excluded, ...] = ()

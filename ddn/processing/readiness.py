@@ -195,6 +195,23 @@ def ready_times(dispatch: Any,
         [e for e in inflow if e["mailbag_id"] in collected], arrival_of)}
 
 
+def at_facilities(
+        facilities: Sequence[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """An empty pool per facility, **in the order the facilities were given**.
+
+    Two things depend on this and neither is obvious. A facility whose pool
+    stays empty still has to appear, or the day loses it silently downstream.
+    And the *order* is load-bearing: §5.4 selects under capacity in pool order,
+    so a mapping built by first-appearance instead of by the facility list
+    delivers a different set of envelopes with every aggregate count identical.
+
+    It is a function rather than a line in two callers because those two
+    callers are `simulation.day` and `ddn/e2e/`, and the whole point of the
+    second is to check it agrees with the first.
+    """
+    return {f["id"]: [] for f in facilities}
+
+
 def position(positioned: dict[str, list[dict[str, Any]]],
              ready_at: Mapping[str, int],
              requests: Sequence[dict[str, Any]],

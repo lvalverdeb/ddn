@@ -12,6 +12,7 @@ is §5.2.5's formula, `sorting` is §5.2.4's rule applied at file receipt.
 from ddn.processing.readiness import (
     ASSEMBLY_TYPES,
     Readiness,
+    at_facilities,
     position,
     ready_times,
     requires_assembly,
@@ -19,5 +20,6 @@ from ddn.processing.readiness import (
 )
 from ddn.processing.sorting import Sorted, presort
 
-__all__ = ["ASSEMBLY_TYPES", "Readiness", "Sorted", "position", "presort",
+__all__ = ["ASSEMBLY_TYPES", "Readiness", "Sorted", "at_facilities",
+           "position", "presort",
            "ready_times", "requires_assembly", "schedule"]

@@ -312,7 +312,7 @@ def _collect(facilities: Sequence[dict[str, Any]],
              returning: Sequence[dict[str, Any]] = (),
              transit: Transit | None = None) -> _Collection:
     """§5.1 collects, §5.2 times, §5.3 positions. The other half of the day."""
-    positioned: dict[str, list[dict[str, Any]]] = {f["id"]: [] for f in facilities}
+    positioned = processing.at_facilities(facilities)
     if not requests:
         # §5.3.2's circuits still run for transfers alone: a van goes out for
         # them whether or not the hub has anything to send.
