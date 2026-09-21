@@ -7,11 +7,21 @@ That makes the boundary a serialisation boundary, which is why these are
 Pydantic models where the rest of `ddn/` is frozen dataclasses.
 
 **They define no fields of their own.** §9 is "the only schema definition"
-(CLAUDE.md), so a hand-off *composes* `ddn.model.records` entities rather than
-restating their fields — `ReadyPool` carries `Envelope`s, not a parallel
-declaration of package_id/lat/lon/priority that would drift from §9.1 silently.
-What is declared here is only the shape of the hand-off itself: which envelopes,
-grouped how, with what alongside them.
+(CLAUDE.md), so a hand-off carries whole §9.1 records rather than restating
+their fields — no parallel declaration of package_id/lat/lon/priority to drift
+from §9.1 in silence. What is declared here is only the shape of the hand-off
+itself: which envelopes, grouped how, with what alongside them.
+
+**The records travel as `dict`, not as `Envelope`.** The first version of this
+module carried `Envelope` and was wrong: `Envelope` is §9.1's envelope table and
+that table has no sender site, because §9.1 puts the customer's coordinates on
+Mailbags and on Return-run stops instead. But §5.5 returns an envelope **to the
+sender**, so `returns.sites` reads `customer_lat` off the record
+(`ddn/returns/run.py:128`) and `simulation.day._return_run` raises rather than
+guess when it is absent. An `Envelope`-shaped pool does not make slice 3
+disagree with the simulator; it makes slice 3 **crash**. A `dict` is not a
+second schema — it is the shape every §5 module already produces and consumes,
+`_position`'s `expected_ready_at`/`customer_lat`/`customer_lon` included.
 
 Nothing here imports `ddn.api`. §13 "depends on every module above it and
 nothing depends on it" (CLAUDE.md), so the dependency runs the other way:
@@ -35,12 +45,13 @@ before anything depends on it.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ddn.contract import Excluded
 from ddn.linehaul.circuit import Declined
-from ddn.model.records import Envelope, Outcome, Status, TransferRequest
+from ddn.model.records import Outcome, Status, TransferRequest
 from ddn.simulation.metrics import Tally
 from ddn.solver_adapter.postcheck import Violation
 
@@ -80,10 +91,17 @@ class ReadyPool(_Handoff):
     """
 
     collection_day: date
-    #: Ready envelopes by pre-sorted facility id, hub-direct under `HUB`.
-    #: Envelopes still in processing carry their `expected_ready_at`, which is
-    #: what e2e-2 §3's waiting decision reads.
-    ready: dict[str, tuple[Envelope, ...]] = Field(default_factory=dict)
+    #: Ready §9.1 envelope records by pre-sorted facility id, hub-direct under
+    #: `HUB`, **in positioned order** — see `PositionedPool.positioned`, which
+    #: says why the order is load-bearing. They carry `expected_ready_at`,
+    #: which is what e2e-2 §3's waiting decision reads, and the sender's
+    #: `customer_lat`/`customer_lon`, which §5.5 needs and §9.1's envelope
+    #: table does not hold.
+    ready: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
+    #: §5.1.6's loss channel: envelopes whose bags no van reached today. They
+    #: are not held and not rolled — they never arrived, so they appear in no
+    #: other field here and the day's envelopes would not otherwise add up.
+    uncollected: int = 0
     #: e2e-1 §4: "Held envelopes with reason (disputed / low-confidence geocode
     #: / straddling zip)".
     held: tuple[Excluded, ...] = ()
@@ -105,7 +123,20 @@ class PositionedPool(_Handoff):
 
     delivery_day: date
     #: package_ids by dispatching facility, hub-direct under `HUB` (e2e-2 §2.2).
+    #:
+    #: **The order is part of the contract, not an artefact.** §5.4 selects
+    #: under capacity and returns the kept envelopes in pool order, so two
+    #: pools holding the same ids in a different sequence deliver a different
+    #: set — measured on §10's day, reordering changes the outcome of 392 of
+    #: 3,000 envelopes while every aggregate count stays byte-identical.
+    #: Anything that rebuilds this mapping preserves both the facility
+    #: sequence and each facility's sequence.
     positioned: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    #: The same envelopes as whole §9.1 records, same keys, same order.
+    #: e2e-3 §3's inputs table reads priority, sla_date, weight_g,
+    #: attempt_number, previous_outcome and locked_vehicle_id off them, so ids
+    #: alone would force slice 3 to re-read a fixture and test that instead.
+    envelopes: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
     #: e2e-2 §5: "Rolled envelopes with reason: no van / weight / deadline
     #: unreachable / held-straddle".
     rolled: tuple[Excluded, ...] = ()

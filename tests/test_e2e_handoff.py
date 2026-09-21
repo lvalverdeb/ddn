@@ -11,16 +11,19 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from dataclasses import fields
 from datetime import datetime, time
 
 import pytest
 
+from ddn import returns
 from ddn.contract import Excluded
 from ddn.e2e import handoff
 from ddn.linehaul.circuit import MISSES_DEADLINE, Declined
-from ddn.model.records import Outcome, Status, TransferReason, TransferRequest
+from ddn.model.records import Envelope, Outcome, Status, TransferReason, TransferRequest
 from ddn.simulation.metrics import Tally
 from ddn.solver_adapter.postcheck import Violation
+from tests import peak_day_inputs
 from tests.fixtures import peak_day
 
 DAY = peak_day.load()
@@ -31,15 +34,23 @@ def _at(day, hour, minute=0):
     return datetime.combine(day, time(hour, minute))
 
 
-def _envelope():
-    return DAY.ready()[0]
+def _record():
+    """One §9.1 envelope record in the shape the §5 modules pass around.
+
+    Taken from the real builder rather than hand-written, and stamped with the
+    sender's site the way `simulation.day._position` stamps it, because that is
+    what §5.5 reads back off the record.
+    """
+    inflow = peak_day_inputs.build().kwargs["inflow"][0]
+    return dict(inflow, expected_ready_at=8 * 3600,
+                customer_lat=inflow["lat"], customer_lon=inflow["lon"])
 
 
 def _ready_pool():
-    envelope = _envelope()
     return handoff.ReadyPool(
         collection_day=DAY.collection_day,
-        ready={handoff.HUB: (envelope,)},
+        ready={handoff.HUB: (_record(),)},
+        uncollected=410,
         held=(Excluded("P-held", "in dispute"),),
         rolled_assembly=(),
         released=(handoff.VanRelease(vehicle_id="V1",
@@ -70,7 +81,8 @@ HANDOFFS = [
     pytest.param(_ready_pool, id="ReadyPool"),
     pytest.param(lambda: handoff.PositionedPool(
         delivery_day=DAY.delivery_day,
-        positioned={handoff.HUB: ("P-1",), "D1": ("P-2", "P-3")}),
+        positioned={handoff.HUB: (_record()["package_id"],)},
+        envelopes={handoff.HUB: (_record(),)}),
         id="PositionedPool"),
     pytest.param(lambda: handoff.TransferOutcomes(
         carried=("T-1",), deferred=(Declined("T-2", MISSES_DEADLINE),),
@@ -107,17 +119,17 @@ def test_a_handoff_refuses_a_field_neither_slice_knows(build):
 
 
 def test_the_models_do_not_restate_section_9s_fields():
-    """The hand-offs compose §9.1's records; they do not redeclare them.
+    """The hand-offs carry §9.1's records whole; they do not redeclare them.
 
-    `ReadyPool.ready` holding `Envelope` rather than a parallel list of
-    package_id/lat/lon/priority is what keeps §9.1 the only place those field
-    names are written down — so a §9.1 change reaches the slices by breaking
-    them, not by leaving them quietly describing the old shape.
+    Carrying the record rather than a chosen subset of its fields is what keeps
+    §9.1 the only place those names are written down — and what stops a slice
+    from silently losing a field its consumer needs, which is the defect the
+    test below pins.
     """
-    envelope = _envelope()
+    record = _record()
     pool = handoff.ReadyPool(collection_day=DAY.collection_day,
-                             ready={handoff.HUB: (envelope,)})
-    assert pool.ready[handoff.HUB][0] is envelope
+                             ready={handoff.HUB: (record,)})
+    assert pool.ready[handoff.HUB][0] == record, "a key was dropped in transit"
 
     fields = {name for model in (handoff.ReadyPool, handoff.PositionedPool,
                                  handoff.TransferOutcomes, handoff.ReturnLoad,
@@ -125,6 +137,36 @@ def test_the_models_do_not_restate_section_9s_fields():
               for name in model.model_fields}
     assert not fields & {"package_id", "lat", "lon", "priority", "sla_date",
                          "geocode_confidence", "coord_source", "status"}
+
+
+def test_a_carried_record_keeps_the_sender_site_an_envelope_cannot_hold():
+    """Why `ready` carries `dict` and not `ddn.model.records.Envelope`.
+
+    §9.1's envelope table has no sender coordinates — §9.1 puts the customer's
+    site on Mailbags and on Return-run stops. But §5.5 returns an envelope *to
+    the sender*, so `returns.sites` reads `customer_lat` straight off the
+    record (`ddn/returns/run.py:128`) and `simulation.day._return_run` raises
+    rather than guess when it is missing.
+
+    So an `Envelope`-shaped hand-off does not make a slice *disagree* with the
+    simulator — it makes the slice **crash**, one stage after the field was
+    dropped, with nothing pointing back to the hand-off. This pins both halves:
+    `Envelope` genuinely cannot hold it, and the hand-off genuinely carries it.
+    """
+    assert "customer_lat" not in {f.name for f in fields(Envelope)}, (
+        "Envelope now carries the sender site; §9.1 changed, and `ready` could "
+        "go back to holding Envelopes — check §9.1 before simplifying")
+
+    pool = _ready_pool()
+    carried = pool.ready[handoff.HUB][0]
+    assert carried["customer_lat"] == carried["lat"]
+
+    # §5.5 gates on the outcome, so mark it the way `day.py:223` marks one
+    # going back. Without the sender site this call raises inside `sites`.
+    going_back = dict(carried, sla_expired=True)
+    stop, = returns.sites([going_back], hub_id=carried["facility_id"])
+    assert stop.lat == carried["customer_lat"]
+    assert stop.package_ids == (carried["package_id"],)
 
 
 def test_nothing_in_the_slices_imports_the_api():
