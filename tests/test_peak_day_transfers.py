@@ -129,3 +129,23 @@ def test_the_hub_load_is_section_10s_depot_bound_pool():
     depot_bound = peak_day.READY - peak_day.READY_BY_FACILITY["HUB"]
 
     assert len(fx.hub_loads) == depot_bound == 2950
+
+
+def test_the_vans_are_shaped_so_section_4_3_still_applies():
+    """§4.3 filtering must survive the trip through this fixture.
+
+    A van record without `role` is available by exception, so dropping the
+    field readmits the two §10 leaves collecting to the cut-off — and mapping
+    their absent `linehaul_release_at` to 0 is worse than readmitting them,
+    because zero sorts first and the van that never came back would be chosen
+    ahead of every van waiting at the hub. That is the bug `linehaul.available`
+    exists to prevent, reintroduced one layer up.
+    """
+    fx = peak_day_transfers.load()
+    excluded = {v["vehicle_id"] for v in fx.vans} - {
+        v["vehicle_id"] for v in linehaul.available(list(fx.vans))}
+
+    assert excluded == {"VAN-05", "VAN-06"}, "§10 tapers to two still out"
+    assert all("role" in v for v in fx.vans)
+    assert all(v["linehaul_release_at"] != 0 for v in fx.vans), (
+        "an absent release is None, never 0 — 0 sorts first")

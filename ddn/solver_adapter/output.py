@@ -33,6 +33,7 @@ from typing import Any
 from vrp.model import Problem, Solution
 
 from ddn.contract import (
+    EXCLUDED_BY_OPS,
     LOW_GEOCODE_CONFIDENCE,
     NOT_READY,
     SLA_EXPIRED,
@@ -49,7 +50,7 @@ NO_CAPACITY = "count"
 IN_DISPUTE = "in dispute"
 
 REASONS = frozenset({NO_TIME, NO_CAPACITY, NOT_READY, LOW_GEOCODE_CONFIDENCE,
-                     SLA_EXPIRED, IN_DISPUTE})
+                     SLA_EXPIRED, IN_DISPUTE, EXCLUDED_BY_OPS})
 
 #: `Step.type` as the platform spells it, in §9.2's vocabulary.
 STOP_KIND = {"DELIVERY": "delivery", "PICKUP": "pickup",

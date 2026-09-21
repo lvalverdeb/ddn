@@ -249,9 +249,17 @@ def build() -> PeakDayTransfers:
         depots=tuple(_facility_row(f) for f in day.facilities if not f.is_hub),
         hub=_facility_row(next(f for f in day.facilities if f.is_hub)),
         vans=tuple(
+            # §9.1-shaped, `role` included: `linehaul.available` reads it to
+            # apply §4.3, and a record without it readmits the two vans §10
+            # leaves collecting to the cut-off. Mapping their absent release
+            # to 0 would be worse than readmitting them -- zero sorts first,
+            # so the van that never came back would be chosen ahead of every
+            # van waiting at the hub.
             {"vehicle_id": v.vehicle_id,
+             "type": "van",
+             "role": v.role.value,
              "linehaul_release_at": (
-                 0 if v.linehaul_release_at is None
+                 None if v.linehaul_release_at is None
                  else int((v.linehaul_release_at - midnight).total_seconds()))}
             for v in day.vehicles if v.type is VehicleType.VAN),
         hub_loads=tuple(

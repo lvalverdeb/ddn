@@ -198,6 +198,26 @@ def test_an_operations_exclusion_outranks_the_pipelines_own_reasons():
         ("P1", contract.EXCLUDED_BY_OPS)]
 
 
+def test_the_two_reason_vocabularies_are_one_vocabulary():
+    """§9.2 has one list, and this repository holds it in two frozensets.
+
+    `contract.REASONS` is what triage produces before any routing;
+    `solver_adapter.REASONS` is what §9.2's unassigned list may carry. Every
+    reason the first can produce must be sayable in the second, or an envelope
+    reaches the output with a code the output does not admit.
+
+    That is not hypothetical: §8.2's "excluded by operations" was added to
+    `contract` and not to `output`, and both sets are separately checked
+    against §9.2's text — so each was a subset of the document and neither was
+    a subset of the other, and nothing compared them.
+    """
+    from ddn import solver_adapter as sa
+
+    assert contract.REASONS <= sa.REASONS, (
+        f"triage can produce {sorted(contract.REASONS - sa.REASONS)}, which "
+        "§9.2's output vocabulary does not contain")
+
+
 def test_a_reason_is_one_of_the_codes_the_output_contract_names():
     """§9.2's unassigned list has a fixed vocabulary. A reason invented here
     would be a reason no consumer of that output knows how to read.
