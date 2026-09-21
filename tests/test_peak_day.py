@@ -224,3 +224,23 @@ def test_the_postponed_are_held_at_the_facility_that_attempted_them():
         exact = share * peak_day.MORNING_POSTPONED / peak_day.MORNING_POOL
         assert abs(held[facility] - exact) < 1, (
             f"{facility} holds {held[facility]} of 400 against a share of {exact:.2f}")
+
+
+def test_the_taper_leaves_two_vans_collecting_to_the_cut_off():
+    """§10: "6 on pickups from shift start, tapering to 2 by mid-afternoon as
+    4 are released to line-haul; 4 held for line-haul from the outset."
+
+    Three claims about ten vans, and until now only the first two were read.
+    The third matters to `linehaul.available`: a van still collecting is not
+    eligible for a leg (§4.3), and these two are the ones §10 leaves out
+    there.
+    """
+    vans = [v for v in peak_day.load().vehicles if v.type is VehicleType.VAN]
+    pickups = [v for v in vans if v.role is VehicleRole.PICKUP]
+    held = [v for v in vans if v.role is VehicleRole.LINEHAUL]
+
+    assert len(held) == peak_day.LINEHAUL_VANS
+    assert all(v.linehaul_release_at is None for v in held), (
+        "a van held from the outset was never on pickups to be released from")
+    assert sum(v.linehaul_release_at is None for v in pickups) == 2, (
+        "§10 tapers to 2, so two are still collecting at the cut-off")
