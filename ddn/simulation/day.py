@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from ddn import assumptions, linehaul, pickups, processing, returns
+from ddn import assumptions, lastmile, linehaul, pickups, processing, returns
 from ddn.allocation import EFFECTIVE_PER_BIKE, FleetPlan, allocate, place
 from ddn.contract import Excluded
 from ddn.lastmile import select
@@ -196,8 +196,8 @@ def _attempt(pools: Mapping[str, list[dict[str, Any]]],
     expired: list[dict[str, Any]] = []
 
     for facility, pool in pools.items():
-        live = [e for e in pool if not _expired(e, today)]
-        expired.extend(e for e in pool if _expired(e, today))
+        live = [e for e in pool if not lastmile.expired(e, today)]
+        expired.extend(e for e in pool if lastmile.expired(e, today))
 
         bikes = per_facility.get(facility, 0)
         offered, declined = select(live, capacity=bikes * EFFECTIVE_PER_BIKE,
@@ -228,7 +228,7 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
         outcome = rates.draw(rng)
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
         if outcome == DELIVERED:
-            if not _expired(envelope, today):
+            if not lastmile.expired(envelope, today):
                 within_sla += 1
             if int(envelope.get("attempt_number", 0)) == 0:
                 first_attempt += 1
@@ -330,33 +330,18 @@ def _collect(facilities: Sequence[dict[str, Any]],
     dispatch = pickups.run(
         requests, vans, next(f for f in facilities if f["id"] == hub_id),
         travel=travel, cut_off=_seconds(assumptions.PROCESSING_CUTOFF))
-    ready_at = _ready_times(dispatch, inflow)
-    _position(positioned, ready_at, requests, inflow)
+    ready_at = processing.ready_times(dispatch, inflow)
+    processing.position(positioned, ready_at, requests, inflow)
 
-    depot_bound = [dict(e, expected_ready_at=ready_at[e["package_id"]])
-                   for e in inflow
-                   if e["package_id"] in ready_at and e["facility_id"] != hub_id]
     night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
-                          depot_bound, vans, transfers=transfers,
+                          linehaul.depot_bound(inflow, ready_at,
+                                               hub_id=hub_id),
+                          vans, transfers=transfers,
                           returning=returning, transit=transit,
                           unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
 
-    rolled = {pid for ids in night.rolled.values() for pid in ids}
-    for facility, pool in positioned.items():
-        if facility != hub_id:
-            positioned[facility] = [e for e in pool
-                                    if e["package_id"] not in rolled]
+    linehaul.strip_rolled(positioned, night, hub_id=hub_id)
     return _Collection(dispatch, night, positioned)
-
-
-def _ready_times(dispatch: Any,
-                 inflow: Sequence[dict[str, Any]]) -> dict[str, int]:
-    """§5.2.5, over the envelopes whose bags actually reached the hub."""
-    collected = set(dispatch.collected)
-    arrival_of = {bag: dispatch.returned_at.get(van, 0)
-                  for van, route in dispatch.routes.items() for bag in route}
-    return {r.package_id: r.ready_at for r in processing.schedule(
-        [e for e in inflow if e["mailbag_id"] in collected], arrival_of)}
 
 
 def _uncollected(dispatch: Any, inflow: Sequence[Mapping[str, Any]]) -> int:
@@ -370,28 +355,6 @@ def _uncollected(dispatch: Any, inflow: Sequence[Mapping[str, Any]]) -> int:
         return len(inflow)
     collected = set(dispatch.collected)
     return sum(1 for e in inflow if e["mailbag_id"] not in collected)
-
-
-def _position(positioned: dict[str, list[dict[str, Any]]],
-              ready_at: Mapping[str, int],
-              requests: Sequence[dict[str, Any]],
-              inflow: Sequence[dict[str, Any]]) -> None:
-    """Put each ready envelope at its facility, carrying the customer's site.
-
-    §5.5's stop is the sender, not the recipient's address, and the hub knows
-    it from the upload file that brought the bag -- so it is attached now,
-    because by the time an envelope is rejected the request it arrived in is
-    long gone.
-    """
-    site_of = {r["mailbag_id"]: (r["lat"], r["lon"]) for r in requests}
-    by_id = {e["package_id"]: e for e in inflow}
-    for package_id, when in ready_at.items():
-        envelope = by_id[package_id]
-        site = site_of.get(envelope["mailbag_id"])
-        positioned.setdefault(envelope["facility_id"], []).append(
-            dict(envelope, expected_ready_at=when,
-                 customer_lat=site[0] if site else envelope["lat"],
-                 customer_lon=site[1] if site else envelope["lon"]))
 
 
 def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
@@ -611,11 +574,6 @@ def replace_record(envelope: dict[str, Any], reason: str) -> dict[str, Any]:
     return dict(envelope, status="Ready", previous_outcome=POSTPONED,
                 postponed_reason=reason,
                 attempt_number=int(envelope.get("attempt_number", 0)) + 1)
-
-
-def _expired(envelope: Mapping[str, Any], today: date) -> bool:
-    raw = envelope.get("sla_date")
-    return bool(raw) and date.fromisoformat(raw) < today
 
 
 def _seconds(clock: Any) -> int:

@@ -2,10 +2,11 @@
 
 from ddn.lastmile.plan import (
     FacilityPlan,
+    expired,
     plan_facility,
     reachable_subset,
     select,
 )
 
-__all__ = ["FacilityPlan", "plan_facility",
+__all__ = ["FacilityPlan", "expired", "plan_facility",
            "reachable_subset", "select"]

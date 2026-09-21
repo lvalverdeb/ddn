@@ -27,7 +27,7 @@ serving the tight one first loses at most the loose one.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -324,3 +324,34 @@ def plan(facilities: Sequence[dict[str, Any]],
                     for t in waiting_transfers)
     return LinehaulPlan(trips=tuple(trips), rolled=rolled, reasons=reasons,
                         declined=tuple(declined))
+
+
+def depot_bound(inflow: Sequence[dict[str, Any]],
+                ready_at: Mapping[str, int], *,
+                hub_id: str) -> list[dict[str, Any]]:
+    """The ready envelopes this package has to move, stamped with when.
+
+    §5.3's whole boundary in one line: an envelope is line-haul's problem if it
+    is ready today and its facility is not the hub. Hub-direct envelopes are
+    not "not transported" -- they are already where they will be dispatched
+    from, so they never enter a circuit.
+    """
+    return [dict(e, expected_ready_at=ready_at[e["package_id"]])
+            for e in inflow
+            if e["package_id"] in ready_at and e["facility_id"] != hub_id]
+
+
+def strip_rolled(positioned: dict[str, list[dict[str, Any]]],
+                 night: LinehaulPlan, *, hub_id: str) -> None:
+    """Take back what no circuit carried, so a depot is not promised it.
+
+    A rolled envelope is still at the hub in the morning. Leaving it in the
+    depot's pool would offer §5.4 an envelope that is not there -- the one
+    error §7.1's depot bullet exists to prevent. The hub's own pool is left
+    alone: nothing rolls when it never had to travel.
+    """
+    rolled = {pid for ids in night.rolled.values() for pid in ids}
+    for facility, pool in positioned.items():
+        if facility != hub_id:
+            positioned[facility] = [e for e in pool
+                                    if e["package_id"] not in rolled]

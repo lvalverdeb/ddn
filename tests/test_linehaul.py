@@ -397,3 +397,62 @@ def test_a_record_that_states_no_role_is_still_available():
     unmarked = {"vehicle_id": "VAN-99", "type": "van"}
 
     assert linehaul.available([unmarked]) == [unmarked]
+
+
+# ------------------- §5.3's boundary, promoted out of simulation/day.py
+
+READY_AT = {"P-hub": 0, "P-depot": 8 * 3600}
+INFLOW = [
+    {"package_id": "P-hub", "facility_id": "HUB"},
+    {"package_id": "P-depot", "facility_id": "D1"},
+    {"package_id": "P-slow", "facility_id": "D2"},   # not ready today
+]
+
+
+def test_depot_bound_is_ready_and_not_at_the_hub():
+    """§5.3's whole boundary: ready today, and somewhere the hub is not.
+
+    Hub-direct envelopes are not "not transported" — they are already where
+    they will be dispatched from, so they never enter a circuit. An envelope
+    still in processing has no ready time and cannot be loaded either.
+    """
+    moving = linehaul.depot_bound(INFLOW, READY_AT, hub_id="HUB")
+
+    assert [e["package_id"] for e in moving] == ["P-depot"]
+    assert moving[0]["expected_ready_at"] == 8 * 3600, "the van needs the time"
+
+
+def test_depot_bound_does_not_touch_the_records_it_reads():
+    """The stamped copy is a copy. §5.4 reads the same inflow afterwards."""
+    before = [dict(e) for e in INFLOW]
+    linehaul.depot_bound(INFLOW, READY_AT, hub_id="HUB")
+    assert INFLOW == before
+
+
+def test_strip_rolled_takes_back_what_no_circuit_carried():
+    """A rolled envelope is still at the hub in the morning.
+
+    Leaving it in the depot's pool would offer §5.4 an envelope that is not
+    there — the one error §7.1's depot bullet exists to prevent.
+    """
+    positioned = {"HUB": [{"package_id": "P-hub"}],
+                  "D1": [{"package_id": "P-a"}, {"package_id": "P-rolled"}]}
+    night = linehaul.LinehaulPlan(trips=(), rolled={"D1": ("P-rolled",)})
+
+    linehaul.strip_rolled(positioned, night, hub_id="HUB")
+
+    assert [e["package_id"] for e in positioned["D1"]] == ["P-a"]
+
+
+def test_strip_rolled_leaves_the_hub_alone():
+    """Nothing rolls when it never had to travel.
+
+    The hub's pool is not a line-haul destination, so a package id appearing
+    in both places is a coincidence of naming, not a package to remove.
+    """
+    positioned = {"HUB": [{"package_id": "P-rolled"}], "D1": []}
+    night = linehaul.LinehaulPlan(trips=(), rolled={"D1": ("P-rolled",)})
+
+    linehaul.strip_rolled(positioned, night, hub_id="HUB")
+
+    assert [e["package_id"] for e in positioned["HUB"]] == ["P-rolled"]

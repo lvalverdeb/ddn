@@ -177,3 +177,42 @@ def _cleared(envelope: Mapping[str, Any],
     """When this envelope reached the sorter, and its id to break a tie."""
     package_id = envelope["package_id"]
     return (assembled_at.get(package_id, reconciled_at[package_id]), package_id)
+
+
+def ready_times(dispatch: Any,
+                inflow: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """§5.2.5, over the envelopes whose bags actually reached the hub.
+
+    `dispatch` is a §5.1 `pickups.Dispatch`, taken duck-typed rather than
+    imported: §5.2 is downstream of §5.1 in the day, but making this module
+    depend on that one would put the two stages in one knot for the sake of
+    three attribute reads.
+    """
+    collected = set(dispatch.collected)
+    arrival_of = {bag: dispatch.returned_at.get(van, 0)
+                  for van, route in dispatch.routes.items() for bag in route}
+    return {r.package_id: r.ready_at for r in schedule(
+        [e for e in inflow if e["mailbag_id"] in collected], arrival_of)}
+
+
+def position(positioned: dict[str, list[dict[str, Any]]],
+             ready_at: Mapping[str, int],
+             requests: Sequence[dict[str, Any]],
+             inflow: Sequence[dict[str, Any]]) -> None:
+    """Put each ready envelope at its facility, carrying the customer's site.
+
+    §5.5's stop is the sender, not the recipient's address, and the hub knows
+    it from the upload file that brought the bag -- so it is attached now,
+    because by the time an envelope is rejected the request it arrived in is
+    long gone. §9.1's envelope table has no room for it, which is why this is
+    stamped onto the record rather than looked up later.
+    """
+    site_of = {r["mailbag_id"]: (r["lat"], r["lon"]) for r in requests}
+    by_id = {e["package_id"]: e for e in inflow}
+    for package_id, when in ready_at.items():
+        envelope = by_id[package_id]
+        site = site_of.get(envelope["mailbag_id"])
+        positioned.setdefault(envelope["facility_id"], []).append(
+            dict(envelope, expected_ready_at=when,
+                 customer_lat=site[0] if site else envelope["lat"],
+                 customer_lon=site[1] if site else envelope["lon"]))

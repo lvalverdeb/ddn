@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
+import pathlib
+
 import pytest
 
-from ddn import assumptions
+from ddn import assumptions, processing
 from ddn.processing import Readiness, presort, requires_assembly, schedule
 from ddn.processing.readiness import ASSEMBLY_TYPES
 from tests.fixtures import peak_day
@@ -243,3 +246,82 @@ def test_a_closer_sla_date_goes_first_among_equals():
                                               assembly_per_hour=1)}
 
     assert done["SOON"].assembled_at < done["LATE"].assembled_at
+
+
+# ------------------------------- §5.2.5 over a day's pickups (was in day.py)
+
+class _Dispatch:
+    """The three attributes `ready_times` reads off a §5.1 `pickups.Dispatch`."""
+
+    def __init__(self, collected, routes, returned_at):
+        self.collected, self.routes, self.returned_at = collected, routes, returned_at
+
+
+def test_ready_times_covers_the_bags_that_came_back_and_no_others():
+    """§5.2.5 times what arrived. A bag still at the customer has no ready time.
+
+    The distinction matters downstream: §5.3 loads a van from this mapping, so
+    an envelope given a time it has not earned would be promised to a depot it
+    is not travelling to.
+    """
+    inflow = [{"package_id": "P-1", "mailbag_id": "BAG-1", "package_type": "finished"},
+              {"package_id": "P-2", "mailbag_id": "BAG-2", "package_type": "finished"}]
+    dispatch = _Dispatch(collected={"BAG-1"}, routes={"VAN-1": ["BAG-1"]},
+                         returned_at={"VAN-1": 9 * 3600})
+
+    ready_at = processing.ready_times(dispatch, inflow)
+
+    assert set(ready_at) == {"P-1"}
+    assert ready_at["P-1"] > 9 * 3600, "ready is after the bag got back, not at"
+
+
+def test_ready_times_takes_a_dispatch_without_importing_pickups():
+    """§5.2 is downstream of §5.1 in the day but not in the import graph.
+
+    Three attribute reads are not worth tying the two stages together, and the
+    stand-in above is the proof: anything answering `collected`, `routes` and
+    `returned_at` works.
+    """
+    imported = {name
+                for node in ast.walk(ast.parse(
+                    pathlib.Path("ddn/processing/readiness.py").read_text()))
+                if isinstance(node, ast.ImportFrom)
+                for name in [node.module or ""]}
+    assert not any(m.startswith("ddn.pickups") for m in imported), imported
+
+
+def test_position_carries_the_sender_site_off_the_request():
+    """§5.5 returns an envelope to the *sender*, whose site only the bag knows.
+
+    By the time an envelope is rejected the request it arrived in is long gone,
+    so the coordinates are stamped on now. §9.1's envelope table has no field
+    for them, which is why they ride on the record rather than being looked up.
+    """
+    requests = [{"mailbag_id": "BAG-1", "lat": 9.93, "lon": -84.08}]
+    inflow = [{"package_id": "P-1", "mailbag_id": "BAG-1", "facility_id": "D1",
+               "lat": 10.0, "lon": -84.2}]
+    positioned: dict[str, list] = {}
+
+    processing.position(positioned, {"P-1": 8 * 3600}, requests, inflow)
+
+    placed, = positioned["D1"]
+    assert (placed["customer_lat"], placed["customer_lon"]) == (9.93, -84.08)
+    assert (placed["lat"], placed["lon"]) == (10.0, -84.2), "recipient unchanged"
+    assert placed["expected_ready_at"] == 8 * 3600
+
+
+def test_position_falls_back_to_the_envelope_when_no_request_carries_the_bag():
+    """A bag with no matching request still gets a site rather than none.
+
+    `returns.sites` reads the field unconditionally and `simulation.day`
+    refuses to guess when it is missing, so an absent request must degrade to
+    a worse answer, not to a crash two stages later.
+    """
+    inflow = [{"package_id": "P-1", "mailbag_id": "BAG-MISSING",
+               "facility_id": "HUB", "lat": 10.0, "lon": -84.2}]
+    positioned: dict[str, list] = {}
+
+    processing.position(positioned, {"P-1": 0}, [], inflow)
+
+    placed, = positioned["HUB"]
+    assert (placed["customer_lat"], placed["customer_lon"]) == (10.0, -84.2)

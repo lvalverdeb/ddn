@@ -25,7 +25,7 @@ unserved *in the same places every day*, which §7.2 already penalises through
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -216,3 +216,15 @@ def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
     return FacilityPlan(facility_id=facility["id"], bikes=bikes,
                         offered=len(packages), problem=problem,
                         solution=solution, verified=verify(problem, solution).ok)
+
+
+def expired(envelope: Mapping[str, Any], today: date) -> bool:
+    """§6.1's clock: this envelope's SLA date is already behind us.
+
+    Deliberately narrower than `contract.triage`, which applies the same test
+    and then also withholds on geocode confidence, status and `excluded_by_ops`.
+    Substituting triage here would change the cohort silently, which is the
+    kind of swap that looks like a simplification in review.
+    """
+    raw = envelope.get("sla_date")
+    return bool(raw) and date.fromisoformat(raw) < today

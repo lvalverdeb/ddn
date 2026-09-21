@@ -14,7 +14,7 @@ import pytest
 from vrp.model import TravelMatrix
 from vrp.solve.pyvrp_adapter import solve
 
-from ddn import assumptions, contract, returns
+from ddn import assumptions, contract, lastmile, returns
 from ddn import solver_adapter as sa
 from ddn.allocation import EFFECTIVE_PER_BIKE
 from ddn.lastmile import select
@@ -248,3 +248,43 @@ def test_the_fixture_still_carries_section_10s_outcomes():
     assert (peak_day.DELIVERED + peak_day.REJECTED + peak_day.DEFECTIVE
             + peak_day.POSTPONED) == peak_day.DISPATCHED - peak_day.UNASSIGNED
     assert peak_day.TOMORROW_POOL == 4820
+
+
+# ------------------------ §6.1's clock, promoted out of simulation/day.py
+
+TODAY = date(2026, 9, 17)
+
+
+@pytest.mark.parametrize("sla, gone", [
+    ("2026-09-16", True),    # yesterday
+    ("2026-09-17", False),   # today is not expiry — §6.1 makes it must-deliver
+    ("2026-09-18", False),
+    (None, False),           # §9.1 allows no date; absent is not expired
+    ("", False),
+])
+def test_expired_is_strictly_before_today(sla, gone):
+    """§6.1: SLA date = today is a hard *must-deliver*, not an expiry.
+
+    The boundary is the whole point. Treating today as expired would sweep the
+    envelopes the spec says must go out first.
+    """
+    assert lastmile.expired({"sla_date": sla}, TODAY) is gone
+
+
+def test_expired_is_not_triage_and_the_difference_is_the_cohort():
+    """Why this lives beside `select` and not as a call to `contract.triage`.
+
+    Triage applies the same SLA test and then *also* withholds on geocode
+    confidence, status and `excluded_by_ops` (§8.2). Substituting it here would
+    look like a simplification in review and would quietly change which
+    envelopes the day sweeps.
+    """
+    low_confidence = {"package_id": "P-1", "sla_date": "2026-09-18",
+                      "status": "Ready", "geocode_confidence": "low"}
+
+    assert lastmile.expired(low_confidence, TODAY) is False
+
+    routable, withheld = contract.triage([low_confidence], today=TODAY)
+    assert not routable and withheld, (
+        "triage withholds this envelope; `expired` must not, or the sweep "
+        "changes cohort without saying so")

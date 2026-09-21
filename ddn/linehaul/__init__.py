@@ -16,8 +16,10 @@ from ddn.linehaul.plan import (
     LinehaulPlan,
     Trip,
     available,
+    depot_bound,
     latest_departure,
     plan,
+    strip_rolled,
 )
 
 __all__ = [
@@ -34,6 +36,8 @@ __all__ = [
     "Transit",
     "Trip",
     "available",
+    "depot_bound",
     "latest_departure",
     "plan",
+    "strip_rolled",
 ]
