@@ -132,13 +132,18 @@ async def state(pool: ArqRedis, job_id: str) -> dict[str, Any]:
     status = await job.status()
     info = await job.result_info()
     result = info.result if info and info.success else None
-    return {
+    envelope = {
         "job_id": job_id,
         "status": str(getattr(status, "value", status)),
         "result": result if isinstance(result, dict) else None,
-        "violations": (result or {}).get("violations", [])
-        if isinstance(result, dict) else [],
     }
+    # §13.1 asks every *routing* result to carry its §7.1 list. Defaulting the
+    # key to [] here handed one to §4.2's allocation too, which produces no
+    # routes and has no §7.1 surface -- the empty list `runner.allocation_plan`
+    # was changed to stop claiming, restored one layer up by the envelope.
+    if isinstance(result, dict) and "violations" in result:
+        envelope["violations"] = result["violations"]
+    return envelope
 
 
 def isoday(value: date | str) -> str:

@@ -1,7 +1,7 @@
 # Mini end-to-end 3 — Delivery from each depot and outcome handling
 
 **Status:** Draft v0.1 · 21 September 2026
-**Parent:** `docs/vrp-problem-definition.md` v0.13 (§4.1–4.2, §5.2.6, §5.4, §5.5, §6, §7, §8, §9, §13)
+**Parent:** `docs/vrp-problem-definition.md` v0.14 (§4.1–4.2, §5.2.6, §5.4, §5.5, §6, §7, §8, §9, §13)
 **Purpose:** Define a self-contained slice covering a single facility's delivery day: from morning route release on the positioned pool, through motorbike routing and delivery attempts, to every outcome's consequence — delivered, rejected, returned (defective), postponed with retry, cancelled, and SLA expiry — and the hand-offs those create for the return run and for transfers. The same slice applies to the hub acting as a delivery depot.
 
 ---

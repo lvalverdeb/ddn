@@ -195,13 +195,17 @@ def test_tomorrows_pool_exceeds_the_fleet_by_about_eighteen_hundred(simulated):
     v0.13 restated it — 4,690 and ~1,700 were v0.12's, before §10 accounted
     for D2–D6's 130 unassigned.
     """
-    _, tomorrow = simulated
+    report, tomorrow = simulated
     capacity = FLEET * EFFECTIVE_PER_BIKE
     assert capacity == 3000
     # Short of §10's 4,820 by whatever §5.1.6 refused today, and still half
     # again what the fleet can serve. The gap is asserted as a gap rather
     # than as a total, so an invented cut-off moving does not red this.
     assert tomorrow.pool_size < peak_day.TOMORROW_POOL
+    # And bounded below, because `<` alone would pass a day that lost the
+    # pool entirely. §10 builds tomorrow's pool as positioned + unassigned
+    # + postponed, so it cannot be under what was positioned today.
+    assert tomorrow.pool_size > sum(report.positioned.values())
     assert tomorrow.pool_size > capacity * 1.4
 
 

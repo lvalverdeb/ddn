@@ -1,7 +1,7 @@
 # Mini end-to-end 1 — Mailbag pickups to the consolidation hub
 
 **Status:** Draft v0.1 · 21 September 2026
-**Parent:** `docs/vrp-problem-definition.md` v0.13 (§3.2, §4.1, §4.3, §5.1, §5.2, §7, §9, §13)
+**Parent:** `docs/vrp-problem-definition.md` v0.14 (§3.2, §4.1, §4.3, §5.1, §5.2, §7, §9, §13)
 **Purpose:** Define a self-contained, testable slice covering everything from a customer declaring a mailbag ready to that bag's envelopes becoming Ready at the hub, so this slice can be built, run and accepted independently of line-haul and delivery.
 
 This document scopes; it does not restate. Where a rule is already in the parent spec, it is cited, not copied. Where this slice needs something the parent does not say, it is stated here and flagged for promotion to the parent.

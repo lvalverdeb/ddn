@@ -1,7 +1,7 @@
 # Mini end-to-end 2 — Hub to depots: keep or transport
 
 **Status:** Draft v0.1 · 21 September 2026
-**Parent:** `docs/vrp-problem-definition.md` v0.13 (§3.1–3.3, §4.1–4.3, §5.2.4–5.2.5, §5.3, §7, §8.3, §9, §13)
+**Parent:** `docs/vrp-problem-definition.md` v0.14 (§3.1–3.3, §4.1–4.3, §5.2.4–5.2.5, §5.3, §7, §8.3, §9, §13)
 **Purpose:** Define a self-contained slice covering everything from an envelope becoming Ready at the hub to its being positioned, by morning route release, at the facility that will deliver it — either kept at the hub or transported to a depot — including inter-depot transfers and returns riding the same circuits.
 
 ---

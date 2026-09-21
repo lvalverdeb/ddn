@@ -162,7 +162,9 @@ async def test_a_job_runs_on_the_queue_and_reports_its_result(client, pool):
     done = (await client.get(accepted["poll"])).json()
     assert done["status"] == "complete"
     assert sum(done["result"]["targets"].values()) == 10
-    assert done["violations"] == []
+    assert done["violations"] is None, (
+        "§4.2 produces no routes, so §13.1 asks it for no list — an empty "
+        "one would be the clean bill allocation_plan stopped giving")
 
 
 async def test_the_audit_records_actor_and_time_on_a_lock(client, store, pool):

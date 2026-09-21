@@ -206,6 +206,10 @@ async def test_the_peak_day_through_the_api_matches_task_5(
             + report["rolled_envelopes"]) == peak_day.READY
     assert report["rolled"] == {}
     assert state["result"]["tomorrow_pool"] < peak_day.TOMORROW_POOL
+    assert (state["result"]["tomorrow_pool"]
+            > sum(report["positioned"].values())), (
+        "bounded below too: §10 builds it as positioned + unassigned + "
+        "postponed, so an upper bound alone would pass a day that lost it")
     assert report["binding"] == "van-hours", (
         "§8.3's prediction, visible only once travel is road travel")
     assert report["moves"] == 0

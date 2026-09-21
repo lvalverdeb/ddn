@@ -236,9 +236,15 @@ class JobState(Strict):
     job_id: str
     status: str
     result: dict | None = None
-    violations: list[Violation] = Field(
-        default_factory=list,
-        description="§13.1: every routing result carries its §7.1 list")
+    #: §13.1 asks every *routing* result for its §7.1 list. `None` where the
+    #: job is not one -- §4.2's allocation produces no routes and no §7.1
+    #: bullet predicates over what it returns, so an empty list there would be
+    #: the "checked and clean" claim `runner.allocation_plan` was changed to
+    #: stop making. A default of `[]` made that claim for it.
+    violations: list[Violation] | None = Field(
+        default=None,
+        description="§13.1: every routing result carries its §7.1 list; "
+                    "null where the job is not a routing result")
 
 
 class Violation(Strict):
