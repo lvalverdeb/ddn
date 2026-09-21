@@ -8,6 +8,7 @@ without losing any. Nothing here measures the operation.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 
 import pytest
@@ -581,3 +582,152 @@ def test_a_facility_that_states_no_release_falls_back_to_the_registry():
 
     assert len(raised) == 1
     assert raised[0].deadline.time() == assumptions.ROUTE_RELEASE
+
+
+# ----------------------------------- the oracle `tests/e2e/test_chain.py` uses
+
+# §10's day threaded from an *empty* start: day D collects and positions,
+# day D+1 delivers what day D left. Every other test in this file seeds
+# `State.pools` from the fixture and gets a day that does both at once, which
+# is the right shape for asking what a day does and the wrong one for asking
+# whether three slices reproduce it — `run_day` is `_attempt` -> `_doorstep` ->
+# `_raise_transfers` -> `_collect`, so a single call delivers a pool that the
+# same call is still collecting.
+#
+# The chain compares against these two calls, so the figures below are pinned
+# *here*, in the simulator's own suite, and the chain reads them off the report
+# at runtime instead of restating them. A chain that disagrees is wrong; a
+# refactor that moves one of these is also wrong. Do not re-pin to match.
+
+EMPTY_START_POSITIONED = {"HUB": 1368, "D1": 767, "D2": 605,
+                          "D3": 500, "D4": 400, "D5": 320, "D6": 180}
+
+
+def _threaded(inputs, **kwargs):
+    """§10's day as two `run_day` calls, never `run_days(2, ...)`.
+
+    `run_days` returns only the reports and drops the `State` between them
+    (`day.py:600-606`), and the chain needs the intermediate night.
+    """
+    day = inputs["_day"]
+    forward = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    collected, night = run_day(State(day=day.collection_day, pools={}),
+                               seed=7, **forward)
+    delivered, tomorrow = run_day(night, seed=7, **kwargs, **forward)
+    return collected, night, delivered, tomorrow
+
+
+def test_the_peak_day_threaded_from_an_empty_start(inputs):
+    """What the two days answer, as literals, so the chain need not guess.
+
+    These are §10's day *as this simulator answers it* — not §10's own
+    published figures, which `tests/fixtures/peak_day.py` carries and which
+    this run does not reproduce (see the deviations noted below). Moving one of
+    these numbers is a statement about the simulator or the fixture and belongs
+    in a commit that says which.
+    """
+    day = inputs["_day"]
+    collected, night, delivered, tomorrow = _threaded(inputs)
+
+    # Day D: nothing to deliver, because nothing was positioned before it.
+    # Two equalities rather than `< something`: an unbounded guard is how this
+    # repository last shipped a test that zero would have passed.
+    assert collected.day == day.collection_day
+    assert collected.tally.dispatched == 0
+    assert collected.tally.ready_pool == 0
+    assert collected.positioned == EMPTY_START_POSITIONED
+    assert sum(collected.positioned.values()) == 4140
+    assert collected.tally.received == 4550
+    assert collected.uncollected == 410          # §5.1.6: bags no van reached
+    assert collected.carried_into_tomorrow == 4140
+
+    # The night carries exactly what was positioned, in the same buckets.
+    assert {f: len(p) for f, p in night.pools.items()} == EMPTY_START_POSITIONED
+    assert night.returns_queue == ()
+
+    # Day D+1 delivers it. 3,000 is the fleet's own ceiling — 120 bikes at
+    # `EFFECTIVE_PER_BIKE` — not a figure about the pool, which is 4,140.
+    assert delivered.day == day.delivery_day
+    assert delivered.tally.ready_pool == 4140
+    assert delivered.tally.dispatched == FLEET * EFFECTIVE_PER_BIKE == 3000
+    assert delivered.outcomes == {"Delivered": 2794, "Postponed": 121,
+                                  "Rejected": 51, "Returned": 34}
+    assert delivered.postponed_reasons == {"recipient unavailable": 56,
+                                           "driver out of time": 38,
+                                           "incorrect address": 27}
+    assert len(delivered.unassigned) == 1140
+    assert {u.reason for u in delivered.unassigned} == {"count"}
+    assert delivered.return_stops == 15
+    assert delivered.violations == ()
+
+    # Two deviations from §10, recorded rather than smoothed over.
+    #
+    # First: day D+1 is handed the same `inflow` again, so it collects the same
+    # bags a second time. `carried_into_tomorrow` is therefore the re-collected
+    # 4,140 *plus* the 1,261 the delivery left behind, not the 1,261 alone.
+    assert delivered.carried_into_tomorrow == 5401
+    assert sum(delivered.positioned.values()) == 4140
+    assert (delivered.carried_into_tomorrow - sum(delivered.positioned.values())
+            == len(delivered.unassigned) + delivered.outcomes["Postponed"]
+            == 1261)
+
+    # Second: every envelope here is on its first attempt and none has expired,
+    # so three tally fields that look independent carry no information, and
+    # §6.1's expiry sweep is never exercised by this pair of days.
+    assert delivered.tally.sla_expired == 0
+    assert (delivered.tally.delivered
+            == delivered.tally.delivered_first_attempt
+            == delivered.tally.delivered_within_sla == 2794)
+    assert sum(len(p) for p in tomorrow.pools.values()) == 5401
+    assert len(tomorrow.returns_queue) == 52
+
+
+def test_a_recording_deliver_and_rates_change_nothing_about_the_day(inputs):
+    """`deliver` and `rates` are public, so the chain can watch without altering.
+
+    `tests/e2e/test_chain.py` needs per-package outcomes, which `DayReport`
+    does not publish — it publishes counts. Rather than add an accessor to the
+    simulator, which Task 14 forbids ("do not adjust the simulator to match"),
+    the chain passes a `deliver` that records what it was offered and returns
+    it unchanged, and a `Rates` that records what it drew and returns it
+    unchanged.
+
+    This test is what makes that safe. It compares two independent `run_day`
+    runs — plain against instrumented — and is not a value compared against
+    itself. If a future change makes the instruments observable, the chain's
+    oracle stops being the simulator's own answer, and this reds first.
+    """
+    _, _, plain_d, plain_t = _threaded(inputs)
+
+    drawn: list[str] = []
+    attempted: list[tuple[dict, str]] = []
+
+    class Recording:
+        """Everything `Rates` does, plus a note of what `draw` returned."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def draw(self, rng):
+            outcome = self._inner.draw(rng)
+            drawn.append(outcome)
+            return outcome
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    def spy(offered, facility, bikes):
+        attempted.extend((envelope, facility) for envelope in offered)
+        return list(offered), []
+
+    _, _, watched_d, watched_t = _threaded(
+        inputs, deliver=spy, rates=Recording(Rates()))
+
+    assert watched_d == plain_d, "a recording deliver changed the day's report"
+    assert watched_t == plain_t, "a recording deliver changed tomorrow's state"
+
+    # And the instruments saw the whole day, not a sample of it.
+    assert len(attempted) == plain_d.tally.dispatched == len(drawn)
+    assert len({e["package_id"] for e, _ in attempted}) == len(attempted)
+    assert Counter(drawn) == plain_d.outcomes
+    assert Counter(f for _, f in attempted)["HUB"] == 1200
