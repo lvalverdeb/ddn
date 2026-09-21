@@ -262,3 +262,17 @@ def _visit(van: _Van, bag: Mapping[str, Any], at: int,
         return Visit(van.id, mailbag_id, at, collected=True, incident=incident)
 
     return Visit(van.id, mailbag_id, at, collected=True)
+
+
+def uncollected(dispatch: Dispatch | None,
+                inflow: Sequence[Mapping[str, Any]]) -> int:
+    """Envelopes on a bag no van brought back before §5.1.6's cut-off.
+
+    A day with no pickups collected nothing, so every envelope of the inflow is
+    uncollected -- not zero, which would read as "all collected" and is the
+    answer that makes the conservation identity silently true.
+    """
+    if dispatch is None:
+        return len(inflow)
+    collected = set(dispatch.collected)
+    return sum(1 for e in inflow if e["mailbag_id"] not in collected)

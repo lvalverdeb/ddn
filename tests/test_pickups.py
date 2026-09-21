@@ -20,6 +20,7 @@ day's delay for every envelope aboard.
 from __future__ import annotations
 
 from ddn import pickups
+from ddn.pickups import Dispatch, Visit
 
 HOUR = 3600
 HUB = {"id": "HUB", "lat": 9.9472, "lon": -84.0531,
@@ -219,3 +220,38 @@ def test_a_bag_is_one_bag_however_many_envelopes_it_holds():
 
     assert small[pickups.BAGS] == huge[pickups.BAGS] == 1
     assert huge["envelope_count"] == 400, "§5.2 still needs the count"
+
+
+# ------------------- §5.1.6's loss channel, promoted out of simulation/day.py
+
+# BAG-2 carries two envelopes and BAG-1 one, so counting bags and counting
+# envelopes give different answers (1 against 2). An earlier version of this
+# fixture put the pair on the collected bag, where both answers were 1 and the
+# test below passed on either implementation.
+INFLOW = [{"package_id": "P-1", "mailbag_id": "BAG-1"},
+          {"package_id": "P-2", "mailbag_id": "BAG-2"},
+          {"package_id": "P-3", "mailbag_id": "BAG-2"}]
+
+
+def test_uncollected_counts_envelopes_not_bags():
+    """Two envelopes on one uncollected bag are two envelopes lost, not one.
+
+    §5.1.6's cut-off is about bags; the day's conservation identity is about
+    envelopes, and a bag is the wrong unit for it.
+    """
+    dispatch = Dispatch(visits=(Visit(mailbag_id="BAG-1", van_id="VAN-1",
+                                      at=0, collected=True),))
+
+    assert pickups.uncollected(dispatch, INFLOW) == 2
+    assert len({e["mailbag_id"] for e in INFLOW}) - 1 == 1, (
+        "the fixture must distinguish the two counts, or this proves nothing")
+
+
+def test_a_day_with_no_pickups_lost_everything_not_nothing():
+    """`None` means no pickup day ran, so the whole inflow is uncollected.
+
+    Zero would read as "all collected" and is precisely the answer that makes
+    the three-way conservation identity — positioned + uncollected + rolled ==
+    ready — silently true on a day that did nothing.
+    """
+    assert pickups.uncollected(None, INFLOW) == len(INFLOW) == 3

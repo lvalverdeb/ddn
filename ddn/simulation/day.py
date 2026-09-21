@@ -344,19 +344,6 @@ def _collect(facilities: Sequence[dict[str, Any]],
     return _Collection(dispatch, night, positioned)
 
 
-def _uncollected(dispatch: Any, inflow: Sequence[Mapping[str, Any]]) -> int:
-    """Envelopes on a bag no van brought back before §5.1.6's cut-off.
-
-    A day with no pickups collected nothing, so every envelope of the inflow is
-    uncollected -- not zero, which would read as "all collected" and is the
-    answer that makes the conservation identity silently true.
-    """
-    if dispatch is None:
-        return len(inflow)
-    collected = set(dispatch.collected)
-    return sum(1 for e in inflow if e["mailbag_id"] not in collected)
-
-
 def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
     """§5.5, and a refusal to guess where an envelope came from.
 
@@ -539,7 +526,7 @@ def run_day(
         rolled=dict(night.reasons),
         return_stops=len(stops),
         carried_into_tomorrow=sum(len(p) for p in tomorrow.values()),
-        uncollected=_uncollected(dispatch, inflow),
+        uncollected=pickups.uncollected(dispatch, inflow),
         rolled_envelopes=sum(len(ids) for ids in night.rolled.values()),
         transfers_raised=len(transfers),
         transfers_carried=sum(len(trip.transfer_ids) for trip in night.trips),
