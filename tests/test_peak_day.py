@@ -42,6 +42,8 @@ SECTION_10 = (
         "2,750 delivered", "50 rejected", "30 defective", "120 postponed",
         "80 envelopes to 30 customer sites, 2 vans",
         "4,550 positioned today + 150 unassigned + 120 postponed = 4,820",
+        ("3,100 envelopes made ready and transported yesterday "
+         "(2,700 new + 400 postponed held locally)"),
     ],
 )
 def test_the_fixtures_figures_are_section_10s_own_words(figure):
@@ -60,6 +62,9 @@ def test_transcribed_constants_match_those_words():
     assert peak_day.LOW_CONFIDENCE_HELD == 40
     assert peak_day.READY == 4550
     assert sum(peak_day.BIKE_ALLOCATION.values()) == peak_day.MOTORBIKES
+    assert peak_day.MORNING_POOL == 3100
+    assert peak_day.MORNING_NEW == 2700
+    assert peak_day.MORNING_POSTPONED == 400
 
 
 def test_section_10_closes_and_the_fixture_checks_it():
@@ -180,3 +185,42 @@ def test_four_of_the_six_pickup_vans_are_released_to_line_haul():
     pickups = [v for v in vans if v.role is VehicleRole.PICKUP]
     assert len(pickups) == peak_day.PICKUP_VANS
     assert sum(v.linehaul_release_at is not None for v in pickups) == 4
+
+
+# --------------------------------------------- §10's morning pool of 3,100
+
+
+def test_the_morning_pool_carries_section_10s_four_hundred_postponed():
+    """§10: "3,100 ... (2,700 new + 400 postponed held locally)".
+
+    It carried 388. The builder flagged every eighth envelope and 3,100/400 is
+    7.75, so no integer stride could have been right — `% 8` gives 388 and
+    `% 7` gives 443. `MORNING_POSTPONED` was never read, so the constant said
+    400 beside a builder producing 388 and nothing compared them.
+    """
+    pool = peak_day.morning_pool()
+    postponed = [e for e in pool if e.attempt_number > 0]
+
+    assert len(pool) == peak_day.MORNING_POOL
+    assert len(postponed) == peak_day.MORNING_POSTPONED
+    assert all(e.attempt_number == 1 for e in postponed), "§6: one prior attempt"
+    assert len(pool) - len(postponed) == peak_day.MORNING_NEW
+
+
+def test_the_postponed_are_held_at_the_facility_that_attempted_them():
+    """§10 says they are "held locally" and does not split them by facility.
+
+    Interpretation, stated rather than chosen silently (CLAUDE.md): locally
+    means at whichever facility attempted the delivery, including the hub,
+    which runs delivery routes of its own. So each facility's share of
+    yesterday's postponements is its share of the pool. A build that put all
+    400 at the hub would satisfy the count and contradict the word.
+    """
+    postponed = [e for e in peak_day.morning_pool() if e.attempt_number > 0]
+    held = Counter(e.facility_id for e in postponed)
+
+    assert set(held) == set(peak_day.MORNING_BY_FACILITY), "every facility"
+    for facility, share in peak_day.MORNING_BY_FACILITY.items():
+        exact = share * peak_day.MORNING_POSTPONED / peak_day.MORNING_POOL
+        assert abs(held[facility] - exact) < 1, (
+            f"{facility} holds {held[facility]} of 400 against a share of {exact:.2f}")

@@ -10,3 +10,4 @@ dist/
 
 # Linter report, regenerated on demand.
 spaghetti.json
+.ipynb_checkpoints/

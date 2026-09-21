@@ -372,6 +372,16 @@ MORNING_BY_FACILITY = {"HUB": 1150, "D1": 620, "D2": 412, "D3": 348,
                        "D4": 253, "D5": 203, "D6": 114}
 
 
+def _is_postponed(index: int) -> bool:
+    """Whether the `index`-th envelope of the morning pool is a retry.
+
+    True for exactly `MORNING_POSTPONED` of `MORNING_POOL` indices, spread
+    evenly. See the call site.
+    """
+    return ((index + 1) * MORNING_POSTPONED // MORNING_POOL
+            > index * MORNING_POSTPONED // MORNING_POOL)
+
+
 def morning_pool(seed: int = SEED) -> tuple[Envelope, ...]:
     """§10's morning pool: what today's delivery routes are built on.
 
@@ -409,8 +419,14 @@ def morning_pool(seed: int = SEED) -> tuple[Envelope, ...]:
                 priority=float(rng.randrange(low, high + 1)),
                 sla_date=(DELIVERY_DAY if index % 40 == 0
                           else DELIVERY_DAY + timedelta(days=3)),
-                # §10's 400 postponed are held locally for another attempt.
-                attempt_number=1 if index % 8 == 0 else 0))
+                # §10's 400 postponed, held locally for another attempt.
+                # Spaced 3,100/400 apart rather than by an integer stride: the
+                # ratio is 7.75, so `index % 8` -- what stood here -- gives 388
+                # and no whole number gives 400. Spacing also spreads them
+                # across the facilities in proportion to each one's share,
+                # which is what "held locally" means when the hub runs delivery
+                # routes of its own.
+                attempt_number=1 if _is_postponed(index) else 0))
     return tuple(envelopes)
 
 

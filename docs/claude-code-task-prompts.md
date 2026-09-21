@@ -165,3 +165,45 @@ Input: `docs/audit/conformance-2026-09-19.md` and spec v0.13, which corrects §1
 > - Bump `CLAUDE.md`, `README.md`, `ddn/api/app.py` version, `docs/capacity-finding.md` and `docs/solver-capabilities.md` to the current spec version; reorder §14 chronologically in the proposal.
 >
 > Finish by re-running the audit's nine mutations and pasting a table of results, then the full runner output.
+
+---
+
+# Slice tasks (mini end-to-ends, docs/e2e/*.md)
+
+Prerequisite: Tasks 10–13 complete and re-audited. Rules: slices orchestrate existing modules; `e2e/*/run.py` calls, never computes; new logic lands in the owning module with tests there; every acceptance test is named by its row ID and cites the slice document. Start with `/effort ultracode`.
+
+## Task 14 — Harness scaffold and chaining test
+
+> Create `ddn/e2e/` with one package per slice (`pickups_to_hub`, `hub_to_depots`, `depot_delivery`), each containing `scenario.py`, `run.py`, `handoff.py`. Read docs/e2e/e2e-1..3 for the inputs/outputs tables; the hand-off models are exactly those tables, as Pydantic models reused by `ddn/api/schemas.py` (no duplicates).
+>
+> - Hand-offs: `ReadyPool` (E2E-1 → E2E-2), `PositionedPool` + `ReturnLoads` + `TransferOutcomes` (E2E-2 → E2E-3), `DayOutcomes` + `ReturnLoad` + `TransferRequests` (E2E-3 → E2E-2 next day). Each serialises to JSON under `tests/e2e/handoffs/` so a slice can be run from a file.
+> - `run.py` in each package: a single function composing the existing module calls in the order the slice document's §1 describes. Assert by inspection (and a test using AST) that `run.py` imports nothing from `ddn/solver_adapter/problem.py`-level internals and contains no loop over envelopes that filters or ranks — that belongs in modules.
+> - Chaining test `tests/e2e/test_chain.py`: run 1 → 2 → 3 on the §10 v0.13 peak day, feeding each slice the previous hand-off, and assert the final `DayOutcomes` equals `simulation.run_day`'s report on the same fixture field for field. If they differ, the slice decomposition is wrong; do not adjust the simulator to match.
+> - Stub acceptance tests for every row A1–A9, B1–B9, C1–C12 as `pytest.mark.xfail(strict=True, reason="row not built")`, so the count of open rows is visible and a row that starts passing unexpectedly fails the build.
+
+## Task 15 — Slice 3: depot delivery and outcomes (docs/e2e/e2e-3)
+
+> - Spec first: write `docs/spec-proposals/v0.14-cancellation.md` adding the Cancelled outcome and the `Ready → Return run (cancelled)` edge to §6 and §5.2.6. Stop and wait for approval before implementing.
+> - `model/lifecycle.py`: add the edge. `lastmile/`: remove a not-yet-visited stop from an active route on cancellation; refuse cancellation for Delivered. `api/routers`: `cancelled` event on `POST /envelopes/{id}/events` with 409 on refusal.
+> - Pool ordering per e2e-3 §2.1 (priority, SLA date, attempt number desc) — in `lastmile/`, not in the harness.
+> - Depot vs hub hand-off per e2e-3 §2.5: depot outcomes accumulate as a return load for the next van leg; hub outcomes enter tonight's return run. Reuse Task 11's day-boundary fix.
+> - SLA expiry sweep at end of day.
+> - Turn C1–C12 from xfail into passing tests. C12 re-runs mutation M6 and asserts on detail text.
+
+## Task 16 — Slice 2: hub to depots (docs/e2e/e2e-2)
+
+> - `processing/sorting.py`: straddle rule per e2e-2 §2 item 1 — envelopes within EQUIDISTANT_MARGIN_M of two facilities are kept at the hub with reason "held-straddle" until address-geocoded. Register the rule in docs/assumptions.md.
+> - `linehaul/plan.py`: wait decision per e2e-2 §3 using `expected_ready_at` from the ready pool; rebalancing proposals emitted as `TransferRequests` with reason=rebalancing for allocation to accept or reject (never applied unilaterally).
+> - Hand-off: `PositionedPool` lists hub-direct envelopes under HUB; rolled envelopes carry a reason from the e2e-2 §5 list.
+> - Turn B1–B9 into passing tests. B2 is the Task 8 regression test, moved here. B7 depends on Task 11.
+
+## Task 17 — Slice 1: pickups to hub (docs/e2e/e2e-1)
+
+> - `pickups/admission.py`: readiness-weighted insertion per e2e-1 §2.1 — insertion cost = route cost − λ × readiness value, where readiness value uses the pre-sort facility's latest departure and the assembly queue projection from `processing/readiness.py`. λ registered in `ddn/assumptions.py` and docs/assumptions.md as invented with a sensitivity note; λ = 0 must reproduce the current planner exactly (regression test).
+> - `processing/readiness.py`: assembly queue ordered by (priority desc, SLA asc, arrival) computed at file receipt, so `expected_ready_at` reflects queue position (Task 12 did the ordering; this makes it incremental).
+> - Late admission per §5.1.6 v0.13; late-file exception per e2e-1 A9.
+> - Hand-off: `ReadyPool` with per-facility counts, held envelopes by reason, rolled assembly set, van release events.
+> - Turn A1–A9 into passing tests. A2 asserts a distributional property (mean collection time of assembly-bearing bags < mean of others) — state the tolerance and why.
+> - Re-run the chaining test; it must still equal `simulation.run_day`. If λ > 0 changes the simulated day, the simulator must call the same admission function — fix that in `simulation/`, not by setting λ = 0.
+>
+> Finish with the full runner output and the xfail count (must be zero).
