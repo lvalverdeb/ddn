@@ -206,6 +206,11 @@ def _report(report: Any) -> dict[str, Any]:
         "postponed_reasons": dict(report.postponed_reasons),
         "positioned": dict(report.positioned),
         "rolled": dict(report.rolled),
+        # §5.1.6 and §5.3: the two ways a Ready envelope fails to be
+        # positioned. Without them the totals do not close and a reader
+        # cannot tell a cut-off from a missing van.
+        "uncollected": report.uncollected,
+        "rolled_envelopes": report.rolled_envelopes,
         "unassigned": len(report.unassigned),
         "return_stops": report.return_stops,
         "carried_into_tomorrow": report.carried_into_tomorrow,

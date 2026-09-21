@@ -147,27 +147,39 @@ def test_the_day_delivers_about_section_10s_total(simulated):
     assert report.tally.dispatched == peak_day.MORNING_POOL - report.tally.unassigned
 
 
-#: §10 says all 4,550 are positioned. On real road travel 4,140 are: the
-#: pickup vans cannot reach every site and return before §5.1.6's cut-off when
-#: the legs are the length roads actually make them. The gap is the document's
-#: to reconcile, and it is recorded rather than smoothed over.
-POSITIONED_ON_ROADS = 4140
+def test_section_10s_ceiling_holds_and_names_where_the_rest_went(simulated):
+    """§10 positions all 4,550. On real roads it cannot, and the test says why.
 
+    This used to pin the figure: `positioned == 4140` and `READY - positioned
+    == 410`. Two assertions of one fact — given READY is 4,550 they are the
+    same equation — and both were the repository's own output, sensitive above
+    all to `PROCESSING_CUTOFF`, which `docs/assumptions.md` labels **invented**.
+    Moving that placeholder by half an hour reddened five tests and needed two
+    edit-and-rerun rounds to settle, which is a test measuring its own inputs.
 
-def test_not_everything_section_10_positions_reaches_the_hub(simulated):
-    """§10 positions 4,550; real roads position 4,140.
+    What the spec actually supports is a ceiling and a conservation law. §10's
+    4,550 bounds it. Everything under that ceiling is either positioned
+    tonight, or on a bag §5.1.6 refused, or at the hub with no van — there is
+    no fourth place. The identity holds at any cut-off; the *split* moves, and
+    the split is what the placeholder owns.
 
-    The difference is §5.1.6's cut-off meeting travel that is 1.4x the
-    crow-flies distance — the same factor `tests/matrices.py` records between
-    the hub and D1. §10's figure is reachable only on travel that understates
-    by forty per cent, which is what this repository used to compute.
+    The shortfall itself is §5.1.6's working rule biting, which v0.13 states
+    and flags "confirm — Open Question 12". §10's equality assumes travel that
+    understates by about 40%: `tests/matrices.py` records hub→D1 as 11,551 m by
+    road against 8,235 straight-line.
     """
     report, _ = simulated
     positioned = sum(report.positioned.values())
-    assert positioned == POSITIONED_ON_ROADS
-    assert positioned < peak_day.READY == 4550
-    assert peak_day.READY - positioned == 410, "bags that missed the cut-off"
-    assert report.rolled == {}, "and nothing that reached the hub missed a van"
+
+    assert positioned <= peak_day.READY == 4550, "§10's 4,550 is the ceiling"
+    assert positioned + report.uncollected + report.rolled_envelopes == (
+        peak_day.READY), (
+        "every envelope §10 made Ready is positioned tonight, or on a bag "
+        "§5.1.6 refused, or at the hub with no van — there is no fourth place")
+    assert report.uncollected, (
+        "on the recorded road table some bags cannot be collected and returned "
+        "before the cut-off; zero here means the day is being routed on "
+        "straight lines again (see 9a71a90)")
 
 
 def test_every_facility_gets_no_more_than_section_10_allots_it(simulated):
@@ -186,9 +198,10 @@ def test_tomorrows_pool_exceeds_the_fleet_by_about_eighteen_hundred(simulated):
     _, tomorrow = simulated
     capacity = FLEET * EFFECTIVE_PER_BIKE
     assert capacity == 3000
-    # Smaller than §10's 4,820, because 410 bags never reached the hub — and
-    # still half again what the fleet can serve.
-    assert tomorrow.pool_size == 4446
+    # Short of §10's 4,820 by whatever §5.1.6 refused today, and still half
+    # again what the fleet can serve. The gap is asserted as a gap rather
+    # than as a total, so an invented cut-off moving does not red this.
+    assert tomorrow.pool_size < peak_day.TOMORROW_POOL
     assert tomorrow.pool_size > capacity * 1.4
 
 

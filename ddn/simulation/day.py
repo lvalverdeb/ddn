@@ -130,6 +130,13 @@ class DayReport:
     rolled: dict[str, str] = field(default_factory=dict)
     return_stops: int = 0
     carried_into_tomorrow: int = 0
+    #: §5.1.6: envelopes on a bag no van could collect and return before
+    #: the processing cut-off. The largest loss channel in a road-routed
+    #: day, and the report had no line for it -- they left silently.
+    uncollected: int = 0
+    #: §5.3: reached the hub, missed every van. `rolled` names the depot
+    #: and the reason; this counts the envelopes.
+    rolled_envelopes: int = 0
     #: §5.3.2: raised today, carried tonight, and declined with §9.2's reason.
     transfers_raised: int = 0
     transfers_carried: int = 0
@@ -352,6 +359,19 @@ def _ready_times(dispatch: Any,
         [e for e in inflow if e["mailbag_id"] in collected], arrival_of)}
 
 
+def _uncollected(dispatch: Any, inflow: Sequence[Mapping[str, Any]]) -> int:
+    """Envelopes on a bag no van brought back before §5.1.6's cut-off.
+
+    A day with no pickups collected nothing, so every envelope of the inflow is
+    uncollected -- not zero, which would read as "all collected" and is the
+    answer that makes the conservation identity silently true.
+    """
+    if dispatch is None:
+        return len(inflow)
+    collected = set(dispatch.collected)
+    return sum(1 for e in inflow if e["mailbag_id"] not in collected)
+
+
 def _position(positioned: dict[str, list[dict[str, Any]]],
               ready_at: Mapping[str, int],
               requests: Sequence[dict[str, Any]],
@@ -556,6 +576,8 @@ def run_day(
         rolled=dict(night.reasons),
         return_stops=len(stops),
         carried_into_tomorrow=sum(len(p) for p in tomorrow.values()),
+        uncollected=_uncollected(dispatch, inflow),
+        rolled_envelopes=sum(len(ids) for ids in night.rolled.values()),
         transfers_raised=len(transfers),
         transfers_carried=sum(len(trip.transfer_ids) for trip in night.trips),
         transfers_declined={d.transfer_id: d.reason

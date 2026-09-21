@@ -197,14 +197,15 @@ async def test_the_peak_day_through_the_api_matches_task_5(
     assert tally["dispatched"] == 2910
     assert tally["delivered"] == 2711
     assert tally["unassigned"] == 190
-    # §10 positions all 4,550; on the recorded road table 4,140 arrive,
-    # because §5.1.6's cut-off meets legs that are 1.4x the crow-flies
-    # distance. `tests/test_simulation.py` carries the same numbers from the
-    # module side — the point of asserting them here is that HTTP does not
-    # change them.
-    assert sum(report["positioned"].values()) == 4140
+    # §10 positions all 4,550 and the recorded road table cannot, because
+    # §5.1.6's cut-off meets legs 1.4x the crow-flies distance. The module
+    # side owns that argument; what HTTP has to show is that it carries the
+    # same conservation, not the same magnitudes — those belong to an
+    # invented cut-off and would red this file when it moves.
+    assert (sum(report["positioned"].values()) + report["uncollected"]
+            + report["rolled_envelopes"]) == peak_day.READY
     assert report["rolled"] == {}
-    assert state["result"]["tomorrow_pool"] == 4446
+    assert state["result"]["tomorrow_pool"] < peak_day.TOMORROW_POOL
     assert report["binding"] == "van-hours", (
         "§8.3's prediction, visible only once travel is road travel")
     assert report["moves"] == 0
