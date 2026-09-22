@@ -163,15 +163,35 @@ def select(packages: Sequence[dict[str, Any]], *, capacity: int,
         else:
             optional.append(package)
 
-    # Highest priority first; package id breaks ties so that two runs of one
-    # day decline the same twenty envelopes.
-    optional.sort(key=lambda p: (-float(p.get("priority", 0)), p["package_id"]))
+    # e2e-3 §2.1: "priority first (§8.1) ... Ties by SLA date, then attempt
+    # number (more attempts first — an envelope that has failed twice is
+    # costlier to hold)." Package id last, so two runs of one day decline the
+    # same envelopes.
+    #
+    # Priority stays the sole *ranking* signal, which §6.1 requires: the SLA
+    # date only separates envelopes the score has already tied, so this is not
+    # the second SLA weighting §8 forbids.
+    optional.sort(key=_ranking)
     room = max(capacity - len(forced), 0)
     kept = {p["package_id"] for p in (*forced, *optional[:room])}
 
     return ([p for p in packages if p["package_id"] in kept],
             tuple(Excluded(p["package_id"], NO_CAPACITY)
                   for p in optional[room:]))
+
+
+def retryable(envelope: Mapping[str, Any], today: date) -> bool:
+    """§6.1: whether this envelope still has a day to be retried on.
+
+    Narrower than `expired`, and the difference is the whole of e2e-3's C10.
+    `expired` asks whether the SLA date is already behind us, which is the
+    question at *dispatch*. This one is asked at the end of the day about an
+    envelope that was postponed: its SLA date is today, it was not delivered
+    today, and there is no tomorrow for it — so it goes back rather than
+    re-entering the pool to be attempted on a day it may not be dispatched on.
+    """
+    raw = envelope.get("sla_date")
+    return not raw or date.fromisoformat(raw) > today
 
 
 def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
@@ -216,6 +236,23 @@ def plan_facility(facility: dict[str, Any], packages: Sequence[dict[str, Any]],
     return FacilityPlan(facility_id=facility["id"], bikes=bikes,
                         offered=len(packages), problem=problem,
                         solution=solution, verified=verify(problem, solution).ok)
+
+
+def _ranking(package: Mapping[str, Any]) -> tuple[float, str, int, str]:
+    """e2e-3 §2.1's order, lowest tuple served first.
+
+    Priority descends, then SLA date ascends (the nearer deadline first), then
+    attempt number descends — §2.1's reason for that last one is that "an
+    envelope that has failed twice is costlier to hold", so a retry outranks a
+    same-priority first attempt rather than queueing behind it.
+
+    A missing SLA date sorts last among its priority, not first: no date is not
+    an urgent date, and `""` would beat every real one.
+    """
+    return (-float(package.get("priority", 0)),
+            str(package.get("sla_date") or "9999-12-31"),
+            -int(package.get("attempt_number", 0) or 0),
+            package["package_id"])
 
 
 def expired(envelope: Mapping[str, Any], today: date) -> bool:

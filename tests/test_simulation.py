@@ -188,13 +188,33 @@ def test_a_chained_week_shows_the_backlog_growing(inputs):
 
 
 def test_a_postponed_envelope_comes_back_tomorrow(simulated):
-    """§6: held at the facility in Ready state, retried while the SLA holds."""
+    """§6: held at the facility in Ready state, retried **while the SLA holds**.
+
+    "While" is the whole of it, and this test used to ignore it: every
+    postponement came back, including the ones whose SLA date was today and
+    which therefore had no next attempt. They sat in tomorrow's pool until the
+    following morning's sweep found them, a day late, in a pool they could not
+    be dispatched from. §6.1 returns them tonight instead, so the count here is
+    the postponements that still have a day, not all of them.
+    """
     report, tomorrow = simulated
     retried = [e for pool in tomorrow.pools.values() for e in pool
                if e.get("previous_outcome") == "Postponed"]
-    assert len(retried) == report.tally.postponed
+
+    assert len(retried) == report.tally.postponed - _spent(report)
+    assert retried, "a day with no retry at all would make the rest vacuous"
     assert all(e["status"] == "Ready" for e in retried)
     assert all(e["attempt_number"] >= 1 for e in retried)
+
+
+def _spent(report):
+    """Postponements §6.1 gave no further day, counted off the report.
+
+    `tally.sla_expired` carries both halves — the sweep at dispatch and this —
+    and on the seeded day the first is zero, so the difference is exactly the
+    postponements that ran out tonight.
+    """
+    return report.tally.sla_expired
 
 
 def test_every_postponement_carries_one_of_section_6s_reasons(simulated):
@@ -665,21 +685,27 @@ def test_the_peak_day_threaded_from_an_empty_start(inputs):
     # First: day D+1 is handed the same `inflow` again, so it collects the same
     # bags a second time. `carried_into_tomorrow` is therefore the re-collected
     # 4,140 *plus* the 1,261 the delivery left behind, not the 1,261 alone.
-    assert delivered.carried_into_tomorrow == 5401
+    assert delivered.carried_into_tomorrow == 5392
     assert sum(delivered.positioned.values()) == 4140
     assert (delivered.carried_into_tomorrow - sum(delivered.positioned.values())
             == len(delivered.unassigned) + delivered.outcomes["Postponed"]
-            == 1261)
+               - delivered.tally.sla_expired
+            == 1252)
 
-    # Second: every envelope here is on its first attempt and none has expired,
-    # so three tally fields that look independent carry no information, and
-    # §6.1's expiry sweep is never exercised by this pair of days.
-    assert delivered.tally.sla_expired == 0
+    # Second: every envelope here is on its first attempt, so three tally
+    # fields that look independent carry no information.
+    #
+    # §6.1's expiry does bite, in one place: nine envelopes whose SLA date was
+    # today were postponed, which leaves them no day to be retried on, so they
+    # go back tonight rather than sitting in tomorrow's pool. Eight are at
+    # depots and reach `returns_queue`; the ninth is hub-resident, which
+    # `day.py` filters out of it.
+    assert delivered.tally.sla_expired == 9
     assert (delivered.tally.delivered
             == delivered.tally.delivered_first_attempt
             == delivered.tally.delivered_within_sla == 2794)
-    assert sum(len(p) for p in tomorrow.pools.values()) == 5401
-    assert len(tomorrow.returns_queue) == 52
+    assert sum(len(p) for p in tomorrow.pools.values()) == 5392
+    assert len(tomorrow.returns_queue) == 60
 
 
 def test_a_recording_deliver_and_rates_change_nothing_about_the_day(inputs):

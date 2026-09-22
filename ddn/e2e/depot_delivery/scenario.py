@@ -14,7 +14,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from functools import partial
 from typing import Any
+
+from ddn import lastmile
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,3 +42,14 @@ class Scenario:
     #: and only when it was one — the order is `outcomes.record`'s contract.
     reason: Callable[[Mapping[str, Any]], str]
     hub_id: str = "HUB"
+
+    @property
+    def retryable(self) -> Callable[[Mapping[str, Any]], bool]:
+        """§6.1's end-of-day clock, bound to this day.
+
+        A slice field rather than a `run.py` lambda: a runner may not contain
+        one, and binding the date here keeps `today` passed rather than read
+        from a clock, so a replay of a past day answers what that day
+        answered.
+        """
+        return partial(lastmile.retryable, today=self.delivery_day)

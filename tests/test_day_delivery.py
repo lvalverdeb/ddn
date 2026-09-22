@@ -377,3 +377,90 @@ def test_withdraw_does_not_edit_the_pool_it_was_given():
     kept and kept[0].update(touched=True)
 
     assert POOL == before
+
+
+# ------------------------------ e2e-3 §2.1's ordering, and §6.1's retry clock
+
+def _envelope(package_id, priority=100.0, sla="2026-09-30", attempts=0):
+    return {"package_id": package_id, "priority": priority,
+            "sla_date": sla, "attempt_number": attempts}
+
+
+def test_priority_still_ranks_first_and_alone():
+    """§6.1: priority is the sole ranking signal; it already carries SLA.
+
+    The tie-breaks below only separate envelopes the score has already tied,
+    so they are not the second SLA weighting §8 forbids. A higher priority
+    with a worse SLA date must still win.
+    """
+    urgent_but_minor = _envelope("P-low", priority=10.0, sla="2026-09-18")
+    major = _envelope("P-high", priority=900.0, sla="2026-12-31")
+
+    kept, declined = lastmile.select([urgent_but_minor, major],
+                                     capacity=1, today=TODAY)
+
+    assert [p["package_id"] for p in kept] == ["P-high"]
+    assert [e.package_id for e in declined] == ["P-low"]
+
+
+def test_a_tie_on_priority_is_broken_by_the_nearer_sla_date():
+    """e2e-3 §2.1: "Ties by SLA date"."""
+    later = _envelope("P-later", sla="2026-09-30")
+    sooner = _envelope("P-sooner", sla="2026-09-19")
+
+    kept, _ = lastmile.select([later, sooner], capacity=1, today=TODAY)
+
+    assert [p["package_id"] for p in kept] == ["P-sooner"]
+
+
+def test_an_envelope_with_no_sla_date_does_not_outrank_one_that_has_one():
+    """No date is not an urgent date.
+
+    Sorting on the raw value would put `None` or `""` ahead of every real
+    date and quietly promote the envelopes nobody has committed to.
+    """
+    undated = _envelope("P-undated", sla=None)
+    dated = _envelope("P-dated", sla="2026-09-30")
+
+    kept, _ = lastmile.select([undated, dated], capacity=1, today=TODAY)
+
+    assert [p["package_id"] for p in kept] == ["P-dated"]
+
+
+def test_a_tie_on_priority_and_sla_is_broken_by_attempts_made():
+    """e2e-3 §2.1: "more attempts first — an envelope that has failed twice is
+    costlier to hold". This is row C11's tie-break."""
+    fresh = _envelope("P-fresh", attempts=0)
+    twice_failed = _envelope("P-twice", attempts=2)
+
+    kept, _ = lastmile.select([fresh, twice_failed], capacity=1, today=TODAY)
+
+    assert [p["package_id"] for p in kept] == ["P-twice"]
+
+
+def test_the_ordering_is_total_so_one_day_declines_one_set():
+    """Package id settles a three-way tie, or the day is not reproducible."""
+    pool = [_envelope(f"P-{i}") for i in (3, 1, 2)]
+
+    kept, _ = lastmile.select(pool, capacity=2, today=TODAY)
+
+    assert {p["package_id"] for p in kept} == {"P-1", "P-2"}
+
+
+@pytest.mark.parametrize("sla, left", [
+    ("2026-09-18", True),    # tomorrow: there is a day to retry on
+    ("2026-09-17", False),   # today: postponed now means never
+    ("2026-09-16", False),   # already past
+    (None, True),            # §9.1 allows no date; nothing has run out
+])
+def test_retryable_asks_whether_a_day_is_left_not_whether_one_has_passed(sla,
+                                                                        left):
+    """Row C10's rule, and why it is not `expired`.
+
+    `expired` is asked at dispatch — is the date already behind us. This is
+    asked at the end of the day about an envelope that was postponed: its date
+    is *today*, it was not delivered, and there is no tomorrow for it. The
+    boundary between the two is exactly the SLA-today envelope, which §6.1
+    makes a must-deliver-today and which therefore must not be held over.
+    """
+    assert lastmile.retryable({"sla_date": sla}, TODAY) is left

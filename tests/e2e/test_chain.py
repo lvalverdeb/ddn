@@ -44,7 +44,7 @@ from datetime import datetime, time
 
 import pytest
 
-from ddn import assumptions
+from ddn import assumptions, lastmile
 from ddn.allocation import place
 from ddn.e2e import depot_delivery, handoff, hub_to_depots, pickups_to_hub
 from ddn.e2e.depot_delivery.scenario import Scenario as DeliveryScenario
@@ -301,11 +301,16 @@ def test_a6_the_return_load_matches_per_package_and_per_facility(oracle,
     _, _, _, days = chained
 
     facility_of = {e["package_id"]: f for e, f in attempted}
+    # A postponement whose SLA date is today has no next attempt, so §6.1
+    # returns it tonight rather than holding it — it is in the return load
+    # alongside the rejections, and counting only those would miss it.
     going_back = {package_id
                   for (envelope, _), outcome in zip(attempted, drawn,
                                                     strict=True)
                   for package_id in [envelope["package_id"]]
-                  if outcome in {"Rejected", "Returned"}}
+                  if outcome in {"Rejected", "Returned"}
+                  or (outcome == "Postponed"
+                      and not lastmile.retryable(envelope, BUILT.day.delivery_day))}
 
     for day in days:
         expected = [package_id for envelope, _ in attempted
@@ -393,7 +398,10 @@ def test_what_this_day_proves_nothing_about(oracle, chained):
     assert (collected.rolled, collected.rolled_envelopes) == ({}, 0)
     assert (collected.transfers_raised, collected.transfers_carried) == (0, 0)
     assert collected.violations == () and delivered.violations == ()
-    assert delivered.tally.sla_expired == 0
+    # §6.1 *does* bite here, on nine envelopes postponed on their SLA date —
+    # so this is a live path, not an empty one, and it is the one thing in
+    # this ledger that is asserted as non-zero.
+    assert delivered.tally.sla_expired == 9
     assert night.returns_queue == ()
     # The chain's `deliver` refuses nobody, so every one of the 1,140
     # unassigned carries "count" and the `NO_TIME` branch of `DayOutcomes.of`

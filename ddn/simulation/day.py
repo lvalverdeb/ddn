@@ -172,6 +172,12 @@ class _Doorstep:
     going_back: list[dict[str, Any]]
     within_sla: int
     first_attempt: int
+    #: §6.1 postponements with no day left to be retried on. They join
+    #: `going_back` and they are an SLA expiry, so §11's expiry rate counts
+    #: them — `attempt.expired` alone is only the dispatch-time sweep, and
+    #: reporting zero while envelopes go back for expiry is a metric that
+    #: reads as a clean day.
+    spent: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +222,7 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
     """§6's outcomes, drawn per envelope in a fixed order so a day replays."""
     outcomes: dict[str, int] = {}
     reasons: dict[str, int] = {}
+    spent = 0
     postponed: list[dict[str, Any]] = []
     # §6.1: "after that it is returned to the customer via the return run".
     # The flag is what `returns.goes_back` reads; without it an expired
@@ -236,7 +243,17 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
         elif outcome == POSTPONED:
             reason = sub_reason(rng)
             reasons[reason] = reasons.get(reason, 0) + 1
-            postponed.append(for_retry(envelope, reason))
+            held = for_retry(envelope, reason)
+            if lastmile.retryable(envelope, today):
+                postponed.append(held)
+            else:
+                # §6.1: retried *until* its SLA date, and after that returned.
+                # A postponement on the SLA date itself has no next attempt.
+                # This used to hold it anyway and let the following morning's
+                # expiry sweep find it, so the envelope spent a day in a pool
+                # it could not be dispatched from and reached §5.5 a day late.
+                going_back.append(dict(held, sla_expired=True))
+                spent += 1
         else:
             # §5.5: the envelope is where it was refused, which for a depot
             # reject is the depot. Stamping the hub here made every rejection
@@ -245,7 +262,7 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
             going_back.append(dict(envelope, previous_outcome=outcome))
 
     return _Doorstep(outcomes, reasons, postponed, going_back, within_sla,
-                     first_attempt)
+                     first_attempt, spent)
 
 
 def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
@@ -410,7 +427,7 @@ def _count(state: State, attempt: _Attempted, doorstep: _Doorstep,
         postponed=doorstep.outcomes.get(POSTPONED, 0),
         rejected=doorstep.outcomes.get(REJECTED, 0),
         defective=doorstep.outcomes.get(DEFECTIVE, 0),
-        sla_expired=len(attempt.expired),
+        sla_expired=len(attempt.expired) + doorstep.spent,
         unassigned=len(attempt.unassigned),
         received=len(inflow),
         received_before_cut_off=len(inflow),

@@ -61,6 +61,9 @@ class Recorded:
     #: `returns.goes_back` can recognise them.
     going_back: tuple[dict[str, Any], ...] = ()
     counts: Mapping[str, int] = field(default_factory=dict)
+    #: §6.1 postponements with no day left. They are in `going_back`, and
+    #: §11's expiry rate counts them alongside the dispatch-time sweep.
+    spent: int = 0
 
     def within_sla(self, today, expired: Callable[..., bool]) -> int:
         """§11: delivered, and not past its SLA date when it was.
@@ -114,7 +117,9 @@ def expired(envelope: Mapping[str, Any]) -> dict[str, Any]:
 def record(attempted: Sequence[Mapping[str, Any]],
            swept: Sequence[Mapping[str, Any]] = (), *,
            outcome: Callable[[Mapping[str, Any]], str],
-           reason: Callable[[Mapping[str, Any]], str]) -> Recorded:
+           reason: Callable[[Mapping[str, Any]], str],
+           retryable: Callable[[Mapping[str, Any]], bool] | None = None
+           ) -> Recorded:
     """Ask what happened to each envelope, and say what it becomes.
 
     Args:
@@ -127,15 +132,24 @@ def record(attempted: Sequence[Mapping[str, Any]],
         outcome: §6's outcome for one envelope. Called once per envelope.
         reason: §6's sub-reason for a postponement. Called immediately after
             `outcome`, and only when the outcome was one.
+        retryable: whether a postponed envelope still has a day to be retried
+            on. §6.1's clock lives in `lastmile`, so it is passed rather than
+            imported -- `ddn/model/` is the bottom of this package. Omitted,
+            every postponement is held for another go, which is the answer for
+            a day that does not know its own SLA dates rather than a claim
+            that none has run out.
 
     Returns:
         A `Recorded`: one `Attempt` per envelope attempted, tomorrow's
-        postponed pool, tonight's return load, and the outcome counts.
+        postponed pool, tonight's return load, and the outcome counts. A
+        postponement with no day left appears in `going_back` rather than in
+        `postponed`, stamped so `returns.goes_back` recognises it.
     """
     attempts: list[Attempt] = []
     postponed: list[dict[str, Any]] = []
     going_back: list[dict[str, Any]] = [expired(e) for e in swept]
     counts: dict[str, int] = {}
+    spent = 0
 
     for envelope in attempted:
         what = outcome(envelope)
@@ -144,7 +158,18 @@ def record(attempted: Sequence[Mapping[str, Any]],
 
         if what == POSTPONED:
             became = for_retry(envelope, reason(envelope))
-            postponed.append(became)
+            if retryable is None or retryable(envelope):
+                postponed.append(became)
+            else:
+                # §6.1: "an envelope may be retried until its SLA date; after
+                # that it is returned to the customer via the return run". A
+                # postponement on the SLA date itself has no next attempt, so
+                # holding it in tomorrow's pool would offer it on a day it may
+                # not be dispatched on -- and it would sit there until the
+                # *next* morning's sweep noticed, a day late.
+                became = expired(became)
+                going_back.append(became)
+                spent += 1
         elif what == DELIVERED:
             became = dict(envelope)
         else:
@@ -154,4 +179,4 @@ def record(attempted: Sequence[Mapping[str, Any]],
         attempts.append(Attempt(envelope["package_id"], what, status, became))
 
     return Recorded(tuple(attempts), tuple(postponed), tuple(going_back),
-                    counts)
+                    counts, spent)

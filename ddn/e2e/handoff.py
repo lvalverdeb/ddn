@@ -335,7 +335,7 @@ class DayOutcomes(_Handoff):
                 postponed=recorded.counts.get("Postponed", 0),
                 rejected=recorded.counts.get("Rejected", 0),
                 defective=recorded.counts.get("Returned", 0),
-                sla_expired=len(swept),
+                sla_expired=len(swept) + recorded.spent,
                 unassigned=len(declined) + len(refused_ids),
                 # Both of these were wrong, and wrong in the direction that
                 # reads as a disaster: `bikes_deployed=0` makes

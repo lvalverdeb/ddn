@@ -47,7 +47,8 @@ def run(scenario: Scenario, positioned: PositionedPool) -> DayOutcomes:
                                           scenario.bikes)
     recorded = outcomes.record(attempted, swept,
                                outcome=scenario.outcome,
-                               reason=scenario.reason)
+                               reason=scenario.reason,
+                               retryable=scenario.retryable)
     return DayOutcomes.of(recorded, declined, refused,
                           pool=live, swept=swept,
                           bikes=scenario.bikes,

@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import pytest
 
-from ddn import assumptions, linehaul
+from ddn import assumptions, lastmile, linehaul
 from ddn.e2e import depot_delivery, handoff, hub_to_depots, pickups_to_hub
 from ddn.e2e.depot_delivery.scenario import Scenario as Scenario3
 from ddn.e2e.hub_to_depots.scenario import Scenario as Scenario2
@@ -390,9 +390,14 @@ def test_slice_3_sends_back_only_what_section_5_5_recognises(d1_pool):
                                    "Postponed"] * 10)
 
     going_back = set(result.returns.package_ids)
-    by_outcome = {str(o) for pid, o in result.outcomes.items() if pid in going_back}
+    by_outcome = {str(o) for pid, o in result.outcomes.items()
+                  if pid in going_back}
 
-    assert by_outcome == {"Rejected", "Returned"}
+    # A postponement is in the load only when §6.1 left it no further day —
+    # D1's pool holds a few envelopes whose SLA date is the delivery day.
+    assert by_outcome <= {"Rejected", "Returned", "Postponed"}
+    assert {"Rejected", "Returned"} <= by_outcome
+    assert "Delivered" not in by_outcome, "a delivery does not go back"
     assert result.returns.weight_g > 0
 
 
@@ -422,9 +427,16 @@ def test_slice_3_postpones_back_to_ready_with_the_attempt_counted(d1_pool):
                       reason="driver out of time")
 
     assert set(result.next_state.values()) == {lifecycle.Status.POSTPONED}
-    assert result.returns.package_ids == ()
     assert result.tally.postponed == result.tally.dispatched
     assert result.tally.delivered_first_attempt == 0
+
+    # §5.2.6 records all of them as Postponed, and §6.1 still returns the ones
+    # with no day left — the status is what the attempt produced, the return
+    # load is what tonight does about it. Everything in the load here is an
+    # envelope whose SLA date is the delivery day.
+    assert all(not lastmile.retryable({"sla_date": sla}, d1_pool.delivery_day)
+               for sla in {e["sla_date"] for e in d1_pool.envelopes["D1"]
+                           if e["package_id"] in result.returns.package_ids})
 
 
 def test_slice_3_sweeps_an_expired_envelope_instead_of_dispatching_it(d1_pool):
