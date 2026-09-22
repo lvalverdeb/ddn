@@ -128,6 +128,7 @@ One cost unit is one metre, which is the platform's own convention
 | `COST_PER_METRE` | 1 | §8 | **invented**, and it is also what PyVRP applies to an unpriced vehicle, so declaring it changes no plan — it makes the rate a decision rather than a default |
 | `VEHICLE_FIXED_COST` | 50000 | §8 | **invented.** 50 km of riding to put one bike on the road. The term that decides whether a bike is deployed at all |
 | `COST_PER_SECOND` | 0 | §8 | **invented.** §7.4 makes the shift a hard bound, so duration is a constraint here and not a cost |
+| `READINESS_WEIGHT` | 0.0 | e2e-1 §2.1's λ; §9 asks how strongly pickup sequencing should bend toward the clean room | **invented, and zero on purpose.** At 0 the planner is §5.1.4 unchanged. Measured on §10's day a bag's readiness runs to a few thousand against legs of hundreds to thousands of seconds, so λ ≈ 0.1 trades them evenly and above 1 route cost stops mattering. Non-zero is a policy about clean-room idle time against van-hours, not a tuning choice |
 | `BAND_URGENT_LOW` / `BAND_STANDARD_LOW` / `BAND_LOW_LOW` | 1000 / 100 / 1 | §8.1, Open Question 11: the categories and their gaps | document — §8.1's own illustration, "Urgent 1,000–1,999, Standard 100–199, Low 1–99" |
 
 ## Deferred

@@ -165,6 +165,30 @@ VEHICLE_FIXED_COST = 50_000
 # constraint here rather than a cost.
 COST_PER_SECOND = 0
 
+# e2e-1 §2.1's λ: how far pickup sequencing bends toward feeding the clean
+# room. The insertion objective is (least additional route cost) − λ × (the
+# readiness value gained), and the two terms are in different units — seconds
+# of detour against a sum of priority scores.
+#
+# **Zero, and that is a statement rather than a default.** e2e-1 §9 asks the
+# question outright: "how strongly should pickup sequencing bend toward
+# feeding the clean room?" Nobody has answered it, and the answer is a policy
+# about the clean room's idle time against van-hours, not a tuning constant.
+# At zero the planner is §5.1.4 unchanged, which is the behaviour this
+# repository can defend.
+#
+# Sensitivity, measured on §10's day (180 bags, 70 sites, six pickup vans):
+# a bag's readiness value runs to a few thousand — a dozen envelopes at
+# §8.1's scores — against legs of a few hundred to a few thousand seconds. So
+# λ ≈ 0.1 makes readiness worth roughly as much as the detour it costs, λ ≈ 1
+# makes route cost nearly irrelevant, and the useful range is below 1.
+# Anything above that collects by priority and drives the vans further for it.
+#
+# Invented, and deliberately inert. Setting it non-zero changes which van
+# takes which bag, and therefore the day; the figures in
+# `tests/test_simulation.py` are pinned at zero.
+READINESS_WEIGHT = 0.0
+
 
 @dataclass(frozen=True)
 class Band:

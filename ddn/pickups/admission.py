@@ -29,7 +29,7 @@ insertion is `vrp.quote.quote_insertion`, confirmed working in
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ddn.contract import CLASS_OF
@@ -68,7 +68,13 @@ def load(request: dict[str, Any]) -> dict[str, Any]:
             "lat": request["lat"], "lon": request["lon"],
             BAGS: 1,
             WEIGHT: int(request["expected_weight_g"]),
-            "envelope_count": int(request.get("envelope_count", 0))}
+            "envelope_count": int(request.get("envelope_count", 0)),
+            # e2e-1 §2.1's readiness value is a sum over the bag's envelopes,
+            # so the manifest has to survive this. It is not a routing
+            # quantity either -- the paragraph above is about capacity, and
+            # `readiness` is about which van should want the bag, not which
+            # van can hold it.
+            "envelopes": tuple(request.get("envelopes", ()))}
 
 
 def can_take(vehicle: dict[str, Any], *, carrying_bags: int, carrying_g: int,
@@ -146,3 +152,33 @@ def assign(requests: Sequence[dict[str, Any]], vans: Sequence[dict[str, Any]],
             unplaced.append(request["mailbag_id"])
 
     return Assignment(placed, unplaced=tuple(unplaced))
+
+
+def readiness(request: Mapping[str, Any], *, arrives_at: int,
+              cut_off_of: Callable[[str], int] | None = None) -> float:
+    """e2e-1 §2.1's readiness value for one bag, collected at `arrives_at`.
+
+    "Each bag carries a **readiness value** = Σ over its envelopes of
+    priority × P(ready by the relevant cut-off | arrival at time t)."
+
+    **The probability is not supplied and is not invented here.** §5.2 gives a
+    throughput and a queue, not a distribution, so P is the deterministic
+    thing those support: 1 when the bag is back in time for the envelope's own
+    cut-off, 0 when it is not. That is the honest reading of a probability over
+    a projection with no variance in it, and it is why this returns a weighted
+    count rather than an expectation.
+
+    The relevant cut-off is per envelope (e2e-1 §2.1): its pre-sorted
+    facility's latest van departure for a depot-bound envelope, the end of hub
+    processing for a hub-direct one. `cut_off_of` supplies it by facility id,
+    because only the caller knows §3.1's releases; without it every envelope
+    counts, which makes this a plain priority sum and leaves the planner's
+    ordering to route cost alone.
+    """
+    total = 0.0
+    for envelope in request.get("envelopes", ()):
+        deadline = (None if cut_off_of is None
+                    else cut_off_of(envelope.get("facility_id", "")))
+        if deadline is None or arrives_at <= deadline:
+            total += float(envelope.get("priority", 0) or 0)
+    return total

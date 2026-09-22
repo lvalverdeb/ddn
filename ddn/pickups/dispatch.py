@@ -34,7 +34,13 @@ from enum import StrEnum
 from typing import Any
 
 from ddn import assumptions
-from ddn.pickups.admission import BAGS, WEIGHT, can_take, load
+from ddn.pickups.admission import (
+    BAGS,
+    WEIGHT,
+    can_take,
+    load,
+    readiness,
+)
 
 Travel = Callable[[float, float, float, float], int]
 
@@ -109,6 +115,8 @@ def run(
     cadence_seconds: int = assumptions.REOPT_CADENCE_MIN * 60,
     incidents: Mapping[str, Incident] | None = None,
     surplus_bags: Mapping[str, int] | None = None,
+    readiness_weight: float = assumptions.READINESS_WEIGHT,
+    cut_off_of: Callable[[str], int] | None = None,
 ) -> Dispatch:
     """Run one pickup day on a re-optimisation cadence.
 
@@ -128,6 +136,14 @@ def run(
             `Incident.MORE_BAGS`. The surplus re-enters the pool at the next
             cycle, so §5.1.7's "another van or a second visit" is decided by
             the same admission rule as any other bag.
+        readiness_weight: e2e-1 §2.1's λ. Defaults to the registry, which is
+            zero -- see `assumptions.READINESS_WEIGHT` for why that is a
+            statement and not a placeholder waiting to be filled.
+        cut_off_of: facility id -> the second by which an envelope pre-sorted
+            there must be back. Only the caller knows §3.1's releases. Without
+            it the readiness value is a plain priority sum, which at λ = 0
+            costs nothing and at λ > 0 would bend toward big bags rather than
+            urgent ones.
 
     Returns:
         A `Dispatch`. Every bag appears exactly once across `collected`,
@@ -146,7 +162,8 @@ def run(
     tick = min(times)
     while tick <= cut_off and pending:
         _cycle(tick, fleet, pending, log, incidents=incidents,
-               surplus=surplus, travel=travel, hub=hub, cut_off=cut_off)
+               surplus=surplus, travel=travel, hub=hub, cut_off=cut_off,
+               readiness_weight=readiness_weight, cut_off_of=cut_off_of)
         tick += cadence_seconds
 
     for van in fleet:
@@ -173,7 +190,9 @@ class _Log:
 def _cycle(tick: int, fleet: Sequence[_Van],
            pending: dict[str, dict[str, Any]], log: _Log, *,
            incidents: Mapping[str, Incident], surplus: Mapping[str, int],
-           travel: Travel, hub: Mapping[str, Any], cut_off: int) -> None:
+           travel: Travel, hub: Mapping[str, Any], cut_off: int,
+           readiness_weight: float = 0.0,
+           cut_off_of: Callable[[str], int] | None = None) -> None:
     """One re-optimisation cycle (§5.1.5), at `tick`.
 
     Only requests the cycle has reached are visible, and only bags still
@@ -194,7 +213,10 @@ def _cycle(tick: int, fleet: Sequence[_Van],
 
     for request in arrived:
         bag = load(request)
-        chosen = _cheapest(fleet, bag, travel=travel, hub=hub, cut_off=cut_off)
+        chosen = _cheapest(fleet, bag, travel=travel, hub=hub,
+                           cut_off=cut_off,
+                           readiness_weight=readiness_weight,
+                           cut_off_of=cut_off_of)
         if chosen is None:
             continue
 
@@ -208,9 +230,20 @@ def _cycle(tick: int, fleet: Sequence[_Van],
 
 
 def _cheapest(fleet: Sequence[_Van], bag: Mapping[str, Any], *,
-              travel: Travel, hub: Mapping[str, Any],
-              cut_off: int) -> _Van | None:
-    """§5.1.4: the van that can take it for the least additional route cost."""
+              travel: Travel, hub: Mapping[str, Any], cut_off: int,
+              readiness_weight: float = 0.0,
+              cut_off_of: Any = None) -> _Van | None:
+    """§5.1.4, bent toward the clean room by e2e-1 §2.1.
+
+    "The dynamic planner's insertion objective is (least additional route
+    cost) − λ × (readiness value gained)." At λ = 0 that is §5.1.4 unchanged,
+    which is what `assumptions.READINESS_WEIGHT` is set to and what the
+    regression test pins: the bend is available, registered and off, because
+    e2e-1 §9 asks "how strongly should pickup sequencing bend toward feeding
+    the clean room?" and nobody has answered it.
+
+    The tie-break stays the van id, so a day replays whatever λ is.
+    """
     candidates = []
     for van in fleet:
         leg = travel(van.lat, van.lon, bag["lat"], bag["lon"])
@@ -218,7 +251,9 @@ def _cheapest(fleet: Sequence[_Van], bag: Mapping[str, Any], *,
         back_at = van.clock + leg + assumptions.PICKUP_STOP_MIN * 60 + home
         if can_take(van.record, carrying_bags=van.bags, carrying_g=van.grams,
                     request=bag, back_at=back_at, cut_off=cut_off):
-            candidates.append((leg, van.id, van))
+            gained = (0.0 if not readiness_weight else
+                      readiness(bag, arrives_at=back_at, cut_off_of=cut_off_of))
+            candidates.append((leg - readiness_weight * gained, van.id, van))
     if not candidates:
         return None
     return min(candidates)[2]

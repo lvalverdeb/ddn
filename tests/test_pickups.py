@@ -19,7 +19,7 @@ day's delay for every envelope aboard.
 
 from __future__ import annotations
 
-from ddn import pickups
+from ddn import assumptions, pickups
 from ddn.pickups import Dispatch, Visit
 
 HOUR = 3600
@@ -255,3 +255,100 @@ def test_a_day_with_no_pickups_lost_everything_not_nothing():
     ready — silently true on a day that did nothing.
     """
     assert pickups.uncollected(None, INFLOW) == len(INFLOW) == 3
+
+
+# ---------------------------- e2e-1 §2.1's λ, and what it does at each end
+
+def _bag(mailbag_id, site, *, priority=1500.0, envelopes=3, at=0):
+    return dict(site, mailbag_id=mailbag_id, requested_at=at,
+                envelope_count=envelopes, expected_weight_g=200 * envelopes,
+                envelopes=[{"package_id": f"{mailbag_id}-{i}",
+                            "priority": priority, "facility_id": "D1"}
+                           for i in range(envelopes)])
+
+
+def test_readiness_counts_only_envelopes_the_bag_gets_back_in_time_for():
+    """e2e-1 §2.1's P(ready by the relevant cut-off | arrival at t).
+
+    The cut-off is per envelope — its pre-sorted facility's latest departure —
+    so a bag collected after that facility's deadline has gained nothing by
+    being collected, whatever it holds. Without this the readiness value is a
+    plain priority sum and λ would bend the planner toward *big* bags rather
+    than toward ones the clean room can still use.
+    """
+    site = {"customer_id": "C", "lat": 9.94, "lon": -84.08}
+    bag = _bag("BAG-1", site, priority=100.0, envelopes=4)
+    deadlines = {"D1": 10_000}
+
+    in_time = pickups.readiness(bag, arrives_at=9_000,
+                                cut_off_of=deadlines.get)
+    too_late = pickups.readiness(bag, arrives_at=11_000,
+                                 cut_off_of=deadlines.get)
+
+    assert in_time == 4 * 100.0
+    assert too_late == 0.0, "nothing was gained by collecting it"
+
+
+def test_lambda_at_zero_reproduces_the_planner_exactly():
+    """The regression Task 17 asks for, and `READINESS_WEIGHT` is zero.
+
+    The bend is registered, implemented and off: e2e-1 §9 asks how strongly
+    sequencing should favour the clean room and nobody has answered, so the
+    shipped planner is §5.1.4 unchanged. This pins that — the whole dispatch,
+    not a count — so the day the registry moves, it moves visibly.
+    """
+    from tests import peak_day_inputs
+
+    built = peak_day_inputs.build()
+    hub = next(f for f in built.kwargs["facilities"] if f["id"] == "HUB")
+    cut_off = (assumptions.PROCESSING_CUTOFF.hour * 3600
+               + assumptions.PROCESSING_CUTOFF.minute * 60)
+
+    def day(**over):
+        return pickups.run(built.kwargs["requests"], built.kwargs["vans"],
+                           hub, travel=built.kwargs["travel"],
+                           cut_off=cut_off, **over)
+
+    assert assumptions.READINESS_WEIGHT == 0.0
+    assert day(readiness_weight=0.0) == day()
+
+
+def test_a_positive_lambda_moves_which_van_takes_a_bag():
+    """And the mechanism is not dead code, which λ = 0 alone cannot show.
+
+    Two vans equally able to take a bag, one already further away: at λ = 0
+    the nearer wins on route cost, and a λ large enough to outweigh the
+    difference moves it. Without this test, deleting the λ term from the
+    objective leaves every other test green, because zero times anything is
+    zero.
+    """
+    site = {"customer_id": "C", "lat": 9.94, "lon": -84.08}
+    hub = {"lat": 9.93, "lon": -84.08}
+    bag = _bag("BAG-L", site, priority=1000.0, envelopes=10)
+
+    # Both vans start at the hub, so the legs are identical and route cost
+    # cannot separate them: at λ = 0 the van id breaks the tie, and VAN-A
+    # wins. VAN-A starts its shift late and cannot get the bag back before
+    # D1's cut-off; VAN-B can. So a positive λ has to overturn the tie-break,
+    # which is the only thing that distinguishes these two vans.
+    late = {"vehicle_id": "VAN-A", "type": "van", "capacity_mailbags": 10,
+            "capacity_weight_g": 500_000, "shift_start": 9_000}
+    in_time = dict(late, vehicle_id="VAN-B", shift_start=0)
+    deadline = {"D1": 8_000}
+
+    def travel(lat1, lon1, lat2, lon2):
+        return 600
+
+    def carrier(**over):
+        dispatch = pickups.run([bag], [late, in_time], hub, travel=travel,
+                               cut_off=20 * 3600, cut_off_of=deadline.get,
+                               **over)
+        assert dispatch.collected == ("BAG-L",)
+        return next(van for van, route in dispatch.routes.items()
+                    if "BAG-L" in route)
+
+    assert carrier() == "VAN-A", "at λ = 0 the id breaks a tie in route cost"
+    assert carrier(readiness_weight=1.0) == "VAN-B", (
+        "λ changed nothing; with the term deleted from the insertion "
+        "objective every other test stays green, because zero times anything "
+        "is zero — this is the one that would notice")
