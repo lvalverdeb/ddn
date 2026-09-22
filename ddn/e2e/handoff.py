@@ -50,6 +50,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ddn.contract import Excluded
+from ddn.lastmile import expired as sla_expired
 from ddn.linehaul.circuit import Declined
 from ddn.model.records import DEFAULT_WEIGHT_G, Outcome, Status, TransferRequest
 from ddn.pickups import uncollected as _uncollected_envelopes
@@ -187,6 +188,16 @@ class PositionedPool(_Handoff):
     #: alone would force slice 3 to re-read a fixture and test that instead.
     envelopes: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
 
+    def at(self, facility_id: str) -> tuple[dict[str, Any], ...]:
+        """This facility's pool, in order, or nothing if it holds none.
+
+        A method rather than `pool.envelopes.get(f, ())` at the call site:
+        `.get` with a fallback is a branch, and a slice runner may not contain
+        one. Choosing what an absent facility means is this type's decision to
+        make once, not every caller's to repeat.
+        """
+        return self.envelopes.get(facility_id, ())
+
     @classmethod
     def of(cls, positioned, night, violations, *, day: date) -> PositionedPool:
         """Assemble the hand-off from what §5.3 just decided.
@@ -264,7 +275,7 @@ class ReturnLoad(_Handoff):
         eligible = [e for e in going_back if goes_back(e)]
         return cls(facility_id=facility_id,
                    package_ids=tuple(e["package_id"] for e in eligible),
-                   weight_g=sum(int(e.get("weight_g") or DEFAULT_WEIGHT_G)
+                   weight_g=sum(int(e.get("weight_g", DEFAULT_WEIGHT_G))
                                 for e in eligible))
 
 
@@ -293,7 +304,7 @@ class DayOutcomes(_Handoff):
     violations: tuple[Violation, ...] = ()
 
     @classmethod
-    def of(cls, recorded, declined, refused, *, pool, swept,
+    def of(cls, recorded, declined, refused, *, pool, swept, bikes: int,
            facility_id: str, day: date) -> DayOutcomes:
         """Assemble the hand-off from what §6 just recorded.
 
@@ -326,4 +337,10 @@ class DayOutcomes(_Handoff):
                 defective=recorded.counts.get("Returned", 0),
                 sla_expired=len(swept),
                 unassigned=len(declined) + len(refused_ids),
-                bikes_deployed=0))
+                # Both of these were wrong, and wrong in the direction that
+                # reads as a disaster: `bikes_deployed=0` makes
+                # `metrics.measure` answer `envelopes_per_bike: None`, and an
+                # unset `delivered_within_sla` makes `sla_compliance` 0.0 —
+                # a total SLA failure, from a day that met every one.
+                delivered_within_sla=recorded.within_sla(day, sla_expired),
+                bikes_deployed=bikes))

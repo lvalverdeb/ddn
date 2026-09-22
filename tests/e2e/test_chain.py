@@ -22,17 +22,25 @@ therefore means "no slice has yet implemented a rule the simulator lacks", and
 Task 15's pool-ordering bullet will turn it red on its first commit. That is
 the test working.
 
-**No `pytest.approx`, no fixture literal, no remembered figure.** Every
-expectation is read off the oracle's own report at runtime. `tests/fixtures/
-peak_day.py` carries §10's *published* figures, which this run does not
-reproduce — the deviations are recorded in the simulator's pin, not smoothed
-over here.
+**No `pytest.approx` anywhere, and every *comparison* is read off the oracle's
+own report at runtime.** `tests/fixtures/peak_day.py` carries §10's published
+figures, which this run does not reproduce; the deviations are recorded in the
+simulator's pin rather than smoothed over here.
+
+Three literals do appear, and none of them is an expectation. `3100` and
+`4140` are asserted **against each other** in the section at the foot of this
+file, whose entire point is that the two cohorts differ — a comparison that
+needs both sides named, or it says nothing. `differing > 300` is a floor on
+the negative control, deliberately loose: the measured figure is 386 and
+pinning it exactly would make the control fail on any `Rates` change for a
+reason unrelated to what it guards.
 """
 
 from __future__ import annotations
 
 import random
 from collections import Counter
+from datetime import datetime, time
 
 import pytest
 
@@ -42,11 +50,13 @@ from ddn.e2e import depot_delivery, handoff, hub_to_depots, pickups_to_hub
 from ddn.e2e.depot_delivery.scenario import Scenario as DeliveryScenario
 from ddn.e2e.hub_to_depots.scenario import Scenario as NightScenario
 from ddn.e2e.pickups_to_hub.scenario import Scenario as PickupScenario
+from ddn.model.records import DEFAULT_WEIGHT_G
 from ddn.simulation import Rates, State, run_day
 from ddn.simulation.day import sub_reason
 from tests import peak_day_inputs
 
 SEED = 7
+BUILT = peak_day_inputs.build()
 CUT_OFF = (assumptions.PROCESSING_CUTOFF.hour * 3600
            + assumptions.PROCESSING_CUTOFF.minute * 60)
 
@@ -108,10 +118,17 @@ def chained(built):
         inflow=kwargs["inflow"], vans=kwargs["vans"], travel=kwargs["travel"],
         collection_day=built.day.collection_day, cut_off=CUT_OFF))
 
+    # e2e-1 §4 row 5 names E2E-2 as the consumer of the van releases, and
+    # until this line nothing consumed them: `van_back_at` defaulted to `{}`,
+    # so `postcheck._van_release_bullets` hit `if back is None: continue` for
+    # every trip and §7.1's line-haul bullet was checked against 0 of 6.
+    midnight = datetime.combine(built.day.collection_day, time())
     positioned, transfers = hub_to_depots.run(NightScenario(
         facilities=kwargs["facilities"], vans=kwargs["vans"],
         transit=kwargs["transit"], collection_day=built.day.collection_day,
-        delivery_day=built.day.delivery_day), ready)
+        delivery_day=built.day.delivery_day,
+        van_back_at={r.vehicle_id: int((r.back_at_hub - midnight).total_seconds())
+                     for r in ready.released}), ready)
 
     rng = random.Random(SEED + built.day.delivery_day.toordinal())
     rates = Rates()
@@ -262,6 +279,13 @@ def test_a5_the_tallies_add_up_to_the_days(oracle, chained):
     assert total.sla_expired == delivered.tally.sla_expired
     assert total.unassigned == delivered.tally.unassigned
     assert total.delivered_first_attempt == delivered.tally.delivered_first_attempt
+    # Both of these were being dropped by the hand-off — `bikes_deployed` set
+    # to a literal 0 and `delivered_within_sla` never set. `metrics.measure`
+    # then answered `envelopes_per_bike: None` and `sla_compliance: 0.0`, and
+    # 0.0 reads as a total SLA failure rather than as a missing input, which
+    # `simulation/metrics.py`'s own docstring says it must never do.
+    assert total.delivered_within_sla == delivered.tally.delivered_within_sla
+    assert total.bikes_deployed == delivered.tally.bikes_deployed
 
 
 def test_a6_the_return_load_matches_per_package_and_per_facility(oracle,
@@ -284,9 +308,54 @@ def test_a6_the_return_load_matches_per_package_and_per_facility(oracle,
                   if outcome in {"Rejected", "Returned"}}
 
     for day in days:
-        assert set(day.returns.package_ids) == {
-            package_id for package_id in going_back
-            if facility_of[package_id] == day.facility_id}
+        expected = [package_id for envelope, _ in attempted
+                    for package_id in [envelope["package_id"]]
+                    if package_id in going_back
+                    and facility_of[package_id] == day.facility_id]
+        # A multiset, not a set: with `set(...)` on both sides, a load that
+        # sent every returned envelope back *twice* was byte-identical to
+        # baseline across the whole suite. And the weight rides on the same
+        # record, so it is asserted here rather than nowhere.
+        assert Counter(day.returns.package_ids) == Counter(expected)
+        assert day.returns.weight_g == sum(
+            int(envelope.get("weight_g") or DEFAULT_WEIGHT_G)
+            for envelope, _ in attempted
+            if envelope["package_id"] in set(expected))
+
+
+def test_the_van_release_bullet_was_actually_examined(oracle, chained):
+    """§13.1's empty list must mean "checked and clean", not "not checked".
+
+    The chain fed slice 2 no van return times at all, so `check_day_constraints`
+    skipped every trip and `positioned.violations == ()` was the same sentence
+    as a clean bill with a different meaning — the exact defect the audit found
+    three endpoints shipping. The releases E2E-1 produces are now wired in, and
+    this asserts the check had something to look at.
+    """
+    ready, positioned, _, _ = chained
+
+    assert ready.released, "E2E-1 produced no releases to hand over"
+    assert positioned.violations == ()
+
+    # The proof that the empty list above means "checked and clean": the same
+    # leg, with every van recorded as still out collecting after its circuit
+    # departs, must report the breach. If this comes back empty too, the
+    # release times are not reaching the check and neither result means
+    # anything.
+    midnight = datetime.combine(ready.collection_day, time())
+    breaching = {r.vehicle_id: 40 * 3600 for r in ready.released}
+    broken, _ = hub_to_depots.run(NightScenario(
+        facilities=BUILT.kwargs["facilities"], vans=BUILT.kwargs["vans"],
+        transit=BUILT.kwargs["transit"],
+        collection_day=ready.collection_day,
+        delivery_day=positioned.delivery_day,
+        van_back_at=breaching), ready)
+
+    assert broken.violations, (
+        "§7.1's line-haul bullet reported nothing against vans that had not "
+        "returned; the chain's clean list is not evidence")
+    assert all(r.back_at_hub >= midnight for r in ready.released), (
+        "a release stamped before the day it belongs to")
 
 
 def test_a7_tomorrow_holds_what_the_slices_said_it_would(oracle, chained):
@@ -335,6 +404,14 @@ def test_what_this_day_proves_nothing_about(oracle, chained):
     assert (transfers.carried, transfers.deferred, transfers.to_returns) == (
         (), (), ())
     assert all(day.transfers == () and day.violations == () for day in days)
+    # `ReturnLoad.of` gates through `returns.goes_back`, but everything
+    # `outcomes.record` puts in that list already satisfies the predicate —
+    # so dropping the gate changes nothing here and its docstring's claim that
+    # it is load-bearing is untested on this fixture.
+    # `DayOutcomes.of` likewise hard-codes §9.2's "time" for a refusal, and
+    # `solver_adapter.output` chooses between that and "count" at runtime; the
+    # branch is dead because nothing refuses.
+    assert all(day.tally.unassigned == len(day.unassigned) for day in days)
 
 
 def test_reordering_the_facilities_changes_hundreds_of_envelopes_and_no_tally(
@@ -396,8 +473,28 @@ def seeded(built):
     Not the chain: slice 3 alone, against `run_day` seeded from the same pool.
     The chain cannot be run here and the reason is the point of this section.
     """
+    attempted: list[tuple[dict, str]] = []
+    drawn: list[str] = []
+
+    class Recording:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def draw(self, rng):
+            outcome = self._inner.draw(rng)
+            drawn.append(outcome)
+            return outcome
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    def spy(offered, facility, bikes):
+        attempted.extend((envelope, facility) for envelope in offered)
+        return list(offered), []
+
     state = State(day=built.day.delivery_day, pools=built.pools)
-    report, tomorrow = run_day(state, seed=SEED, **built.kwargs)
+    report, tomorrow = run_day(state, seed=SEED, deliver=spy,
+                               rates=Recording(Rates()), **built.kwargs)
 
     pool = handoff.PositionedPool(
         delivery_day=built.day.delivery_day,
@@ -417,7 +514,7 @@ def seeded(built):
         outcome=lambda _envelope: rates.draw(rng),
         reason=lambda _envelope: sub_reason(rng)), pool)
         for facility in pool.positioned]
-    return report, tomorrow, days
+    return report, tomorrow, days, attempted, drawn
 
 
 def test_slice_3_reproduces_section_10s_own_morning(seeded):
@@ -430,13 +527,23 @@ def test_slice_3_reproduces_section_10s_own_morning(seeded):
     per-package outcomes, same unassigned — so the decomposition is not an
     artefact of the start state chosen to make it separable.
     """
-    report, _, days = seeded
+    report, _, days, attempted, drawn = seeded
 
-    assert report.tally.ready_pool == 3100
     assert sum(day.tally.dispatched for day in days) == report.tally.dispatched
-    assert (Counter(str(outcome) for day in days
-                    for outcome in day.outcomes.values()) == report.outcomes)
-    assert (sum(len(day.unassigned) for day in days) == len(report.unassigned))
+
+    # Per-package, as the paragraph above says — not a multiset of outcome
+    # values and not a count. An earlier version asserted both of those and
+    # went green under the same permutation that reds A3, so §10's real
+    # morning — the only place this cohort is exercised — was checked more
+    # weakly than the empty start it exists to corroborate.
+    assert ({package_id: str(outcome)
+             for day in days for package_id, outcome in day.outcomes.items()}
+            == {envelope["package_id"]: outcome
+                for (envelope, _), outcome in zip(attempted, drawn,
+                                                  strict=True)})
+    assert (Counter((e.package_id, e.reason)
+                    for day in days for e in day.unassigned)
+            == Counter((e.package_id, e.reason) for e in report.unassigned))
 
 
 def test_why_the_whole_chain_cannot_be_run_on_this_morning(built, chained,
@@ -455,7 +562,7 @@ def test_why_the_whole_chain_cannot_be_run_on_this_morning(built, chained,
     start with the deviation stated rather than being run here.
     """
     _, positioned, _, _ = chained
-    report, _, _ = seeded
+    report, _, _, _, _ = seeded
 
     slice_built = sum(len(ids) for ids in positioned.positioned.values())
 

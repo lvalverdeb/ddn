@@ -12,18 +12,32 @@ import-graph check: `ddn/lastmile/plan.py` already reaches
 `ddn.solver_adapter.output` for its reason strings, so a runner importing
 `select` touches `solver_adapter` transitively and nothing here sees it.
 
-Three evasions are open, not closed, and are listed so nobody mistakes a green
-run for a guarantee:
+An adversarial pass found four holes in the first version of this file, all of
+which are now closed and are recorded because the *shape* of each recurs:
 
-* logic moved into `scenario.py`, which needs no imports at all and is
-  exempted below because it is a record of inputs;
-* `sorted(xs, key=operator.itemgetter("priority"))` or
-  `from builtins import sorted as rank` — the call target is an `Attribute` or
-  an alias, so a name-based deny-list does not see it;
-* `functools.reduce` and `itertools.starmap`, for the same reason.
+* `from ddn import simulation` passed all nineteen tests. `"ddn"` was a seam,
+  and the simulator check read `node.module` but never the imported names. One
+  ordinary-looking import line handed a runner the whole simulator, which is
+  the single thing this file exists to prevent.
+* every annotation position was an unchecked code slot, because the walk
+  skipped the annotation subtree entirely and a module-level `AnnAssign`
+  annotation executes without `from __future__ import annotations`.
+* `sorted`, `filter`, `__contains__`, `__getitem__` and `dict.get` spell every
+  forbidden construct with nodes the allow-list permits.
+* logic moved into a sub-package or an `_`-prefixed directory was never parsed
+  at all, because the glob was neither recursive nor inclusive.
 
-What the allow-list really buys is that evading it requires writing something
-that plainly does not look like a sequence of calls, which a reviewer notices.
+**What remains open, and it is not small.** `exec` and `__import__` are denied
+by name, but this is still a syntactic check on each file's own source: it is
+not an import-graph check, and `ddn/lastmile/plan.py` already reaches
+`ddn.solver_adapter.output`, so a runner importing `select` touches that
+package transitively and nothing here sees it. `ddn/e2e/handoff.py` is checked
+under a relaxed rule (it holds the `.of()` constructors) and it imports
+`Tally` from `ddn.simulation.metrics`, so `ddn.e2e` does depend on the
+simulator's package — just not in a way a runner can reach.
+
+A green run here means "nobody has written the evasion yet", not "there is no
+logic in the runners".
 """
 
 from __future__ import annotations
@@ -33,8 +47,9 @@ import pathlib
 
 import pytest
 
-SLICES = sorted(p for p in pathlib.Path("ddn/e2e").iterdir()
-                if p.is_dir() and not p.name.startswith("_"))
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SLICES = sorted(p for p in (ROOT / "ddn" / "e2e").iterdir() if p.is_dir()
+                and p.name != "__pycache__")
 
 #: Everything a sequence of calls needs, and nothing that decides anything.
 #: The forbidden nodes are forbidden *by omission*, which is the point: a new
@@ -58,16 +73,47 @@ ALLOWED = {
 #: design: a slice that imported the simulator would be compared against
 #: itself, which is the one thing `tests/e2e/test_chain.py` exists to rule out.
 PUBLIC_SEAMS = {
-    "ddn", "ddn.allocation", "ddn.lastmile", "ddn.linehaul", "ddn.model",
+    "ddn.allocation", "ddn.lastmile", "ddn.linehaul", "ddn.model",
     "ddn.model.outcomes", "ddn.pickups", "ddn.processing", "ddn.returns",
     "ddn.solver_adapter", "ddn.e2e.handoff", "__future__",
 }
 
+#: `from ddn import lastmile` is how this repository imports a stage, so bare
+#: `ddn` cannot simply be banned — but `from ddn import simulation` is the same
+#: syntax and once passed every test here. The rule is therefore on the
+#: *names*: each one must spell a seam when joined to the package.
+PACKAGE = "ddn"
+
+#: Names that spell a forbidden construct out of permitted nodes.
+#: `sorted(filter(...), key=...)` is a ranking; `xs.__contains__(y)` is a
+#: `Compare`; `d.get(k, fallback)` is an `If`; `list.__getitem__(xs, slice())`
+#: is a `Subscript`. `exec`, `eval` and `__import__` are arbitrary code.
+DENIED_NAMES = {
+    "sorted", "filter", "map", "min", "max", "sum", "any", "all", "zip",
+    "reduce", "exec", "eval", "compile", "open", "__import__", "getattr",
+    "setattr", "slice", "reversed", "enumerate",
+}
+DENIED_ATTRS = {
+    "__contains__", "__getitem__", "__lt__", "__gt__", "__mul__", "__add__",
+    "sort", "get", "pop", "setdefault",
+}
+
 
 def _runners():
+    """Every module under every slice package, at any depth.
+
+    `glob` rather than `rglob`, and skipping `_`-prefixed directories, meant a
+    sub-package full of comprehensions was never opened. Both are fixed here,
+    and `test_every_slice_has_a_runner_to_check` guards the result.
+
+    `scenario.py` is exempt because it is a record of inputs — not because it
+    imports nothing, which an earlier version of this docstring claimed and
+    which is false of all three. That exemption is the largest hole left here:
+    a filtering loop in a scenario would not be seen.
+    """
     return [(slice_dir.name, module)
             for slice_dir in SLICES
-            for module in sorted(slice_dir.glob("*.py"))
+            for module in sorted(slice_dir.rglob("*.py"))
             if module.name != "scenario.py"]
 
 
@@ -87,9 +133,25 @@ def _executable(node):
     skip = set()
     for parent in ast.walk(node):
         for field, value in ast.iter_fields(parent):
-            if field in {"annotation", "returns"} and isinstance(value, ast.AST):
+            if (field in {"annotation", "returns"}
+                    and isinstance(value, ast.AST)
+                    and _is_type_expression(value)):
                 skip.update(id(n) for n in ast.walk(value))
     return [n for n in ast.walk(node) if id(n) not in skip]
+
+
+def _is_type_expression(node):
+    """Whether this annotation is a type and not a place to hide code.
+
+    Skipping the whole subtree made every annotation an unchecked slot — and
+    without `from __future__ import annotations` a module-level one *runs*. So
+    only the shapes a type actually takes are skipped: a name, an attribute
+    chain, a string, `None`, and subscripts and tuples of those.
+    """
+    return all(isinstance(n, (ast.Name, ast.Attribute, ast.Subscript,
+                              ast.Tuple, ast.Constant, ast.Load, ast.Index,
+                              ast.BitOr, ast.BinOp))
+               for n in ast.walk(node))
 
 
 @pytest.mark.parametrize("name, module", _runners(),
@@ -116,13 +178,22 @@ def test_a_runner_imports_only_a_public_seam(name, module):
     for node in ast.walk(_tree(module)):
         if isinstance(node, ast.ImportFrom):
             source = node.module or ""
-            assert (source in PUBLIC_SEAMS
-                    or source.startswith("ddn.e2e.")), f"{module}: {source}"
+            if source == PACKAGE:
+                for alias in node.names:
+                    assert f"{PACKAGE}.{alias.name}" in PUBLIC_SEAMS, (
+                        f"{module}: `from ddn import {alias.name}` — not a "
+                        "seam. `from ddn import simulation` is the reason this "
+                        "reads the names and not just the module.")
+            else:
+                assert (source in PUBLIC_SEAMS
+                        or source.startswith("ddn.e2e.")), f"{module}: {source}"
             assert not any(a.name.startswith("_") for a in node.names), (
                 f"{module}: imports a private name from {source}; promote it "
                 "to its owning module instead")
         elif isinstance(node, ast.Import):
             for alias in node.names:
+                assert alias.name != PACKAGE, (
+                    f"{module}: bare `import ddn` reaches every submodule")
                 assert alias.name in PUBLIC_SEAMS, f"{module}: {alias.name}"
 
 
@@ -135,11 +206,39 @@ def test_no_runner_reaches_the_simulator(name, module):
     comparison, and the agreement would prove nothing at all.
     """
     for node in ast.walk(_tree(module)):
-        sources = ([node.module or ""] if isinstance(node, ast.ImportFrom)
-                   else [a.name for a in node.names]
-                   if isinstance(node, ast.Import) else [])
+        if isinstance(node, ast.ImportFrom):
+            # Both halves: `from ddn.simulation import x` AND the name in
+            # `from ddn import simulation`, which the first version missed.
+            base = node.module or ""
+            sources = [base] + [f"{base}.{a.name}" for a in node.names]
+        elif isinstance(node, ast.Import):
+            sources = [a.name for a in node.names]
+        else:
+            continue
         assert not any(s == "ddn.simulation" or s.startswith("ddn.simulation.")
-                       for s in sources), f"{module} imports the simulator"
+                       for s in sources), f"{module} reaches the simulator"
+
+
+@pytest.mark.parametrize("name, module", _runners(),
+                         ids=lambda v: getattr(v, "name", v))
+def test_a_runner_does_not_spell_a_decision_with_a_builtin(name, module):
+    """`sorted`, `filter`, `.get(k, fallback)` and the dunders are decisions.
+
+    The node allow-list cannot see them: they are `Call` on `Name` or
+    `Attribute`, which a sequence of calls needs. Measured on the first version
+    of this file, a complete second §8 capacity cut — ranking, filtering and a
+    per-facility branch — passed all nineteen tests using nothing else.
+    """
+    for node in ast.walk(_tree(module)):
+        if isinstance(node, ast.Call):
+            target = node.func
+            if isinstance(target, ast.Name):
+                assert target.id not in DENIED_NAMES, (
+                    f"{module}: `{target.id}(...)` ranks, filters or branches; "
+                    "that belongs in the §5 module that owns the decision")
+            elif isinstance(target, ast.Attribute):
+                assert target.attr not in DENIED_ATTRS, (
+                    f"{module}: `.{target.attr}(...)` spells a decision")
 
 
 def test_every_slice_has_a_runner_to_check():

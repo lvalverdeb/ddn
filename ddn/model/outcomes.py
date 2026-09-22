@@ -62,6 +62,20 @@ class Recorded:
     going_back: tuple[dict[str, Any], ...] = ()
     counts: Mapping[str, int] = field(default_factory=dict)
 
+    def within_sla(self, today, expired: Callable[..., bool]) -> int:
+        """§11: delivered, and not past its SLA date when it was.
+
+        The predicate is passed in rather than imported. §6.1's clock lives in
+        `lastmile` beside `select`, its only other caller, and `ddn/model/` is
+        the bottom of this package — importing a stage from here would invert
+        the layering to save one argument.
+
+        `today` is passed for the same reason it is passed everywhere else: a
+        replay of a past day must answer what that day answered.
+        """
+        return sum(1 for a in self.attempts
+                   if a.outcome == DELIVERED and not expired(a.record, today))
+
     @property
     def first_attempt(self) -> int:
         """Delivered without a previous try — §11's first-attempt rate."""

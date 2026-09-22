@@ -694,8 +694,17 @@ def test_a_recording_deliver_and_rates_change_nothing_about_the_day(inputs):
 
     This test is what makes that safe. It compares two independent `run_day`
     runs — plain against instrumented — and is not a value compared against
-    itself. If a future change makes the instruments observable, the chain's
-    oracle stops being the simulator's own answer, and this reds first.
+    itself.
+
+    **What it could not see, and now can.** `DayReport` publishes counts, and
+    `day.py` filters hub rejects out of `returns_queue`, so a `deliver` that
+    merely *reordered* the pool left `report` and `next_state` byte-identical
+    while changing which envelope got which outcome — measured, by swapping
+    two hub envelopes. The chain reds on that (A2, A3, A6) and this test did
+    not, so it reds second, not first, and the chain's expected side rested on
+    a recording nothing had checked. So the sequence itself is now pinned: a
+    second instrumented run must reproduce the same ordered list of
+    (package_id, facility), which an instrument that reorders cannot do.
     """
     _, _, plain_d, plain_t = _threaded(inputs)
 
@@ -725,6 +734,18 @@ def test_a_recording_deliver_and_rates_change_nothing_about_the_day(inputs):
 
     assert watched_d == plain_d, "a recording deliver changed the day's report"
     assert watched_t == plain_t, "a recording deliver changed tomorrow's state"
+
+    # The sequence, not just its size. Two instrumented runs of the same day
+    # must offer the same envelopes to the same facilities in the same order;
+    # an instrument that reorders passes every cardinality check and fails
+    # this one.
+    seen = list(attempted)
+    attempted.clear()
+    drawn.clear()
+    _threaded(inputs, deliver=spy, rates=Recording(Rates()))
+
+    assert [(e["package_id"], f) for e, f in attempted] == [
+        (e["package_id"], f) for e, f in seen]
 
     # And the instruments saw the whole day, not a sample of it.
     assert len(attempted) == plain_d.tally.dispatched == len(drawn)

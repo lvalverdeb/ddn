@@ -243,6 +243,24 @@ def test_slice_2_takes_back_what_no_circuit_carried(night_scenario, ready_pool):
     assert {excluded.reason for excluded in pool.rolled} == {linehaul.NO_VAN}
 
 
+def test_slice_2_carries_the_sender_site_through_to_e2e_3(positioned):
+    """The invariant `handoff.py`'s docstring spends three paragraphs on, and
+    which nothing tested on *this* boundary.
+
+    §5.5 returns an envelope to the sender; `returns.sites` reads
+    `customer_lat` off the record and `simulation.day._return_run` raises
+    rather than guess. Slice 1's hand-off was checked for it; slice 2's was
+    not — so stripping the field here left the chain green field-for-field on
+    a pool `run_day` itself raises a `ValueError` on. Agreement with an oracle
+    that cannot process the input is not agreement.
+    """
+    pool, _ = positioned
+    every = [e for envelopes in pool.envelopes.values() for e in envelopes]
+
+    assert every, "an empty pool would make this vacuous"
+    assert all("customer_lat" in e and "customer_lon" in e for e in every)
+
+
 def test_slice_2_claims_nothing_about_transfers_or_rolling(positioned):
     """A vacuity ledger, not a result.
 

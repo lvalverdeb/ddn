@@ -37,7 +37,7 @@ __all__ = ["run"]
 def run(scenario: Scenario, positioned: PositionedPool) -> DayOutcomes:
     """One facility's delivery day, from its morning pool to its hand-offs."""
     live, swept = lastmile.sweep_expired(
-        positioned.envelopes.get(scenario.facility_id, ()),
+        positioned.at(scenario.facility_id),
         scenario.delivery_day)
     offered, declined = lastmile.select(
         live,
@@ -50,5 +50,6 @@ def run(scenario: Scenario, positioned: PositionedPool) -> DayOutcomes:
                                reason=scenario.reason)
     return DayOutcomes.of(recorded, declined, refused,
                           pool=live, swept=swept,
+                          bikes=scenario.bikes,
                           facility_id=scenario.facility_id,
                           day=scenario.delivery_day)
