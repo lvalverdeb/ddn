@@ -717,10 +717,22 @@ def test_the_lowest_priority_envelope_outweighs_a_long_detour():
     binds, which is what §7.4 says should bind.
     """
     MEDIAN_MARGINAL_COST = 2_349    # 2 x median nearest-neighbour road metres
+    P99_MARGINAL_COST = 12_400      # the exceptional detour, from the constant
 
     problem, _ = build([package("L", priority=40)])
+    prize = problem.orders[0].prize
 
-    assert problem.orders[0].prize > MEDIAN_MARGINAL_COST
+    assert prize > MEDIAN_MARGINAL_COST, (
+        "§8's first objective is maximising delivered; an envelope that loses "
+        "to a typical detour is one the solver declines with bikes idle")
+
+    # The upper bound this docstring has claimed since it was written, and did
+    # not assert. Scaled to the p99 the prize outweighs the shift as well, and
+    # the measurement in `assumptions.PRIZE_SCALE` records what that does:
+    # at scale 1,000 the D5 solve goes INFEASIBLE and serves 0 of 186.
+    assert prize < P99_MARGINAL_COST, (
+        "a prize large enough to outweigh any detour is large enough to "
+        "outweigh the shift, and §7.4 makes the shift a hard bound")
 
 
 def test_the_delivery_window_follows_the_facility_shift():

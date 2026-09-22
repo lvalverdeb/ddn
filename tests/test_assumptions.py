@@ -182,7 +182,19 @@ GUARDED = frozenset({
     "PICKUP_STOP_MIN", "RETURN_STOP_MIN", "FACILITY_UNLOAD_MIN",
     "VAN_IDLE_RETURN_MIN", "REOPT_CADENCE_MIN", "EQUIDISTANT_MARGIN_M",
     "RECONCILE_PER_HOUR", "ASSEMBLY_PER_HOUR", "SORT_PER_HOUR",
+    # §8's weights, added after the re-audit found this guard "catches its
+    # named subset and misses §8's ratio entirely". They are the placeholders
+    # a module is most likely to copy, because they are the ones with no
+    # obvious home: a prize scale looks like a tuning constant.
+    "PRIZE_SCALE", "VEHICLE_FIXED_COST",
 })
+
+#: §8's other two weights are deliberately **not** guarded, and saying so is
+#: the point of the line. `COST_PER_METRE` is 1 and `COST_PER_SECOND` is 0;
+#: guarding them would flag every `= 1` and `= 0` in the package and drown the
+#: check, which is the failure its own docstring warns about. They are pinned
+#: by `tests/test_contract.py` against what the solver does with them instead.
+UNGUARDABLE = frozenset({"COST_PER_METRE", "COST_PER_SECOND"})
 
 #: Constants that hold a number a placeholder also holds, legitimately: each is
 #: a figure the spec states outright, not a stand-in for one it withholds.
@@ -190,6 +202,23 @@ GUARDED = frozenset({
 NOT_A_DUPLICATE = frozenset({
     "DEFAULT_WEIGHT_G", "DEFAULT_SERVICE_MIN", "EXPECTED_PER_BIKE",
 })
+
+
+def test_every_section_8_weight_is_guarded_or_named_as_unguardable():
+    """The re-audit's finding, as a test rather than a promise.
+
+    §8's weights were outside `GUARDED` entirely, so a module could hard-code
+    the prize scale and nothing would notice — which is exactly the defect the
+    guard exists to catch, in the one place the repository has no real figures
+    for. A weight added later (λ, when readiness-weighted admission lands) has
+    to be classified rather than quietly omitted.
+    """
+    weights = {"PRIZE_SCALE", "VEHICLE_FIXED_COST", "COST_PER_METRE",
+               "COST_PER_SECOND"}
+
+    assert weights <= GUARDED | UNGUARDABLE, (
+        f"unclassified §8 weight(s): {sorted(weights - GUARDED - UNGUARDABLE)}")
+    assert not GUARDED & UNGUARDABLE
 
 
 def _guarded_values() -> dict[int, list[str]]:
