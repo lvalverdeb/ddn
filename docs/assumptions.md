@@ -168,7 +168,7 @@ and no figure measured on them describes the operation.
 
 ## Deliberately absent
 
-- **§11's eleven metric targets.** A target is a commitment, not an input.
+- **§11's twelve metric targets.** A target is a commitment, not an input.
   Inventing "SLA compliance ≥ 98%" fabricates a customer promise. The one
   figure the spec does supply — 20–30 envelopes per bike per day — is in §11
   already.

@@ -1,6 +1,6 @@
 """§11's success metrics, per day and cumulative.
 
-Every row of §11 is here. **No targets are**: §11 leaves all eleven `[TBD]`
+Every row of §11 is here. **No targets are**: §11 leaves all twelve `[TBD]`
 except the one it supplies itself, and a target is a commitment rather than an
 input -- inventing "SLA compliance ≥ 98%" would put a promise in the repository
 that no customer made. `docs/assumptions.md` says so under "Deliberately
@@ -41,6 +41,9 @@ class Tally:
     rejected: int = 0
     defective: int = 0
     sla_expired: int = 0
+    #: §6 v0.15's withdrawals. Counted here because §11 asks for a
+    #: cancellation rate and a rate needs a numerator.
+    cancelled: int = 0
     unassigned: int = 0
     received: int = 0
     received_before_cut_off: int = 0
@@ -72,6 +75,10 @@ class Metrics:
     distance_per_envelope_m: float | None
     envelopes_per_bike: float | None
     solver_seconds: float | None
+    #: §11 v0.15's twelfth row. It was added to the document when §6 gained
+    #: the outcome and not to this table, so `Metrics` answered eleven of
+    #: twelve and four prose counts went on saying "eleven".
+    cancellation_rate: float | None
 
     @property
     def within_expected_per_bike(self) -> bool | None:
@@ -87,12 +94,18 @@ class Metrics:
 
 
 def measure(tally: Tally) -> Metrics:
-    """§11's eleven rows from one tally, daily or cumulative."""
+    """§11's twelve rows from one tally, daily or cumulative."""
     return Metrics(
         pickup_responsiveness_s=_ratio(tally.pickup_wait_seconds, tally.pickups),
         same_day_readiness=_ratio(tally.ready_by_cut_off,
                                   tally.received_before_cut_off),
-        reconciliation_discrepancy_rate=_ratio(tally.disputed, tally.received),
+        # `None` rather than 0.0, for the reason this module states at the
+        # top: nothing sets `Tally.disputed` yet, and a rate of zero reads as
+        # a day with no discrepancies rather than a day nobody counted. §10
+        # has ten. Same idiom as `distance_per_envelope_m` below.
+        reconciliation_discrepancy_rate=(
+            None if not tally.disputed
+            else _ratio(tally.disputed, tally.received)),
         first_attempt_delivery_rate=_ratio(tally.delivered_first_attempt,
                                            tally.dispatched),
         postponement_rate=_ratio(tally.postponed, tally.dispatched),
@@ -103,4 +116,5 @@ def measure(tally: Tally) -> Metrics:
         distance_per_envelope_m=(None if not tally.distance_m
                                  else _ratio(tally.distance_m, tally.delivered)),
         envelopes_per_bike=_ratio(tally.delivered, tally.bikes_deployed),
+        cancellation_rate=_ratio(tally.cancelled, tally.ready_pool),
         solver_seconds=(None if not tally.solver_seconds else tally.solver_seconds))

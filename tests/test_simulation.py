@@ -17,7 +17,7 @@ from ddn import assumptions
 from ddn.allocation import EFFECTIVE_PER_BIKE
 from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
-from ddn.simulation.metrics import Tally, measure
+from ddn.simulation.metrics import Metrics, Tally, measure
 from ddn.solver_adapter import postcheck
 from tests import peak_day_inputs
 from tests.fixtures import peak_day
@@ -778,3 +778,83 @@ def test_a_recording_deliver_and_rates_change_nothing_about_the_day(inputs):
     assert len({e["package_id"] for e, _ in attempted}) == len(attempted)
     assert Counter(drawn) == plain_d.outcomes
     assert Counter(f for _, f in attempted)["HUB"] == 1200
+
+
+# ------------------------------- §5.4 on real geography, statically checked
+
+def test_the_on_road_runner_calls_only_names_that_exist():
+    """`on_road.py` needs a gateway and a graph, so no test runs it — and it
+    called `lastmile.allocate`, which has never existed.
+
+    §4.2's allocation lives in `ddn.allocation`; the day-one runner would have
+    raised `AttributeError` after spawning OSRM and building a 2.5-million-cell
+    matrix. Nothing caught it because nothing imports the module.
+
+    So this resolves every `module.attribute(...)` the file calls, statically.
+    It needs no routing data, and it is the whole class of error rather than
+    the one instance: a module the suite cannot execute still has names that
+    must exist.
+    """
+    import ast
+    import importlib
+    import pathlib
+
+    source = pathlib.Path("ddn/simulation/on_road.py").read_text()
+    tree = ast.parse(source)
+
+    imported = {alias.asname or alias.name.split(".")[0]
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import | ast.ImportFrom)
+                for alias in node.names}
+    packages = {name: importlib.import_module(f"ddn.{name}")
+                for name in imported & {"allocation", "assumptions", "contract",
+                                        "lastmile", "linehaul", "model",
+                                        "pickups", "processing", "returns"}}
+    assert packages, "no ddn package imported; this test would prove nothing"
+
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in packages):
+            module = packages[node.func.value.id]
+            assert hasattr(module, node.func.attr), (
+                f"on_road.py:{node.lineno} calls "
+                f"{node.func.value.id}.{node.func.attr}(), which does not "
+                f"exist in {module.__name__}")
+
+
+def test_every_row_of_section_11_is_a_field_of_metrics():
+    """The document's table and the dataclass, held to each other.
+
+    §11 gained a twelfth row when §6 gained the Cancelled outcome in v0.15,
+    and `Metrics` was not given the field — so it answered eleven of twelve
+    and three prose copies of "eleven" went on agreeing with each other.
+    Counting the rows rather than restating the number is what stops the next
+    row going the same way.
+    """
+    import pathlib
+    from dataclasses import fields
+
+    spec = pathlib.Path("docs/vrp-problem-definition.md").read_text()
+    table = spec.split("## 11.")[1].split("## 12.")[0]
+    rows = [line for line in table.splitlines()
+            if line.startswith("|") and "---" not in line][1:]
+
+    assert len(rows) == len(fields(Metrics)), (
+        f"§11 has {len(rows)} rows and Metrics has {len(fields(Metrics))} "
+        "fields")
+    assert len(rows) == 12
+
+
+def test_a_metric_nothing_counted_is_none_and_not_zero():
+    """`metrics.py`'s own rule, applied to the one that broke it.
+
+    "A metric whose inputs the day did not produce is `None` rather than
+    zero." Nothing sets `Tally.disputed`, so the reconciliation discrepancy
+    rate was 0.0 on every day — §10 has ten discrepancies, and 0.0 reads as a
+    clean day rather than as an uncounted one.
+    """
+    assert measure(Tally(received=100)).reconciliation_discrepancy_rate is None
+    assert measure(Tally(received=100, disputed=10)
+                   ).reconciliation_discrepancy_rate == 0.1

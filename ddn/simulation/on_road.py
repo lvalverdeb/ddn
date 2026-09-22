@@ -23,7 +23,7 @@ from vrp.matrix import PairCache, build_large_matrix
 from vrp.solve.pyvrp_adapter import solve
 from vrp.verify import verify
 
-from ddn import assumptions, contract, lastmile
+from ddn import allocation, assumptions, contract, lastmile
 from ddn.model.facility import nearest_facility
 
 
@@ -156,7 +156,7 @@ try:
                                      sort_index)].append(pkg)
 
     pools = {f: len(v) for f, v in by_facility.items()}
-    bikes = lastmile.allocate(pools, BIKES)
+    bikes = allocation.allocate(pools, BIKES)
     model = contract.load_model()
 
     print(f"pool {len(packages)}  routable {len(routable)}  excluded {len(excluded)}")

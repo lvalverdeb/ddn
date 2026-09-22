@@ -86,6 +86,33 @@ def deliver(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _transit(table: dict[str, int] | None):
+    """§9.1's inter-depot seconds, as `linehaul.plan` reads them.
+
+    The wire form is `{"D1>D2": 3600}` because JSON has no tuple key. Absent
+    is `None`, which the planner already handles by declining transfers with
+    that as the reason -- a default of zero would time every circuit as
+    instantaneous, which is the invisible, load-bearing kind of default §9.1's
+    own note about this input warns against.
+    """
+    if not table:
+        return None
+
+    seconds = {tuple(pair.split(">", 1)): int(value)
+               for pair, value in table.items()}
+
+    def transit(origin: str, destination: str) -> int:
+        try:
+            return seconds[(origin, destination)]
+        except KeyError:
+            raise ValueError(
+                f"no inter-depot transit given for {origin} -> {destination}; "
+                "§5.3.2 cannot time a circuit over an arc it was not told "
+                "about") from None
+
+    return transit
+
+
 def linehaul_plan(payload: dict[str, Any]) -> dict[str, Any]:
     """§5.3: which van goes where, and what stays behind with a reason.
 
@@ -100,12 +127,20 @@ def linehaul_plan(payload: dict[str, Any]) -> dict[str, Any]:
     the unload itself would manufacture a violation on every trip. That bullet
     is honestly unchecked here rather than dishonestly checked, which is what
     the `Day` docstring means by "anything absent is not claimed to have been".
+
+    **`transit` was not passed at all**, which is a different thing: §3.1 gives
+    hub transit only, so `linehaul.plan` declines *every* transfer without a
+    pairwise table and says so as the reason. Over HTTP that made §5.3.2's
+    whole resource inert — a caller could post transfers all day and receive
+    "no inter-depot transit supplied" for each. The payload now carries it, and
+    omitting it still means declined-with-a-reason rather than a guess.
     """
     plan = linehaul.plan(payload["facilities"], payload["envelopes"],
                          payload["vans"],
                          unload_seconds=payload["unload_seconds"],
                          transfers=payload.get("transfers", ()),
-                         returning=payload.get("returning", ()))
+                         returning=payload.get("returning", ()),
+                         transit=_transit(payload.get("transit")))
     violations = sa.check_day_constraints(sa.Day(
         today=date.fromisoformat(payload["day"]),
         linehaul=plan,

@@ -9,7 +9,7 @@ it must catch a bad plan whatever produced it.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -397,6 +397,32 @@ def test_serving_an_envelope_that_is_not_ready_is_a_day_violation():
         today=TODAY, solutions={"HUB": one}, packages=pool))
 
     assert details_in(found, postcheck.READY_ONLY) == ["is Sorted, not Ready"]
+
+
+def test_dispatching_past_the_sla_date_is_a_day_violation():
+    """§7.1's other day-level package bullet, and it was unheld too.
+
+    `NOT_PAST_SLA` is checked in the same loop as `READY_ONLY` — once per
+    solve and once across the day — and the audit's M3 was re-run against both
+    sites of `READY_ONLY` but not against this one. Measured on the tree at
+    987 passed: turning `postcheck.py:413`'s comparison into `if False:` left
+    every test green, so the day-level half of §6.1's clock was enforced by
+    code nothing exercised. This is that mutation, closed.
+    """
+    pool = packages(6, sla_date=(TODAY - timedelta(days=1)).isoformat())
+    problem, _, _ = solved_last_mile()
+    one = handmade(problem, [Route(vehicle_id="M1", steps=(
+        step("HUB", kind="START", arrival=START),
+        step("P0", order_id="P0", arrival=VISIT),
+        step("HUB", kind="END", arrival=HOME)))])
+
+    found = sa.check_day_constraints(sa.Day(
+        today=TODAY, solutions={"HUB": one}, packages=pool))
+
+    assert postcheck.NOT_PAST_SLA in bullets_in(found)
+    yesterday = (TODAY - timedelta(days=1)).isoformat()
+    assert details_in(found, postcheck.NOT_PAST_SLA) == [
+        f"SLA date {yesterday} is before {TODAY.isoformat()}"]
 
 
 def test_serving_an_envelope_that_is_not_ready_is_a_violation():

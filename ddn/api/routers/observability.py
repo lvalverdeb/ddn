@@ -35,7 +35,7 @@ def metrics(store: StoreDep,
             day: Annotated[date | None, Query(description="the day to report")] = None):
     """§11, and no targets.
 
-    §11 leaves all eleven targets `[TBD]` and `docs/assumptions.md` explains
+    §11 leaves all twelve targets `[TBD]` and `docs/assumptions.md` explains
     why none is invented: a target is a commitment, and putting one here would
     publish a promise the customer never made.
     """
