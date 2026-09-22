@@ -18,8 +18,14 @@ from ddn.processing.readiness import (
     requires_assembly,
     schedule,
 )
-from ddn.processing.sorting import Sorted, presort
+from ddn.processing.sorting import (
+    HELD_STRADDLE,
+    Sorted,
+    keep_straddlers_at_hub,
+    presort,
+)
 
-__all__ = ["ASSEMBLY_TYPES", "Readiness", "Sorted", "at_facilities",
+__all__ = ["ASSEMBLY_TYPES", "HELD_STRADDLE", "Readiness", "Sorted",
+           "at_facilities", "keep_straddlers_at_hub",
            "position", "presort",
            "ready_times", "requires_assembly", "schedule"]

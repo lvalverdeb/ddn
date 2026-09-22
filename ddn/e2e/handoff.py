@@ -44,6 +44,7 @@ before anything depends on it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -54,6 +55,7 @@ from ddn.lastmile import expired as sla_expired
 from ddn.linehaul.circuit import Declined
 from ddn.model.records import DEFAULT_WEIGHT_G, Outcome, Status, TransferRequest
 from ddn.pickups import uncollected as _uncollected_envelopes
+from ddn.processing import HELD_STRADDLE
 from ddn.returns import goes_back
 from ddn.simulation.metrics import Tally
 from ddn.solver_adapter.output import NO_TIME as OUT_OF_TIME
@@ -199,7 +201,8 @@ class PositionedPool(_Handoff):
         return self.envelopes.get(facility_id, ())
 
     @classmethod
-    def of(cls, positioned, night, violations, *, day: date) -> PositionedPool:
+    def of(cls, positioned, night, violations, *, day: date,
+           held: Sequence[str] = ()) -> PositionedPool:
         """Assemble the hand-off from what §5.3 just decided.
 
         A shape mapping: it names and groups, and decides nothing. `rolled`
@@ -217,10 +220,22 @@ class PositionedPool(_Handoff):
                                   night.reason_for(facility) or NO_REASON)
                          for facility, ids in night.rolled.items()
                          for package_id in ids),
+            held=tuple(Excluded(package_id, HELD_STRADDLE)
+                       for package_id in held),
             violations=tuple(violations))
     #: e2e-2 §5: "Rolled envelopes with reason: no van / weight / deadline
     #: unreachable / held-straddle".
     rolled: tuple[Excluded, ...] = ()
+    #: e2e-2 §5's straddlers: kept at the hub pending address geocoding
+    #: (§2 item 1), reported with the document's own word.
+    #:
+    #: **In `held`, not in `rolled`, and §1 is why.** The boundary is "either
+    #: positioned ... or explicitly rolled", and a straddler is positioned —
+    #: at the hub, which §2 item 2 insists is a dispatching facility like any
+    #: other. Calling it rolled would put one envelope in both halves of a
+    #: partition the whole slice rests on. B6 says "appear in rolled list";
+    #: that is the contradiction, and this is the reading that keeps §1 true.
+    held: tuple[Excluded, ...] = ()
     #: §13.1's obligation, empty on success — from `check_day_constraints`,
     #: which is the half of §7.1 a single solve cannot see.
     violations: tuple[Violation, ...] = ()

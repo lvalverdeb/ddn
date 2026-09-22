@@ -27,7 +27,7 @@ serving the tight one first loses at most the loose one.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -389,3 +389,78 @@ def strip_rolled(positioned: Mapping[str, Sequence[dict[str, Any]]],
     return {facility: [e for e in pool
                        if facility == hub_id or e["package_id"] not in rolled]
             for facility, pool in positioned.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class Proposal:
+    """e2e-2 §5: "Rebalancing proposals: from, to, package_ids, expected leg"."""
+
+    from_facility_id: str
+    to_facility_id: str
+    package_ids: tuple[str, ...]
+    #: The leg that would carry them, as the pair a circuit would fly. Named
+    #: because e2e-2 §3 makes a leg the precondition: with none there is no
+    #: proposal, and the over-full depot rolls by priority instead.
+    leg: tuple[str, str]
+
+
+def rebalancing(projected: Mapping[str, int], capacity: Mapping[str, int], *,
+                pools: Mapping[str, Sequence[Mapping[str, Any]]],
+                reaches: Callable[[str, str], bool],
+                cap: int = 50) -> list[Proposal]:
+    """§5.3.2's third trigger, as proposals §4.2 may refuse.
+
+    e2e-2 §3: "when a depot's projected pool exceeds its motorbikes × 25 and a
+    neighbour has slack, propose transfers if a leg exists or fits within
+    van-hours. **Proposals go to allocation; this slice does not decide them
+    alone.**" So nothing here moves an envelope: §4.2 owns the fleet, and a
+    planner that rebalanced on its own authority would be making an allocation
+    decision from inside §5.3.
+
+    It returns `Proposal`, not `TransferRequest`, which is e2e-2 §5's own
+    shape for this row. Two reasons: a request is a commitment and this is an
+    offer, and `TransferRequest` lives in `ddn.model` -- this package imports
+    nothing from the rest of `ddn` and a proposal is not worth being the first.
+    The caller raises the requests if allocation accepts.
+
+    The envelopes offered are the **lowest** priority at the over-full depot:
+    §8.1 ranks what is delivered, and what is moved is the mirror of it, since
+    an envelope that will be served tomorrow should not spend tonight on a van.
+
+    Args:
+        projected: facility id -> envelopes expected in its pool tomorrow.
+        capacity: facility id -> what its bikes can serve.
+        pools: the envelopes behind `projected`, to choose which to offer.
+        reaches: whether a leg from the first facility to the second runs
+            tonight. A precondition, not an aspiration.
+        cap: most envelopes to offer per pair; e2e-2 row B9 states 50.
+
+    Returns:
+        One proposal per (over-full depot, neighbour) pair that a leg reaches.
+        Empty when nothing is over capacity, when no neighbour has room, or
+        when no leg connects them -- three different silences, none an error.
+    """
+    over = {f: n - capacity.get(f, 0) for f, n in projected.items()
+            if n > capacity.get(f, 0)}
+    room = {f: capacity.get(f, 0) - n for f, n in projected.items()
+            if capacity.get(f, 0) > n}
+    proposals: list[Proposal] = []
+
+    for source in sorted(over, key=lambda f: (-over[f], f)):
+        offer = sorted(pools.get(source, ()),
+                       key=lambda e: (float(e.get("priority", 0)),
+                                      e["package_id"]))[:cap]
+        for destination in sorted(room, key=lambda f: (-room[f], f)):
+            if not offer or not over[source] or not room[destination]:
+                continue
+            if not reaches(source, destination):
+                continue
+            moving = offer[:min(room[destination], over[source])]
+            proposals.append(Proposal(
+                from_facility_id=source, to_facility_id=destination,
+                package_ids=tuple(e["package_id"] for e in moving),
+                leg=(source, destination)))
+            room[destination] -= len(moving)
+            over[source] -= len(moving)
+            offer = offer[len(moving):]
+    return proposals

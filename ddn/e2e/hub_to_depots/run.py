@@ -51,5 +51,6 @@ def run(scenario: Scenario,
         unload_seconds=scenario.unload_seconds,
     ))
     return (PositionedPool.of(positioned, night, violations,
-                              day=scenario.delivery_day),
+                              day=scenario.delivery_day,
+                              held=scenario.straddling),
             TransferOutcomes.of(night))

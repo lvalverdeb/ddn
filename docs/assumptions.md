@@ -80,7 +80,7 @@ case, so it is off the critical path for readiness.
 | Key | Value | Spec gap | Provenance |
 |---|---|---|---|
 | `REOPT_CADENCE_MIN` | 30 | §5.1.5 | document — §5.1.5's own "e.g. every 30 minutes" |
-| `EQUIDISTANT_MARGIN_M` | 2000 | §3.2 flags zips "straddling two facilities' areas"; Open Question 14 asks how | **invented.** Too small and nothing is flagged; too large and every envelope is |
+| `EQUIDISTANT_MARGIN_M` | 2000 | §3.2 flags zips "straddling two facilities' areas"; Open Question 14 asks how | **invented.** Too small and nothing is flagged; too large and every envelope is. **What now acts on it (e2e-2 §2 item 1):** a zip-centroid envelope inside the margin is kept at the hub pending address geocoding rather than committed to a depot it may have to leave again — `processing.keep_straddlers_at_hub`, reported as `held-straddle`. §3.2 says only "[flag these]", so the flag is the parent's and the rule is e2e-2's, marked there for promotion. Open Question 14 is still open. |
 
 ## Outcomes (§6, §11)
 

@@ -29,7 +29,7 @@ whoever holds a gateway at that point.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from vrp.model import TravelMatrix
@@ -39,6 +39,12 @@ from ddn.model.facility import ranked
 
 #: §9.1's value for a coordinate that is still a zip-code centroid.
 ZIP_CENTROID = "zip_centroid"
+
+#: e2e-2 §5's roll reason for a straddler. The envelope is not rolled in the
+#: usual sense -- it is at the hub and will be dispatched from there -- so the
+#: word is the document's and the placement is `held`, not `rolled`. See
+#: `keep_straddlers_at_hub`.
+HELD_STRADDLE = "held-straddle"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,3 +103,32 @@ def presort(
             straddles=(envelope.get("coord_source") == ZIP_CENTROID
                        and margin < margin_m)))
     return tuple(results)
+
+
+def keep_straddlers_at_hub(
+        sorted_envelopes: Sequence[Sorted], *,
+        hub_id: str = "HUB") -> tuple[tuple[Sorted, ...], tuple[str, ...]]:
+    """e2e-2 §2 item 1: a straddler waits at the hub for a real address.
+
+    "A zip-centroid envelope whose centroid is within `EQUIDISTANT_MARGIN_M`
+    of two facilities is flagged; the working rule is to **keep it at the hub**
+    pending address geocoding rather than commit it to a depot it may have to
+    leave again."
+
+    `presort` flags; this decides, and the two are separate on purpose.
+    §3.2 says only "[flag these]" and Open Question 14 is still open, so the
+    flag is what the parent document supports and the keep-at-hub rule is
+    e2e-2's, marked there for promotion. A caller that wants §3.3's answer
+    unmodified simply does not call this.
+
+    Returns:
+        The same records with each straddler reassigned to the hub, in the
+        input's order, and the ids that moved. The ids are returned rather
+        than inferred from a comparison, because an envelope whose nearest
+        facility was *already* the hub straddles without moving and is held
+        just the same.
+    """
+    held = tuple(s.package_id for s in sorted_envelopes if s.straddles)
+    kept = tuple(replace(s, facility_id=hub_id) if s.straddles else s
+                 for s in sorted_envelopes)
+    return kept, held

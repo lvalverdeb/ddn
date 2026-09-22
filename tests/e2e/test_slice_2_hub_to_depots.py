@@ -1,128 +1,359 @@
-"""E2E-2 — slice 2, hub to depots: the acceptance rows, not yet built.
+"""E2E-2 — slice 2, hub to depots: the acceptance rows.
 
-Every row of `docs/e2e/e2e-2-hub-to-depots.md` §7, one test each, named by its
-row id. They are `xfail(strict=True)`, so the count of open rows is visible in
-the suite output and a row that starts passing fails the build rather than
-passing quietly — a row that works by accident has not been accepted.
+Every row of `docs/e2e/e2e-2-hub-to-depots.md` §8, one test each, named by its
+row id and citing the document. The scenario and expectation are read from the
+table by `tests.e2e.rows` rather than restated here, so a reworded row changes
+what the test claims instead of leaving it asserting text the document no
+longer carries.
 
-The scenario and expectation are read from the document by `tests.e2e.rows`
-rather than restated here. A stub that copied its row would go on claiming the
-old text after a rewording, which is how §10 drifted for two revisions.
+`tests/fixtures/peak_day_transfers.py` supplies the night: §10's day plus
+thirty transfer candidates, 28 of which §7.1 permits. It is built from the
+document's figures rather than from what the planner emits, which is the whole
+point of keeping it separate from the code under test.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, time, timedelta
+
 import pytest
 
+from ddn import assumptions, linehaul, processing, returns
+from ddn.allocation import capacity_for
+from ddn.e2e import hub_to_depots
+from ddn.e2e.handoff import ReadyPool
+from ddn.e2e.hub_to_depots.scenario import Scenario
+from ddn.linehaul import MAX_LOAD_G
+from ddn.model.records import TransferReason
 from tests.e2e import rows
+from tests.fixtures import peak_day_transfers
+
+FX = peak_day_transfers.load()
+UNLOAD = assumptions.FACILITY_UNLOAD_MIN * 60
 
 
-def test_the_document_still_carries_every_row_this_file_stubs():
-    """A row deleted from the table would take its stub with it silently.
-
-    The stubs are generated from the document, so a vanished row leaves no
-    failing test behind — only a smaller suite, which nothing notices.
-    """
+def test_the_document_still_carries_every_row_this_file_covers():
+    """A row deleted from the table would take its test with it silently."""
     found = [r for r in rows.ROWS if r.startswith("B")]
     assert len(found) == rows.EXPECTED["B"] == 9
 
 
-def _not_built(row_id: str) -> None:
-    """The seam each row is built through.
+# ------------------------------------------------------------- the harness
 
-    Raising rather than asserting False: an empty body would *pass*, and under
-    `strict=True` a passing xfail fails the build — so an unwritten row would
-    look like a regression instead of like work outstanding.
-    """
-    raise NotImplementedError(
-        f"{row_id}: {rows.scenario(row_id)} -> {rows.expected(row_id)}")
+def _night(*, transfers=(), returning=(), envelopes=None, vans=None):
+    """§5.3's planner on the fixture's night, with one thing varied."""
+    return linehaul.plan(
+        list(FX.depots),
+        list(FX.hub_loads if envelopes is None else envelopes),
+        list(FX.vans if vans is None else vans),
+        transfers=list(transfers), returning=list(returning),
+        transit=FX.transit, unload_seconds=UNLOAD)
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
+def _through_the_slice(*, transfers=(), returning=(), straddling=()):
+    """The same night through `ddn/e2e/hub_to_depots`, as E2E-1 would feed it."""
+    pool = {FX.hub["id"]: (), **{
+        d["id"]: tuple(e for e in FX.hub_loads if e["facility_id"] == d["id"])
+        for d in FX.depots}}
+    ready = ReadyPool(collection_day=FX.clock_day, ready=pool)
+    return hub_to_depots.run(
+        Scenario(facilities=[FX.hub, *FX.depots], vans=list(FX.vans),
+                 transit=FX.transit, transfers=list(transfers),
+                 returning=list(returning), straddling=tuple(straddling),
+                 collection_day=FX.clock_day, delivery_day=FX.day), ready)
+
+
+def _legs(plan):
+    return [(leg.from_facility, leg.to_facility, leg.departure, leg.arrival)
+            for trip in plan.trips for leg in trip.legs]
+
+
+# ----------------------------------------------------------------- the rows
+
 def test_b1():
-    """E2E-2 §7 row B1, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B1, e2e-2-hub-to-depots.md.
 
-    Scenario: §10 day: 4,550 Ready; 1,600 hub-direct; 2,950 depot-bound; 4 held vans + 3 released, one late van; D6 at 4 h transit
-    Expected: All 4,550 positioned by each facility's morning release; D6 load departs on an overnight run and its van is unavailable next morning; no leg over 500 kg; violation list empty
+    Scenario: §10 day: 4,550 Ready; 1,600 hub-direct; 2,950 depot-bound;
+    4 held vans + 3 released, one late van; D6 at 4 h transit
+    Expected: All 4,550 positioned by each facility's morning release; D6 load
+    departs on an overnight run and its van is unavailable next morning; no
+    leg over 500 kg; violation list empty
     """
-    _not_built("B1")
+    positioned, _ = _through_the_slice()
+    night = _night()
+
+    # Every depot-bound envelope is on a circuit or rolled with a reason, and
+    # §1's boundary is a partition: an envelope in neither is one nobody is
+    # looking for.
+    carried = {pid for trip in night.trips for pid in trip.package_ids}
+    rolled = {pid for ids in night.rolled.values() for pid in ids}
+    assert carried | rolled == {e["package_id"] for e in FX.hub_loads}
+    assert not carried & rolled
+
+    assert positioned.violations == (), "§13.1's list, from the day check"
+    for trip in night.trips:
+        for leg in trip.legs:
+            assert leg.weight_g <= MAX_LOAD_G, "§7.1's 500 kg"
+
+    # "departs on an overnight run": D6's circuit leaves after midnight on the
+    # collection day's clock, which is what an overnight run *is* here.
+    d6 = [trip for trip in night.trips
+          if "D6" in {leg.to_facility for leg in trip.legs} | {trip.destination}]
+    assert d6, "no van reached D6"
+    assert any(trip.departure > 24 * 3600 for trip in d6), (
+        "D6 is four hours out and its release is the next morning; a circuit "
+        "leaving before midnight would not be the overnight run the row names")
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b2():
-    """E2E-2 §7 row B2, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B2, e2e-2-hub-to-depots.md.
 
     Scenario: No transfers, no returns
-    Expected: Plan leg-for-leg identical to the single-destination baseline (regression, Task 8)
+    Expected: Plan leg-for-leg identical to the single-destination baseline
+    (regression, Task 8)
     """
-    _not_built("B2")
+    baseline = _night()
+    with_nothing = _night(transfers=(), returning=())
+
+    assert _legs(with_nothing) == _legs(baseline)
+    assert with_nothing.declined == ()
+    assert with_nothing.returned == ()
+    assert all(leg.transfer_ids == () and leg.return_ids == ()
+               for trip in with_nothing.trips for leg in trip.legs), (
+        "a night with neither carries neither; Task 8's regression is that "
+        "adding the *capability* did not change the plan when it is unused")
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b3():
-    """E2E-2 §7 row B3, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B3, e2e-2-hub-to-depots.md.
 
-    Scenario: 30 transfers layered on B1 (18 address corrections, 9 misassignments, 3 rebalancing), 2 of which cannot meet SLA
-    Expected: 28 carried on inter-depot legs and arrive before deadline; 2 reported to returns; hub-origin loads not displaced except by higher-priority transfers
+    Scenario: 30 transfers layered on B1 (18 address corrections,
+    9 misassignments, 3 rebalancing), 2 of which cannot meet SLA
+    Expected: 28 carried on inter-depot legs and arrive before deadline;
+    2 reported to returns; hub-origin loads not displaced except by
+    higher-priority transfers
     """
-    _not_built("B3")
+    split = {reason: sum(c.reason is reason for c in FX.candidates)
+             for reason in TransferReason}
+    assert split[TransferReason.ADDRESS_CORRECTION] == 18
+    assert split[TransferReason.MISASSIGNMENT] == 9
+    assert split[TransferReason.REBALANCING] == 3
+    assert len(FX.requests) == 28 and len(FX.to_returns) == 2
+
+    night = _night(transfers=FX.requests)
+    carried = set(night.transfers_carried)
+    declined = {d.transfer_id for d in night.declined}
+
+    assert carried | declined == {r.transfer_id for r in FX.requests}
+    assert not carried & declined
+
+    # "arrive before deadline" — checked per transfer against the leg that
+    # carried it, not as an aggregate.
+    by_id = {r.transfer_id: r for r in FX.requests}
+    midnight = datetime.combine(FX.clock_day, time())
+    for trip in night.trips:
+        for leg in trip.legs:
+            arrival = midnight + timedelta(seconds=leg.arrival)
+            for transfer_id in leg.transfer_ids:
+                assert by_id[transfer_id].makes(arrival), (
+                    f"{transfer_id} arrived after its deadline")
+
+    # "hub-origin loads not displaced": the same envelopes travel with the
+    # transfers aboard as without them.
+    assert (sum(len(t.package_ids) for t in night.trips)
+            == sum(len(t.package_ids) for t in _night().trips))
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b4():
-    """E2E-2 §7 row B4, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B4, e2e-2-hub-to-depots.md.
 
     Scenario: Van-hours short by one circuit
-    Expected: Dropped loads are the lowest-priority; every SLA-today transfer and envelope is carried; rolled list carries reason "no van"
+    Expected: Dropped loads are the lowest-priority; every SLA-today transfer
+    and envelope is carried; rolled list carries reason "no van"
     """
-    _not_built("B4")
+    full = _night()
+    reached = {trip.destination for trip in full.trips}
+    assert len(reached) > 1, "a single-depot night cannot be short by a circuit"
+
+    short = _night(vans=list(FX.vans)[:1])
+    missed = {facility for facility, ids in short.rolled.items() if ids}
+
+    assert missed, "one van reached every depot; the row cannot bite"
+    assert all(short.reason_for(f) == linehaul.NO_VAN for f in missed), (
+        "§9.2 asks for the reason, and 'no van' is not 'not ready in time' — "
+        "one is a fleet too small, the other a hub too slow"
+    )
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b5():
-    """E2E-2 §7 row B5, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B5, e2e-2-hub-to-depots.md.
 
-    Scenario: 200 envelopes still in assembly at 16:00, expected Ready by 17:30; D2's latest departure 18:00
-    Expected: The D2 van waits and carries them; a van for D6 (latest departure 15:00) does not
+    Scenario: 200 envelopes still in assembly at 16:00, expected Ready by
+    17:30; D2's latest departure 18:00
+    Expected: The D2 van waits and carries them; a van for D6 (latest
+    departure 15:00) does not
+
+    **The row's clock cannot be taken literally, and the reason is §5.**
+    `latest_departure` is `DAY + release − transit − unload`, because line-haul
+    runs on D and the release is D+1's morning — so *every* depot's deadline is
+    past 24 h and a "latest departure of 15:00" does not exist. On the
+    fixture's own depots the deadlines are D1 at 30 h and D6 at 26.5 h.
+
+    What the row is really about is the relationship: envelopes that become
+    Ready after one depot's deadline and before another's. So the ready time
+    sits between the two, and D1 plays the patient van while D6 plays the one
+    that cannot wait.
     """
-    _not_built("B5")
+    patient, hurried = FX.depots[0], FX.depots[5]
+    assert (patient["id"], hurried["id"]) == ("D1", "D6")
+
+    late_deadline = linehaul.latest_departure(patient, unload_seconds=UNLOAD)
+    early_deadline = linehaul.latest_departure(hurried, unload_seconds=UNLOAD)
+    ready_at = (late_deadline + early_deadline) // 2
+    assert early_deadline < ready_at <= late_deadline
+
+    waited = [{"package_id": f"PKG-L{i}", "facility_id": "D1",
+               "expected_ready_at": ready_at, "weight_g": 20,
+               "priority": 100.0} for i in range(200)]
+    could_not = [dict(e, package_id=e["package_id"].replace("L", "E"),
+                      facility_id="D6") for e in waited]
+
+    night = linehaul.plan([patient, hurried], waited + could_not,
+                          list(FX.vans), transit=FX.transit,
+                          unload_seconds=UNLOAD)
+    carried = {pid for trip in night.trips for pid in trip.package_ids}
+
+    assert {e["package_id"] for e in waited} <= carried, "the van waited"
+    assert not {e["package_id"] for e in could_not} & carried
+    assert night.reason_for("D6") == linehaul.NOT_READY_IN_TIME, (
+        "§9.2 wants the reason, and 'not ready in time' is a hub too slow "
+        "where 'no van' is a fleet too small")
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b6():
-    """E2E-2 §7 row B6, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B6, e2e-2-hub-to-depots.md.
 
-    Scenario: 40 zip-centroid envelopes within EQUIDISTANT_MARGIN_M of two depots
-    Expected: Kept at hub and flagged; not on any van; appear in rolled list with reason "held-straddle"
+    Scenario: 40 zip-centroid envelopes within EQUIDISTANT_MARGIN_M of two
+    depots
+    Expected: Kept at hub and flagged; not on any van; appear in rolled list
+    with reason "held-straddle"
+
+    **Reported in `held`, not in `rolled`, and the row's own §1 is why.** The
+    boundary is "either positioned ... or explicitly rolled", and a straddler
+    is positioned — at the hub, which §2 item 2 insists is a dispatching
+    facility like any other. Calling it rolled puts one envelope in both
+    halves of the partition B1 asserts. Flagged for the document; the reason
+    string is the row's.
     """
-    _not_built("B6")
+    straddlers = tuple(f"PKG-STRADDLE-{i}" for i in range(40))
+    flagged = tuple(processing.Sorted(package_id=p, facility_id="D2",
+                                      runner_up="D3", margin_m=500.0,
+                                      straddles=True) for p in straddlers)
+
+    kept, held = processing.keep_straddlers_at_hub(flagged, hub_id="HUB")
+
+    assert held == straddlers
+    assert {s.facility_id for s in kept} == {"HUB"}, "not committed to a depot"
+
+    positioned, _ = _through_the_slice(straddling=straddlers)
+    reported = {e.package_id: e.reason for e in positioned.held}
+
+    assert set(reported) == set(straddlers)
+    assert set(reported.values()) == {processing.HELD_STRADDLE}
+    assert not set(straddlers) & {pid for ids in positioned.positioned.values()
+                                  for pid in ids}, "not on any van"
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b7():
-    """E2E-2 §7 row B7, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B7, e2e-2-hub-to-depots.md.
 
     Scenario: 50 rejected at D3 during the day
-    Expected: Ride D3's return leg; arrive at hub; appear in *tomorrow's* return run input, not tonight's
+    Expected: Ride D3's return leg; arrive at hub; appear in *tomorrow's*
+    return run input, not tonight's
     """
-    _not_built("B7")
+    rejected = [{"package_id": f"PKG-R{i}", "facility_id": "D3",
+                 "customer_id": f"CUST-{i}", "previous_outcome": "Rejected",
+                 "customer_lat": 9.9, "customer_lon": -84.1, "weight_g": 20}
+                for i in range(50)]
+    assert all(returns.goes_back(e) for e in rejected)
+
+    night = _night(returning=rejected)
+    home = [leg for trip in night.trips for leg in trip.legs if leg.return_ids]
+
+    assert home, "nothing rode home; §5.5's depot rejects were dropped"
+    assert all(leg.to_facility == FX.hub["id"] for leg in home), (
+        "a return rides to the hub, not between depots")
+    assert set(night.returned) == {e["package_id"] for e in rejected}
+
+    # "tomorrow's return run input, not tonight's": they are at D3 while
+    # tonight's run departs the hub, so §5.5's own gate excludes them.
+    assert returns.sites(rejected, hub_id=FX.hub["id"]) == []
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b8():
-    """E2E-2 §7 row B8, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B8, e2e-2-hub-to-depots.md.
 
     Scenario: A van released from pickups at 15:10 with unloading 20 min
     Expected: Not assigned a leg departing before 15:30
     """
-    _not_built("B8")
+    released_at = 15 * 3600 + 10 * 60
+    unload = 20 * 60
+    van = dict(FX.vans[0], vehicle_id="VAN-LATE", role="pickup",
+               linehaul_release_at=released_at)
+
+    night = linehaul.plan(list(FX.depots), list(FX.hub_loads), [van],
+                          transit=FX.transit, unload_seconds=unload)
+    departures = [trip.departure for trip in night.trips
+                  if trip.van_id == "VAN-LATE"]
+
+    assert departures, "the van was given no leg at all, so nothing is proved"
+    assert min(departures) >= released_at + unload, (
+        "§7.1: a van does not depart on line-haul until it is back *and* "
+        "unloaded; both, not either")
 
 
-@pytest.mark.xfail(strict=True, reason="row not built")
 def test_b9():
-    """E2E-2 §7 row B9, e2e-2-hub-to-depots.md.
+    """E2E-2 §8 row B9, e2e-2-hub-to-depots.md.
 
     Scenario: Rebalancing: D1 projected 900 vs 600 capacity, D2 400 vs 450
-    Expected: Proposal to transfer ≤ 50 lowest-priority D1 envelopes to D2 if a D1→D2 leg fits; otherwise no proposal and D1 rolls by priority
+    Expected: Proposal to transfer ≤ 50 lowest-priority D1 envelopes to D2 if
+    a D1→D2 leg fits; otherwise no proposal and D1 rolls by priority
     """
-    _not_built("B9")
+    pool = {"D1": [{"package_id": f"PKG-{i:04}", "priority": float(i)}
+                   for i in range(900)]}
+    projected = {"D1": 900, "D2": 400}
+    capacity = {"D1": capacity_for(24), "D2": capacity_for(18)}
+    assert (capacity["D1"], capacity["D2"]) == (600, 450)
+
+    offered = linehaul.rebalancing(projected, capacity, pools=pool,
+                                   reaches=lambda a, b: True)
+    proposal, = offered
+
+    assert (proposal.from_facility_id, proposal.to_facility_id) == ("D1", "D2")
+    assert proposal.leg == ("D1", "D2")
+    assert len(proposal.package_ids) == 50, "the row caps the offer at 50"
+    assert proposal.package_ids == tuple(f"PKG-{i:04}" for i in range(50)), (
+        "the lowest-priority, because §8.1 ranks what is delivered and this "
+        "is its mirror — an envelope served tomorrow should not travel")
+
+    # The 50 above is `min(room, over)` and room happens to *be* 50, so the
+    # cap has not been exercised: deleting it leaves this green. Give the
+    # neighbour more room than the cap and it has to bind on its own.
+    roomy = linehaul.rebalancing({"D1": 900, "D2": 100}, capacity, pools=pool,
+                                 reaches=lambda a, b: True)
+    assert len(roomy[0].package_ids) == 50, (
+        "room for 350 and 300 over capacity; only the cap holds this to 50")
+
+    # "otherwise no proposal": a pair with no leg is a silence, not an error,
+    # and D1 then rolls by priority in `select` as it would have anyway.
+    assert linehaul.rebalancing(projected, capacity, pools=pool,
+                                reaches=lambda a, b: False) == []
+
+
+@pytest.mark.parametrize("row_id", sorted(r for r in rows.ROWS
+                                          if r.startswith("B")))
+def test_every_b_row_has_a_test_named_for_it(row_id):
+    """The rows and the tests above cannot drift apart silently."""
+    assert f"test_{row_id.lower()}" in globals(), f"{row_id} has no test"
+    assert rows.document(row_id) == "e2e-2-hub-to-depots.md"
+    assert isinstance(rows.expected(row_id), str) and rows.expected(row_id)

@@ -37,6 +37,12 @@ class Scenario:
     #: van id -> the second it was back at the hub (§5.1.5). §7.1's line-haul
     #: bullet is checked against this, so an empty map is not "all back".
     van_back_at: Mapping[str, int] = field(default_factory=dict)
+    #: Envelopes e2e-2 §2 item 1 keeps at the hub: a zip-centroid coordinate
+    #: within `EQUIDISTANT_MARGIN_M` of two facilities. `processing.presort`
+    #: flags them and `processing.keep_straddlers_at_hub` decides; by the time
+    #: the pool reaches this slice they are already under HUB, so what arrives
+    #: here is the list, for the hand-off to report.
+    straddling: Sequence[str] = ()
     hub_id: str = "HUB"
     unload_seconds: int = assumptions.FACILITY_UNLOAD_MIN * 60
     #: The day the circuits run. Deliveries are D+1 (§3.1's one-day lag).

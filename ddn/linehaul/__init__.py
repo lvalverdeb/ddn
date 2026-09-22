@@ -14,12 +14,14 @@ from ddn.linehaul.plan import (
     NO_VAN,
     NOT_READY_IN_TIME,
     LinehaulPlan,
+    Proposal,
     Trip,
     available,
     depot_bound,
     depots,
     latest_departure,
     plan,
+    rebalancing,
     strip_rolled,
 )
 
@@ -34,6 +36,7 @@ __all__ = [
     "Declined",
     "Leg",
     "LinehaulPlan",
+    "Proposal",
     "Transit",
     "Trip",
     "available",
@@ -41,5 +44,6 @@ __all__ = [
     "depots",
     "latest_departure",
     "plan",
+    "rebalancing",
     "strip_rolled",
 ]
