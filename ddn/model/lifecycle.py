@@ -129,3 +129,48 @@ def advance(source: Status, target: Status) -> Status:
     if not may(source, target):
         raise IllegalTransition(source, target)
     return target
+
+
+#: §6's outcome -> the §5.2.6 status a Dispatched envelope reaches by it.
+#: `may`/`advance` *validate* a transition the caller has already chosen;
+#: nothing here chose one, so every caller picked its own and they agreed by
+#: coincidence. §6's table is that choice, written once.
+#:
+#: Keyed by §6's own spelling rather than by `records.Outcome`, because
+#: `records` imports `Status` from this module and the other direction would
+#: close the circle. `Outcome` is a `StrEnum`, so its members are accepted as
+#: keys, and `tests/test_model.py` pins the two vocabularies to each other --
+#: which is the guard that matters, since nothing else would notice them drift.
+AFTER_ATTEMPT: dict[str, Status] = {
+    "Delivered": Status.DELIVERED,
+    "Rejected": Status.REJECTED,
+    "Returned": Status.RETURNED,
+    "Postponed": Status.POSTPONED,
+}
+
+
+def after_attempt(outcome: str) -> Status:
+    """Where §6 puts an envelope that was attempted and got this outcome.
+
+    Validated against §5.2.6 rather than asserted: `advance` raises if the edge
+    is not drawn, so this cannot quietly name a status Dispatched does not
+    reach. That is the whole reason it goes through the table instead of
+    returning `Status(outcome)` -- the two spellings coincide today, and a
+    §5.2.6 change that broke the coincidence would surface here rather than in
+    a pool three stages later.
+    """
+    try:
+        target = AFTER_ATTEMPT[str(outcome)]
+    except KeyError as unknown:
+        raise IllegalTransition(Status.DISPATCHED, outcome) from unknown
+    return advance(Status.DISPATCHED, target)
+
+
+def settles(outcome: str) -> bool:
+    """Whether §6 is finished with this envelope, or it comes round again.
+
+    Delivered is terminal. A rejection or a defect goes to the return run, and
+    a postponement comes back to Ready -- so neither is a day's end for it,
+    and both leave something for tomorrow to carry.
+    """
+    return after_attempt(outcome) in TERMINAL

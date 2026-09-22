@@ -27,8 +27,10 @@ from ddn.model import (
     IllegalTransition,
     Status,
     advance,
+    lifecycle,
     may,
 )
+from ddn.model.records import Outcome
 
 SPEC = (Path(__file__).resolve().parent.parent
         / "docs" / "vrp-problem-definition.md").read_text(encoding="utf-8")
@@ -284,3 +286,46 @@ def test_between_refuses_a_facility_the_matrix_does_not_span():
     assert transit("HUB", "D1") == 180
     with pytest.raises(KeyError):
         transit("HUB", "D9")
+
+
+# --------------------------------------- §6's outcomes, as §5.2.6 statuses
+
+def test_every_outcome_section_6_names_has_a_status_and_no_others():
+    """`records.Outcome` and `lifecycle.AFTER_ATTEMPT` must not drift apart.
+
+    The table is keyed by §6's spelling rather than by the enum, because
+    `records` imports `Status` from `lifecycle` and the other direction would
+    close the circle. That leaves two lists of the same four words in two
+    files, which is exactly the arrangement that goes stale — so this is the
+    guard. Nothing else in the repository would notice.
+    """
+    assert set(lifecycle.AFTER_ATTEMPT) == {str(o) for o in Outcome}
+
+
+@pytest.mark.parametrize("outcome", list(Outcome))
+def test_an_outcome_reaches_a_status_dispatched_can_actually_reach(outcome):
+    """§6's choice is validated against §5.2.6's edges, not asserted beside them.
+
+    `may` and `advance` check a transition the caller already chose; until now
+    nothing in the package chose one, so each caller picked its own and they
+    agreed by coincidence. `after_attempt` goes through `advance` so a §5.2.6
+    change that stopped drawing one of these raises here, rather than putting
+    an envelope in a status three stages later that nothing can move it out of.
+    """
+    assert lifecycle.may(lifecycle.Status.DISPATCHED,
+                         lifecycle.after_attempt(outcome))
+
+
+def test_an_outcome_section_6_does_not_name_is_refused():
+    """Not a default, not a warning — §5.2.6 draws no such edge."""
+    with pytest.raises(lifecycle.IllegalTransition):
+        lifecycle.after_attempt("Lost in transit")
+
+
+def test_only_delivery_settles_an_envelope():
+    """§6: a rejection or a defect goes to the return run, a postponement
+    comes back to Ready. Both leave something for tomorrow to carry, and a
+    day that counted them as finished would lose them."""
+    settled = {o for o in Outcome if lifecycle.settles(o)}
+
+    assert settled == {Outcome.DELIVERED}

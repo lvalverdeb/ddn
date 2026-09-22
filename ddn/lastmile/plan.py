@@ -228,3 +228,23 @@ def expired(envelope: Mapping[str, Any], today: date) -> bool:
     """
     raw = envelope.get("sla_date")
     return bool(raw) and date.fromisoformat(raw) < today
+
+
+def sweep_expired(
+        pool: Sequence[Mapping[str, Any]],
+        today: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """§6.1's first cut: what may still be dispatched, and what goes back.
+
+    "An envelope past its SLA date is not dispatched at all" -- so this runs
+    before §8's capacity decision, not after it. An expired envelope that
+    reached `select` would compete for a bike it is not allowed to board, and
+    could push a live envelope out to make room for a journey it cannot take.
+
+    Returns both halves because the caller needs both: the expired ones are not
+    discarded, they are §5.5's load for tonight.
+    """
+    live: list[dict[str, Any]] = []
+    gone: list[dict[str, Any]] = []
+    for envelope in pool:
+        (gone if expired(envelope, today) else live).append(dict(envelope))
+    return live, gone

@@ -288,3 +288,43 @@ def test_expired_is_not_triage_and_the_difference_is_the_cohort():
     assert not routable and withheld, (
         "triage withholds this envelope; `expired` must not, or the sweep "
         "changes cohort without saying so")
+
+
+def test_sweep_expired_runs_before_capacity_not_after():
+    """§6.1: "an envelope past its SLA date is not dispatched at all".
+
+    Both halves come back because the caller needs both — the expired ones are
+    §5.5's load for tonight, not a discard. And the order matters: an expired
+    envelope that reached `select` would compete for a bike it may not board,
+    and could push a live envelope out to make room for a journey it cannot
+    take. So this test checks the partition, and that nothing is lost.
+    """
+    pool = [{"package_id": "P-old", "sla_date": "2026-09-16"},
+            {"package_id": "P-today", "sla_date": "2026-09-17"},
+            {"package_id": "P-later", "sla_date": "2026-09-18"},
+            {"package_id": "P-undated"}]
+
+    live, gone = lastmile.sweep_expired(pool, TODAY)
+
+    assert [e["package_id"] for e in live] == ["P-today", "P-later", "P-undated"]
+    assert [e["package_id"] for e in gone] == ["P-old"]
+    assert len(live) + len(gone) == len(pool)
+
+
+def test_sweep_expired_keeps_the_pool_order_within_each_half():
+    """§5.4 selects in pool order, so the sweep must not resequence what it keeps."""
+    pool = [{"package_id": f"P-{i}", "sla_date": "2026-09-18"} for i in range(5)]
+
+    live, _ = lastmile.sweep_expired(pool, TODAY)
+
+    assert [e["package_id"] for e in live] == [e["package_id"] for e in pool]
+
+
+def test_sweep_expired_hands_back_copies():
+    """The caller stamps `sla_expired` on what goes back; the pool is not its own."""
+    pool = [{"package_id": "P-old", "sla_date": "2026-09-16"}]
+
+    _, gone = lastmile.sweep_expired(pool, TODAY)
+    gone[0]["sla_expired"] = True
+
+    assert "sla_expired" not in pool[0]
