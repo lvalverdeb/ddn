@@ -401,32 +401,43 @@ def test_a_record_that_states_no_role_is_still_available():
 
 # ------------------- §5.3's boundary, promoted out of simulation/day.py
 
-READY_AT = {"P-hub": 0, "P-depot": 8 * 3600}
-INFLOW = [
-    {"package_id": "P-hub", "facility_id": "HUB"},
-    {"package_id": "P-depot", "facility_id": "D1"},
-    {"package_id": "P-slow", "facility_id": "D2"},   # not ready today
-]
+POSITIONED = {
+    "HUB": [{"package_id": "P-hub", "expected_ready_at": 0}],
+    "D2": [{"package_id": "P-c", "expected_ready_at": 8 * 3600}],
+    "D1": [{"package_id": "P-a", "expected_ready_at": 8 * 3600},
+           {"package_id": "P-b", "expected_ready_at": 9 * 3600}],
+}
 
 
-def test_depot_bound_is_ready_and_not_at_the_hub():
-    """§5.3's whole boundary: ready today, and somewhere the hub is not.
+def test_depot_bound_is_everything_the_hub_is_not_dispatching():
+    """§5.3's whole boundary: positioned today, and somewhere the hub is not.
 
     Hub-direct envelopes are not "not transported" — they are already where
-    they will be dispatched from, so they never enter a circuit. An envelope
-    still in processing has no ready time and cannot be loaded either.
+    they will be dispatched from, so they never enter a circuit.
     """
-    moving = linehaul.depot_bound(INFLOW, READY_AT, hub_id="HUB")
+    moving = linehaul.depot_bound(POSITIONED, hub_id="HUB")
 
-    assert [e["package_id"] for e in moving] == ["P-depot"]
-    assert moving[0]["expected_ready_at"] == 8 * 3600, "the van needs the time"
+    assert [e["package_id"] for e in moving] == ["P-c", "P-a", "P-b"]
 
 
-def test_depot_bound_does_not_touch_the_records_it_reads():
-    """The stamped copy is a copy. §5.4 reads the same inflow afterwards."""
-    before = [dict(e) for e in INFLOW]
-    linehaul.depot_bound(INFLOW, READY_AT, hub_id="HUB")
-    assert INFLOW == before
+def test_depot_bound_keeps_pool_order_because_plan_is_sensitive_to_it():
+    """`plan` gives a different answer for the same envelopes in another order.
+
+    Measured on §10's day: assembling this list from the raw inflow instead of
+    from the positioned pool produced the same 2,772 envelopes and a circuit
+    whose leg carried its 180 ids in a different sequence. Nothing rolled there
+    so nothing was lost — but when van-hours are short the order decides
+    *which* envelopes roll, so the two callers must build it the same way, and
+    the only way to guarantee that is to build it once.
+    """
+    reversed_pool = {"HUB": POSITIONED["HUB"],
+                     "D1": list(reversed(POSITIONED["D1"])),
+                     "D2": POSITIONED["D2"]}
+
+    assert ([e["package_id"] for e in linehaul.depot_bound(reversed_pool,
+                                                           hub_id="HUB")]
+            != [e["package_id"] for e in linehaul.depot_bound(POSITIONED,
+                                                              hub_id="HUB")])
 
 
 def test_strip_rolled_takes_back_what_no_circuit_carried():
@@ -439,9 +450,26 @@ def test_strip_rolled_takes_back_what_no_circuit_carried():
                   "D1": [{"package_id": "P-a"}, {"package_id": "P-rolled"}]}
     night = linehaul.LinehaulPlan(trips=(), rolled={"D1": ("P-rolled",)})
 
-    linehaul.strip_rolled(positioned, night, hub_id="HUB")
+    kept = linehaul.strip_rolled(positioned, night, hub_id="HUB")
 
-    assert [e["package_id"] for e in positioned["D1"]] == ["P-a"]
+    assert [e["package_id"] for e in kept["D1"]] == ["P-a"]
+    assert [e["package_id"] for e in positioned["D1"]] == ["P-a", "P-rolled"], (
+        "the pool it was given is not edited — it may be a hand-off's tuple")
+
+
+def test_strip_rolled_accepts_the_tuples_a_hand_off_carries():
+    """A pool read back from a file has tuples, not lists, for its facilities.
+
+    A function that worked on one caller's container and not the other's would
+    make the chain fail for a reason that has nothing to do with the slices.
+    """
+    pool = {"HUB": ({"package_id": "P-hub"},),
+            "D1": ({"package_id": "P-a"}, {"package_id": "P-rolled"})}
+    night = linehaul.LinehaulPlan(trips=(), rolled={"D1": ("P-rolled",)})
+
+    kept = linehaul.strip_rolled(pool, night, hub_id="HUB")
+
+    assert [e["package_id"] for e in kept["D1"]] == ["P-a"]
 
 
 def test_strip_rolled_leaves_the_hub_alone():
@@ -453,6 +481,6 @@ def test_strip_rolled_leaves_the_hub_alone():
     positioned = {"HUB": [{"package_id": "P-rolled"}], "D1": []}
     night = linehaul.LinehaulPlan(trips=(), rolled={"D1": ("P-rolled",)})
 
-    linehaul.strip_rolled(positioned, night, hub_id="HUB")
+    kept = linehaul.strip_rolled(positioned, night, hub_id="HUB")
 
-    assert [e["package_id"] for e in positioned["HUB"]] == ["P-rolled"]
+    assert [e["package_id"] for e in kept["HUB"]] == ["P-rolled"]

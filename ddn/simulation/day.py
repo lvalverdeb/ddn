@@ -316,7 +316,7 @@ def _collect(facilities: Sequence[dict[str, Any]],
     if not requests:
         # §5.3.2's circuits still run for transfers alone: a van goes out for
         # them whether or not the hub has anything to send.
-        night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
+        night = linehaul.plan(linehaul.depots(facilities, hub_id=hub_id),
                               [], vans, transfers=transfers,
                               returning=returning, transit=transit,
                               unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
@@ -333,14 +333,13 @@ def _collect(facilities: Sequence[dict[str, Any]],
     ready_at = processing.ready_times(dispatch, inflow)
     processing.position(positioned, ready_at, requests, inflow)
 
-    night = linehaul.plan([f for f in facilities if f["id"] != hub_id],
-                          linehaul.depot_bound(inflow, ready_at,
-                                               hub_id=hub_id),
+    night = linehaul.plan(linehaul.depots(facilities, hub_id=hub_id),
+                          linehaul.depot_bound(positioned, hub_id=hub_id),
                           vans, transfers=transfers,
                           returning=returning, transit=transit,
                           unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
 
-    linehaul.strip_rolled(positioned, night, hub_id=hub_id)
+    positioned = linehaul.strip_rolled(positioned, night, hub_id=hub_id)
     return _Collection(dispatch, night, positioned)
 
 

@@ -61,6 +61,11 @@ from ddn.solver_adapter.postcheck import Violation
 #: transported'; they are positioned at the hub and enter E2E-3's hub pool."
 HUB = "HUB"
 
+#: A rolled envelope whose facility carries no reason. `linehaul.plan` sets one
+#: whenever it rolls anything, so this standing in for a real reason means the
+#: planner changed and §9.2's "with reason" is no longer being answered.
+NO_REASON = "rolled without a reason recorded"
+
 
 class _Handoff(BaseModel):
     """Frozen, and strict about unknown keys: a hand-off read from a file is
@@ -174,6 +179,27 @@ class PositionedPool(_Handoff):
     #: attempt_number, previous_outcome and locked_vehicle_id off them, so ids
     #: alone would force slice 3 to re-read a fixture and test that instead.
     envelopes: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
+
+    @classmethod
+    def of(cls, positioned, night, violations, *, day: date) -> PositionedPool:
+        """Assemble the hand-off from what §5.3 just decided.
+
+        A shape mapping: it names and groups, and decides nothing. `rolled`
+        pairs each rolled id with its facility's reason, which is where §9.2's
+        "with reason" comes from — `LinehaulPlan.reason_for` supplies it, so no
+        reason is written here that the planner did not give.
+        """
+        return cls(
+            delivery_day=day,
+            positioned={facility: tuple(e["package_id"] for e in pool)
+                        for facility, pool in positioned.items()},
+            envelopes={facility: tuple(pool)
+                       for facility, pool in positioned.items()},
+            rolled=tuple(Excluded(package_id,
+                                  night.reason_for(facility) or NO_REASON)
+                         for facility, ids in night.rolled.items()
+                         for package_id in ids),
+            violations=tuple(violations))
     #: e2e-2 §5: "Rolled envelopes with reason: no van / weight / deadline
     #: unreachable / held-straddle".
     rolled: tuple[Excluded, ...] = ()
@@ -195,7 +221,15 @@ class TransferOutcomes(_Handoff):
     #: `OVER_CAPACITY` — §9.2's "transfers not carried, with reason".
     deferred: tuple[Declined, ...] = ()
     #: Past saving by a later circuit: the envelope goes back instead.
+    #: Nothing in `ddn/` performs this edge yet — `lifecycle.TRANSITIONS`
+    #: permits it and no code takes it — so row B3 owns the field and it stays
+    #: empty rather than being filled with a guess.
     to_returns: tuple[str, ...] = ()
+
+    @classmethod
+    def of(cls, night) -> TransferOutcomes:
+        """What became of tonight's transfers, read off §5.3's own plan."""
+        return cls(carried=night.transfers_carried, deferred=night.declined)
 
 
 class ReturnLoad(_Handoff):

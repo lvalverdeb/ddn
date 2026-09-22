@@ -98,6 +98,19 @@ class LinehaulPlan:
         return sum(len(trip.package_ids) for trip in self.trips)
 
     @property
+    def transfers_carried(self) -> tuple[str, ...]:
+        """§5.3.2's transfer ids that actually rode a leg tonight.
+
+        Read off the legs for the same reason as `returned`: accumulated
+        beside them it could disagree with what the plan says it carried.
+        """
+        return tuple(dict.fromkeys(
+            transfer_id
+            for trip in self.trips
+            for leg in trip.legs
+            for transfer_id in leg.transfer_ids))
+
+    @property
     def held(self) -> int:
         return sum(len(ids) for ids in self.rolled.values())
 
@@ -326,32 +339,53 @@ def plan(facilities: Sequence[dict[str, Any]],
                         declined=tuple(declined))
 
 
-def depot_bound(inflow: Sequence[dict[str, Any]],
-                ready_at: Mapping[str, int], *,
+def depot_bound(positioned: Mapping[str, Sequence[dict[str, Any]]], *,
                 hub_id: str) -> list[dict[str, Any]]:
-    """The ready envelopes this package has to move, stamped with when.
+    """The ready envelopes this package has to move, in pool order.
 
-    §5.3's whole boundary in one line: an envelope is line-haul's problem if it
-    is ready today and its facility is not the hub. Hub-direct envelopes are
-    not "not transported" -- they are already where they will be dispatched
-    from, so they never enter a circuit.
+    §5.3's whole boundary: an envelope is line-haul's problem if it is ready
+    today and its facility is not the hub. Hub-direct envelopes are not "not
+    transported" -- they are already where they will be dispatched from, so
+    they never enter a circuit.
+
+    It reads the *positioned pool* rather than the raw inflow so that the
+    simulator and `ddn/e2e/hub_to_depots` assemble the identical list by
+    construction. They did not, before: taking inflow order gave the same 2,772
+    envelopes in a different sequence, and `plan` is order-sensitive -- the
+    circuits came back with one leg's load in a different order. Immaterial on
+    §10's day, where nothing rolls, and not immaterial in general, because when
+    van-hours are short the order decides *which* envelopes roll.
     """
-    return [dict(e, expected_ready_at=ready_at[e["package_id"]])
-            for e in inflow
-            if e["package_id"] in ready_at and e["facility_id"] != hub_id]
+    return [e for facility, pool in positioned.items() if facility != hub_id
+            for e in pool]
 
 
-def strip_rolled(positioned: dict[str, list[dict[str, Any]]],
-                 night: LinehaulPlan, *, hub_id: str) -> None:
+def depots(facilities: Sequence[dict[str, Any]], *,
+           hub_id: str) -> list[dict[str, Any]]:
+    """Every facility a circuit can call at: §3.1's list without the hub.
+
+    The hub is a circuit's origin, not a stop on it, and the order of what is
+    left is the order `plan` considers them in.
+    """
+    return [f for f in facilities if f["id"] != hub_id]
+
+
+def strip_rolled(positioned: Mapping[str, Sequence[dict[str, Any]]],
+                 night: LinehaulPlan, *,
+                 hub_id: str) -> dict[str, list[dict[str, Any]]]:
     """Take back what no circuit carried, so a depot is not promised it.
 
     A rolled envelope is still at the hub in the morning. Leaving it in the
     depot's pool would offer §5.4 an envelope that is not there -- the one
     error §7.1's depot bullet exists to prevent. The hub's own pool is left
     alone: nothing rolls when it never had to travel.
+
+    Returns a new mapping rather than editing one in place: the pool it is
+    given may be a hand-off read from a file, whose facility pools are tuples,
+    and a function that works on one caller's container and not another's is
+    the kind of difference the chain exists to find.
     """
     rolled = {pid for ids in night.rolled.values() for pid in ids}
-    for facility, pool in positioned.items():
-        if facility != hub_id:
-            positioned[facility] = [e for e in pool
-                                    if e["package_id"] not in rolled]
+    return {facility: [e for e in pool
+                       if facility == hub_id or e["package_id"] not in rolled]
+            for facility, pool in positioned.items()}
