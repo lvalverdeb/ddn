@@ -5,9 +5,11 @@ from ddn.allocation.fleet import (
     Allocation,
     FleetPlan,
     allocate,
+    capacity_for,
     place,
     vans,
 )
 
-__all__ = ["EFFECTIVE_PER_BIKE", "Allocation", "FleetPlan", "allocate", "place",
+__all__ = ["EFFECTIVE_PER_BIKE", "Allocation", "FleetPlan", "allocate",
+           "capacity_for", "place",
            "vans"]

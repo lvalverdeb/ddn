@@ -26,7 +26,7 @@ checked.
 from __future__ import annotations
 
 from ddn import lastmile
-from ddn.allocation import EFFECTIVE_PER_BIKE
+from ddn.allocation import capacity_for
 from ddn.e2e.depot_delivery.scenario import Scenario
 from ddn.e2e.handoff import DayOutcomes, PositionedPool
 from ddn.model import outcomes
@@ -41,7 +41,7 @@ def run(scenario: Scenario, positioned: PositionedPool) -> DayOutcomes:
         scenario.delivery_day)
     offered, declined = lastmile.select(
         live,
-        capacity=scenario.bikes * EFFECTIVE_PER_BIKE,
+        capacity=capacity_for(scenario.bikes),
         today=scenario.delivery_day)
     attempted, refused = scenario.deliver(offered, scenario.facility_id,
                                           scenario.bikes)

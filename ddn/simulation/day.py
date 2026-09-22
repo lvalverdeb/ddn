@@ -32,7 +32,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ddn import assumptions, lastmile, linehaul, pickups, processing, returns
-from ddn.allocation import EFFECTIVE_PER_BIKE, FleetPlan, allocate, place
+from ddn.allocation import FleetPlan, allocate, capacity_for, place
 from ddn.contract import Excluded
 from ddn.lastmile import select
 from ddn.linehaul import Transit
@@ -201,7 +201,7 @@ def _attempt(pools: Mapping[str, list[dict[str, Any]]],
         expired.extend(e for e in pool if lastmile.expired(e, today))
 
         bikes = per_facility.get(facility, 0)
-        offered, declined = select(live, capacity=bikes * EFFECTIVE_PER_BIKE,
+        offered, declined = select(live, capacity=capacity_for(bikes),
                                    today=today)
         unassigned.extend(declined)
         served, refused = deliver(offered, facility, bikes)

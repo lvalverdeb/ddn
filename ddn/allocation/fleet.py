@@ -196,3 +196,15 @@ def vans(fleet: Sequence[str], *,
         allocations.append(Allocation(van, hub_id, "pickup", release))
     allocations.extend(Allocation(van, hub_id, "linehaul") for van in hauling)
     return FleetPlan(allocations=tuple(allocations))
+
+
+def capacity_for(bikes: int) -> int:
+    """How many envelopes `bikes` motorbikes can be offered in a day.
+
+    §7.4 expects 20-30 stops a rider and `EFFECTIVE_PER_BIKE` is the figure
+    this repository plans against; `docs/capacity-finding.md` is why that is a
+    planning figure and not a measurement. One function rather than the
+    multiplication written at each call site, so "capacity" has one meaning
+    when the simulator and a slice are compared against each other.
+    """
+    return bikes * EFFECTIVE_PER_BIKE
