@@ -524,3 +524,41 @@ def test_a_violation_reads_as_section_7_1():
     text = str(check(problem, broken)[0])
     assert text.startswith("§7.1 ")
     assert re.search(r"\[[^\]]+\]$", text), "it should name the vehicle or order"
+
+
+def test_the_pickup_fleet_is_priced_from_the_model():
+    """§8's objective rides on the vehicle, and `_van` replaces the one
+    `servicemodel.build` priced.
+
+    `contract.costs` exists because those costs were being left behind with
+    the generated vehicles — "for the whole life of the repository", as its
+    docstring says — and it did not look broken: `pyvrp_adapter` omits a zero
+    cost and PyVRP applies its own `unit_distance_cost=1`, so routes came back
+    sensibly short at a rate nobody had chosen and a van cost nothing to send.
+
+    Nothing checked *this* path either. Measured: deleting
+    `**contract.costs(...)` from `_van` left all 983 tests green.
+    """
+    model = deployable("ddn-pickup")
+    problem = sa.pickup(HUB, bags(2), vans(1), matrix(3), today=TODAY,
+                        model=model)
+    priced = problem.vehicles[0]
+    declared = next(spec for spec in model["fleet"] if spec["class"] == "VAN")
+
+    assert priced.fixed_cost == int(declared["fixed_cost"])
+    assert priced.cost_per_metre == int(declared["cost_per_metre"])
+    assert priced.cost_per_second == int(declared["cost_per_second"])
+    assert priced.fixed_cost > 0, "a van that costs nothing to send is free"
+
+
+def test_a_pickup_model_that_prices_nothing_is_refused(): 
+    """Absent is refused rather than defaulted: a default here is invisible
+    and load-bearing, which is the failure this replaced."""
+    model = deployable("ddn-pickup")
+    unpriced = dict(model, fleet=[{k: v for k, v in spec.items()
+                                   if k != "cost_per_metre"}
+                                  for spec in model["fleet"]])
+
+    with pytest.raises(ValueError, match="cost_per_metre"):
+        sa.pickup(HUB, bags(2), vans(1), matrix(3), today=TODAY,
+                  model=unpriced)

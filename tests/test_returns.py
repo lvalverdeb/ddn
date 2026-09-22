@@ -204,3 +204,50 @@ def test_a_vans_envelope_capacity_is_section_4_1s_arithmetic():
     assert declared["VAN"]["grams"] == 500_000
     assert declared["VAN"]["envelopes"] == 500_000 // 200 == 2500
     assert declared["MOTO"]["envelopes"] == 35, "the bike's box is 35 (§7.1)"
+
+
+def test_the_return_run_prices_its_vehicles_from_the_model():
+    """§8's objective rides on the vehicle, and this builder replaces the one
+    `servicemodel.build` priced.
+
+    `contract.costs` exists because the costs were being left behind with the
+    generated vehicles they were attached to — "for the whole life of the
+    repository", as its own docstring says — and it did not look broken,
+    because `pyvrp_adapter` omits a zero cost and PyVRP then applies its own
+    `unit_distance_cost=1`. Routes came back sensibly short at a rate nobody
+    had chosen, and a vehicle cost nothing to deploy.
+
+    Nothing checked this path. Measured: deleting `**costs(...)` from
+    `to_problem` left all 983 tests green, which is the same silence the
+    original defect had.
+    """
+    stops = returns.sites([envelope("A", "C1", "Rejected")])
+    model = returns.load_model()
+    problem = returns.to_problem(HUB, stops, [vehicle("V1")], matrix_for(2),
+                                 model=model)
+    priced = problem.vehicles[0]
+    declared = next(spec for spec in model["fleet"] if spec["class"] == "VAN")
+
+    assert priced.fixed_cost == int(declared["fixed_cost"])
+    assert priced.cost_per_metre == int(declared["cost_per_metre"])
+    assert priced.cost_per_second == int(declared["cost_per_second"])
+    assert priced.fixed_cost > 0, (
+        "a vehicle that costs nothing to deploy is §8's first objective with "
+        "its price removed")
+
+
+def test_a_model_that_prices_nothing_is_refused_rather_than_defaulted():
+    """§8's terms are absent or they are stated; there is no third answer.
+
+    A default here would be invisible and load-bearing — the failure mode the
+    constant it replaces actually had.
+    """
+    model = returns.load_model()
+    unpriced = dict(model, fleet=[{k: v for k, v in spec.items()
+                                   if k != "fixed_cost"}
+                                  for spec in model["fleet"]])
+    stops = returns.sites([envelope("A", "C1", "Rejected")])
+
+    with pytest.raises(ValueError, match="fixed_cost"):
+        returns.to_problem(HUB, stops, [vehicle("V1")], matrix_for(2),
+                           model=unpriced)
