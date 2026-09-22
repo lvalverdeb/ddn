@@ -126,6 +126,12 @@ class EnvelopeEvent(Strict):
     at: datetime | None = None
     reason: str | None = Field(default=None,
                                description="§6's postponement sub-reason")
+    outcome: Outcome | None = Field(
+        default=None,
+        description=("§6's outcome, where the status alone does not say which."
+                     " v0.15 gives Return run two ways in — a cancellation and"
+                     " an SLA expiry — so a caller moving an envelope there"
+                     " names the one it means."))
     lat: float | None = Field(default=None, description="§6: address correction")
     lon: float | None = None
 

@@ -25,7 +25,7 @@ unserved *in the same places every day*, which §7.2 already penalises through
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -248,3 +248,32 @@ def sweep_expired(
     for envelope in pool:
         (gone if expired(envelope, today) else live).append(dict(envelope))
     return live, gone
+
+
+def withdraw(packages: Sequence[Mapping[str, Any]],
+             cancelled: Iterable[str]) -> tuple[list[dict[str, Any]],
+                                                tuple[str, ...]]:
+    """§6 v0.15: take withdrawn envelopes out of the pool the next plan uses.
+
+    e2e-3 §2.2: "the driver is notified at the next plan refresh; the stop is
+    removed if not yet visited". **The pool is what makes "not yet visited"
+    true** -- an envelope that has been visited has an outcome and is no longer
+    in it -- so this removes from the pool and does not consult a route. A
+    route is a plan for a pool, and re-planning without the stop is how the
+    stop comes off.
+
+    It reports what it actually removed rather than what it was asked to.
+    A cancellation naming an envelope this facility does not hold changed
+    nothing, and an operator who is not told that will believe an envelope is
+    stopped when it is on a bike somewhere else. `§5.2.6` refuses the
+    already-delivered case separately, in `lifecycle.after_cancellation`,
+    because that is a statement about status and not about a pool.
+
+    Order is preserved: §5.4 selects under capacity in pool order, so a
+    withdrawal must not resequence what it leaves behind.
+    """
+    asked = set(cancelled)
+    kept = [dict(p) for p in packages if p["package_id"] not in asked]
+    removed = tuple(p["package_id"] for p in packages
+                    if p["package_id"] in asked)
+    return kept, removed

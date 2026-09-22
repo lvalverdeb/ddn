@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from ddn import returns
 from ddn.api import jobs
 from ddn.api.idempotency import PREFIX, Replays, once
 from ddn.api.store import Store
@@ -492,3 +493,78 @@ def test_the_allocation_result_claims_no_seven_one_check():
     assert result["moves"] >= 1, (
         "§7.2's relocation cost is what this stage does report, and both "
         "bikes started at D1")
+
+
+# ------------------------------------ §6 v0.15's cancellation, over HTTP
+
+async def _ready(client, package_id="PKG-CANCEL", status="Ready"):
+    """One envelope in the store, in the status the test needs it in."""
+    await client.post("/envelopes/batch",
+                headers={"Idempotency-Key": f"ingest-{package_id}-{status}"},
+                json={"envelopes": [envelope(package_id=package_id,
+                                             status=status)]})
+    return package_id
+
+
+@pytest.mark.parametrize("status", ["Ready", "Dispatched"])
+async def test_an_envelope_may_be_cancelled_from_either_side_of_dispatch(client,
+                                                                   status):
+    """§6 v0.15's two cases, over the event endpoint §13.2 now names.
+
+    §13.1: status is never set directly, so a cancellation is an event naming
+    the state it moves to — and `Return run` is reachable from Ready and, since
+    v0.15, from Dispatched.
+    """
+    package_id = await _ready(client, f"PKG-C-{status}", status)
+
+    answered = await client.post(
+        f"/envelopes/{package_id}/events",
+        headers={"Idempotency-Key": f"cancel-{status}"},
+        json={"event": "Return run", "actor": "call-centre",
+              "outcome": "Cancelled", "reason": "customer withdrew it"})
+
+    assert answered.status_code == 200
+    assert answered.json()["status"] == "Return run"
+
+
+async def test_a_cancelled_envelope_is_recognised_by_the_return_run(client):
+    """§5.5 carries it, which needs §6's word on the record and not §5.2.6's.
+
+    `returns.goes_back` reads `previous_outcome`. Recording the *status* there
+    left a cancelled envelope carrying "Return run", which the predicate does
+    not recognise — so it reached §5.5 and was filtered straight back out:
+    destroyed rather than returned, the same defect the `sla_expired` flag
+    exists to prevent.
+    """
+    package_id = await _ready(client, "PKG-C-RETURNS")
+    await client.post(f"/envelopes/{package_id}/events",
+                headers={"Idempotency-Key": "cancel-returns"},
+                json={"event": "Return run", "actor": "call-centre",
+                      "outcome": "Cancelled"})
+
+    stored = (await client.get(f"/envelopes/{package_id}")).json()
+
+    assert stored["previous_outcome"] == "Cancelled"
+    assert returns.goes_back(stored)
+
+
+async def test_cancelling_a_delivered_envelope_is_refused_with_where_it_is(client):
+    """e2e-3 §2.2: "if already visited and delivered, cancellation is refused".
+
+    No rule of its own: §5.2.6 draws nothing out of Delivered, so `advance`
+    refuses and §13.1's 409-with-current-state answers. A second rule here
+    would be a second place for it to disagree with the diagram.
+    """
+    package_id = await _ready(client, "PKG-C-DONE", "Delivered")
+
+    refused = await client.post(
+        f"/envelopes/{package_id}/events",
+        headers={"Idempotency-Key": "cancel-delivered"},
+        json={"event": "Return run", "actor": "call-centre",
+              "outcome": "Cancelled"})
+
+    assert refused.status_code == 409
+    body = refused.json()
+    assert body["current_state"] == "Delivered"
+    assert body["package_id"] == package_id
+    assert "§5.2.6" in body["detail"]

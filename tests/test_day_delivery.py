@@ -328,3 +328,52 @@ def test_sweep_expired_hands_back_copies():
     gone[0]["sla_expired"] = True
 
     assert "sla_expired" not in pool[0]
+
+
+# ------------------------------- §6 v0.15's withdrawal, before the next plan
+
+POOL = [{"package_id": "P-1"}, {"package_id": "P-2"}, {"package_id": "P-3"}]
+
+
+def test_withdraw_takes_the_stop_out_of_the_next_plans_pool():
+    """e2e-3 §2.2: "the stop is removed if not yet visited".
+
+    The pool is what makes "not yet visited" true — a visited envelope has an
+    outcome and has left it — so this removes from the pool rather than
+    editing a route, and the next refresh plans without the stop.
+    """
+    kept, removed = lastmile.withdraw(POOL, ["P-2"])
+
+    assert [p["package_id"] for p in kept] == ["P-1", "P-3"]
+    assert removed == ("P-2",)
+
+
+def test_withdraw_reports_what_it_removed_not_what_it_was_asked():
+    """A cancellation naming an envelope this facility does not hold did nothing.
+
+    Answering "done" would leave an operator believing an envelope is stopped
+    while it is on a bike at another depot — the failure is silent, and it is
+    silent at exactly the moment somebody is relying on it.
+    """
+    kept, removed = lastmile.withdraw(POOL, ["P-2", "P-not-here"])
+
+    assert removed == ("P-2",)
+    assert len(kept) == 2
+
+
+def test_withdraw_keeps_the_order_of_what_it_leaves():
+    """§5.4 selects under capacity in pool order, so a withdrawal that
+    resequenced the rest would change which envelopes are delivered — with
+    every count identical, which is how that class of bug survives."""
+    kept, _ = lastmile.withdraw(POOL, [])
+
+    assert [p["package_id"] for p in kept] == [p["package_id"] for p in POOL]
+
+
+def test_withdraw_does_not_edit_the_pool_it_was_given():
+    """The caller still holds the day's pool; a withdrawal is a new one."""
+    before = [dict(p) for p in POOL]
+    kept, _ = lastmile.withdraw(POOL, ["P-1"])
+    kept and kept[0].update(touched=True)
+
+    assert POOL == before

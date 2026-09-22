@@ -67,9 +67,17 @@ async def append_event(package_id: str, event: EnvelopeEvent, store: StoreDep,
         if event.lat is not None and event.lon is not None:
             moved = dict(moved, lat=event.lat, lon=event.lon,
                          coord_source="geocoded_address")
+        if event.outcome is not None:
+            # §9.1's `previous_outcome` is §6's word, not §5.2.6's. Recording
+            # the *status* there left a cancelled envelope carrying
+            # "Return run", which `returns.goes_back` does not recognise — so
+            # it reached §5.5 and was filtered out, destroyed rather than
+            # returned.
+            moved = dict(moved, previous_outcome=str(event.outcome))
+        elif event.reason:
+            moved = dict(moved, previous_outcome=str(Status(event.event)))
         if event.reason:
-            moved = dict(moved, previous_outcome=str(Status(event.event)),
-                         postponed_reason=event.reason)
+            moved = dict(moved, postponed_reason=event.reason)
         store.envelopes[package_id] = moved
         store.record(actor=event.actor, action=f"event:{event.event}",
                      subject=package_id, at=event.at or datetime.now(UTC),

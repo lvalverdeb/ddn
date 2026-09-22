@@ -7,8 +7,9 @@ from ddn.lastmile.plan import (
     reachable_subset,
     select,
     sweep_expired,
+    withdraw,
 )
 
 __all__ = ["FacilityPlan", "expired", "plan_facility",
            "reachable_subset", "select",
-           "sweep_expired"]
+           "sweep_expired", "withdraw"]

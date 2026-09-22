@@ -44,7 +44,12 @@ MODELS = Path(__file__).resolve().parent.parent.parent / "models"
 MODEL_NAME = "ddn-return"
 
 # §6's two return outcomes. Postponed is held, Delivered is closed.
-RETURNED = frozenset({"Rejected", "Returned"})
+#: §6's outcomes that send an envelope back to its customer. `Cancelled`
+#: joined them in v0.15: §2 defines the return run as carrying "rejected,
+#: defective, cancelled and SLA-expired envelopes", and without it a withdrawn
+#: envelope reached §5.5 and was filtered straight back out — destroyed
+#: rather than returned, which is the same defect `sla_expired` fixed.
+RETURNED = frozenset({"Rejected", "Returned", "Cancelled"})
 
 #: §3.1 names the hub. A parameter rather than a literal because `run_day`
 #: already takes one and two spellings of the same facility is a bug waiting
