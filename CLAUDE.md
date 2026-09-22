@@ -3,7 +3,7 @@
 ## What this repo is
 Integration between our document delivery operation and an existing VRP solver.
 The operational problem is fully defined in `docs/vrp-problem-definition.md`
-(**Draft v0.14**; `tests/test_api_contract.py` holds the API's published
+(**Draft v0.15**; `tests/test_api_contract.py` holds the API's published
 version to it).
 Read it before any substantive task. Section numbers below refer to that file.
 

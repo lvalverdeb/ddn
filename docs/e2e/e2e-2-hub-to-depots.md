@@ -1,7 +1,7 @@
 # Mini end-to-end 2 — Hub to depots: keep or transport
 
 **Status:** Draft v0.1 · 21 September 2026
-**Parent:** `docs/vrp-problem-definition.md` v0.14 (§3.1–3.3, §4.1–4.3, §5.2.4–5.2.5, §5.3, §7, §8.3, §9, §13)
+**Parent:** `docs/vrp-problem-definition.md` v0.15 (§3.1–3.3, §4.1–4.3, §5.2.4–5.2.5, §5.3, §7, §8.3, §9, §13)
 **Purpose:** Define a self-contained slice covering everything from an envelope becoming Ready at the hub to its being positioned, by morning route release, at the facility that will deliver it — either kept at the hub or transported to a depot — including inter-depot transfers and returns riding the same circuits.
 
 ---
@@ -49,7 +49,7 @@ Per §5.3.2: facilities are nodes; a van trip is an ordered sequence of legs sta
 | Transfer requests | transfer_id, package_id, from/to facility, reason, deadline, weight_g | E2E-3 / operations |
 | Return loads at depots | package_ids in Rejected / Returned / SLA-expired at each depot, weight | E2E-3 |
 | Vehicles | vans: capacity_weight_g, shift, role, linehaul_release_at, current location | Allocation, E2E-1 release events |
-| Facilities | coords, route_release_time, transit_from_hub_min, latest_van_departure, inter-depot transit (§9.1 v0.14 proposal) | §3.1, travel matrix |
+| Facilities | coords, route_release_time, transit_from_hub_min, latest_van_departure, inter-depot transit (§9.1 v0.15 proposal) | §3.1, travel matrix |
 | Assumptions | unload time, overnight-run rules, EQUIDISTANT_MARGIN_M, rebalancing cost basis | `docs/assumptions.md` |
 
 ## 5. Outputs

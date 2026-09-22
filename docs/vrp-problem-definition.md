@@ -1,7 +1,7 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.14
-**Date:** 16 September 2026
+**Status:** Draft v0.15
+**Date:** 22 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
 
@@ -49,8 +49,9 @@ This document defines the operational problem that the existing Vehicle Routing 
 | **Last mile** | Motorbike delivery from the hub or a secondary depot to the recipient. |
 | **Priority** | A numeric score from the existing prioritisation algorithm; already incorporates SLA proximity. |
 | **SLA date** | Latest delivery date for an envelope. After this date it is returned to the customer. |
-| **Outcome** | Result of a delivery attempt: Delivered, Rejected, Returned, Postponed (§6). |
-| **Return run** | End-of-day trip returning rejected, defective and SLA-expired envelopes to customers. |
+| **Outcome** | Result of a delivery attempt: Delivered, Rejected, Returned, Postponed (§6). A **Cancelled** envelope is recorded in the same table but is not the result of an attempt. |
+| **Cancelled** | Of an **envelope**: withdrawn by the customer before delivery (§6). Of a **transfer**: abandoned before it is carried, leaving the envelope at its current depot (§5.3.2). Of a **pickup request**: withdrawn before collection (§5.1.7). Three distinct events on three distinct entities; only the first is a §6 outcome. |
+| **Return run** | End-of-day trip returning rejected, defective, cancelled and SLA-expired envelopes to customers. |
 | **Earmarked capacity** | Hub vans reserved for pickups during the day and therefore not available for line-haul until released. |
 
 ---
@@ -225,7 +226,9 @@ Requested (upload file received; geocoded and pre-sorted) → Collected → Rece
    → Transfer requested → Ready (transfer cancelled: address corrected again, or operations override)
    → Transfer requested → Return run (destination cannot be reached before SLA date)
    → Ready → Return run (SLA date passed without delivery)
-   → Rejected / Returned / SLA expired: Return run → Returned to customer
+   → Ready → Return run (cancelled by the customer before dispatch)
+   → Dispatched → Return run (cancelled by the customer while on a route, stop not yet visited)
+   → Rejected / Returned / Cancelled / SLA expired: Return run → Returned to customer
 ```
 
 Only envelopes in **Ready** (at the hub or at a depot) are solver inputs for delivery routing.
@@ -302,6 +305,7 @@ Once delivery routes are closed, rejected, defective and SLA-expired envelopes a
 | **Rejected** | Recipient refuses. | Back to facility, then customer via return run. | Removed. |
 | **Returned** | Defective or incomplete; customer must reprocess. | Back to facility, then customer via return run. | Removed; re-enters as a new envelope if resubmitted. |
 | **Postponed** | Attempt not completed (recipient unavailable, incorrect address, driver out of time…). | Held at facility in Ready state. | Retried while SLA date not passed. Incorrect address → re-geocode; if the nearest facility changes, a transfer request is raised (§5.3.2) and the envelope enters *In transfer* until it arrives. |
+| **Cancelled** | Withdrawn by the customer before delivery. **Not the result of an attempt**: it may arrive at any moment up to delivery, including while the envelope is on a route. | Leaves the pool at once if not yet dispatched; if already on a route, the stop is removed at the next plan refresh provided it has not been visited. Then back to the customer via the return run. Refused once Delivered, which is terminal (§5.2.6). | Removed. |
 
 ### 6.1 Attempt limits and SLA
 
@@ -495,6 +499,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | Unassigned rate | Unassigned / Ready pool | [TBD] |
 | SLA compliance | Delivered on or before SLA date / total | [TBD] |
 | SLA expiry rate | Returned for SLA expiry / total | [TBD] |
+| Cancellation rate | Envelopes cancelled / envelopes Ready | [TBD] |
 | Distance per envelope | Total km / delivered | [TBD] |
 | Envelopes per motorbike per day | Delivered / motorbikes deployed | [TBD, expect 20–30] |
 | Solver run time | Wall-clock per run | [TBD] |
@@ -538,7 +543,7 @@ The workflow is exposed as an HTTP API built with FastAPI. The API is a thin lay
 
 | Resource | Endpoints | Spec |
 |---|---|---|
-| Envelopes | `POST /envelopes/batch` (upload-file ingest); `GET /envelopes/{id}`; `POST /envelopes/{id}/events` (outcome, address correction) | §5.1.1, §6, §9.1 |
+| Envelopes | `POST /envelopes/batch` (upload-file ingest); `GET /envelopes/{id}`; `POST /envelopes/{id}/events` (outcome, address correction, cancellation) | §5.1.1, §6, §9.1 |
 | Pickups | `POST /pickups` (mailbag ready); `POST /pickups/{id}/events` (collected, seal check, failed); `GET /pickups/plan` (current van routes) | §5.1 |
 | Processing | `POST /processing/events` (reconciled, discrepancy, assembled, sorted); `GET /processing/ready?facility=&by=` (expected ready counts) | §5.2 |
 | Allocation | `POST /allocation/runs`; `GET /allocation/runs/{id}` | §4.2 |
@@ -573,6 +578,7 @@ Reconciliation, assembly and sorting are physical hub processes; the API only re
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.15 | 2026-09-22 | [TBD] | Cancellation: a **Cancelled** outcome in §6, two §5.2.6 edges (`Ready → Return run` and `Dispatched → Return run`), a §2 glossary entry separating the envelope, transfer and pickup-request senses of the word, the §13.2 event, and a §11 cancellation rate |
 | 0.14 | 2026-09-19 | [TBD] | §8.2's "out" direction given a representation: `excluded_by_ops` in §9.1 and an "excluded by operations" reason in §9.2, withheld upstream of the solver rather than encoded as locks |
 | 0.13 | 2026-09-19 | [TBD] | Corrections from conformance audit: §10 arithmetic closed (10 discrepancies; D2–D6 leave 130 unassigned; 2,750 delivered; tomorrow's pool 4,820); §5.2.6 gains cancel, transfer-to-return and SLA-expiry edges; §5.1.6 late-request rule stated; §7.1 bullet count stated |
 | 0.12 | 2026-09-18 | [TBD] | Inter-depot transfers: triggers, rules, multi-leg van circuits, lifecycle state, transfer request entity, constraints, API resource |

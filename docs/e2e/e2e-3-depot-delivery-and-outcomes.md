@@ -1,7 +1,7 @@
 # Mini end-to-end 3 — Delivery from each depot and outcome handling
 
 **Status:** Draft v0.1 · 21 September 2026
-**Parent:** `docs/vrp-problem-definition.md` v0.14 (§4.1–4.2, §5.2.6, §5.4, §5.5, §6, §7, §8, §9, §13)
+**Parent:** `docs/vrp-problem-definition.md` v0.15 (§4.1–4.2, §5.2.6, §5.4, §5.5, §6, §7, §8, §9, §13)
 **Purpose:** Define a self-contained slice covering a single facility's delivery day: from morning route release on the positioned pool, through motorbike routing and delivery attempts, to every outcome's consequence — delivered, rejected, returned (defective), postponed with retry, cancelled, and SLA expiry — and the hand-offs those create for the return run and for transfers. The same slice applies to the hub acting as a delivery depot.
 
 ---
@@ -34,7 +34,11 @@ Pool at release = positioned yesterday ∪ held postponed (any earlier day) ∪ 
 The parent's outcome table (§6) has no cancellation. This slice defines it: **a customer withdraws an envelope before delivery.** Rules:
 - If the envelope is in the pool and not yet on a route, it leaves the pool immediately and joins the return-to-customer flow (Rejected-like handling, reason "cancelled").
 - If it is on an active route, the driver is notified at the next plan refresh; the stop is removed if not yet visited; if already visited and delivered, cancellation is refused (state is terminal).
-- Lifecycle edge: Ready → Return run (cancelled). *[Promote to parent §5.2.6 and §6 as v0.14.]*
+- Lifecycle edges: Ready → Return run (cancelled before dispatch) **and**
+  Dispatched → Return run (cancelled on a route, stop not yet visited). The
+  second is not in the bullet above and the slice cannot be built without it:
+  §5.2.6 drew nothing out of Dispatched but the four attempt outcomes.
+  *[Landed in parent v0.15; see `docs/spec-proposals/v0.15-cancellation.md`.]*
 
 ### 2.3 Retry
 Postponed envelopes (§6) re-enter the same facility's pool for the next day with `attempt_number + 1`, unless the sub-reason is incorrect address, in which case re-geocoding runs first and may raise a transfer (E2E-2 carries it; this slice raises it). No attempt cap; SLA date bounds (§6.1). Priority is not modified by this slice — the prioritisation algorithm already reflects SLA proximity.
