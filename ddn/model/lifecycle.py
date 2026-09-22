@@ -77,8 +77,14 @@ TRANSITIONS: dict[Status, frozenset[Status]] = {
     ),
     Status.LINE_HAUL: frozenset({Status.AT_DEPOT}),
     Status.AT_DEPOT: frozenset({Status.DISPATCHED}),
+    # §6 v0.15's cancellation reaches Return run from both sides of dispatch:
+    # before it the envelope is still Ready, after it the stop comes off the
+    # route. Without the second edge "the stop is removed if not yet visited"
+    # had nowhere legal to go -- §5.2.6 drew nothing out of Dispatched but the
+    # four attempt outcomes.
     Status.DISPATCHED: frozenset(
-        {Status.DELIVERED, Status.REJECTED, Status.RETURNED, Status.POSTPONED}
+        {Status.DELIVERED, Status.REJECTED, Status.RETURNED, Status.POSTPONED,
+         Status.RETURN_RUN}
     ),
     # §5.2.6: "Postponed: back to Ready for next attempt" and "Postponed with
     # facility change, or misassignment found: Transfer requested".
@@ -141,6 +147,10 @@ def advance(source: Status, target: Status) -> Status:
 #: close the circle. `Outcome` is a `StrEnum`, so its members are accepted as
 #: keys, and `tests/test_model.py` pins the two vocabularies to each other --
 #: which is the guard that matters, since nothing else would notice them drift.
+#: §6's outcome for a withdrawal. Not an attempt outcome: `record` never asks
+#: its source for it, and `after_attempt` refuses it.
+CANCELLED = "Cancelled"
+
 AFTER_ATTEMPT: dict[str, Status] = {
     "Delivered": Status.DELIVERED,
     "Rejected": Status.REJECTED,
@@ -164,6 +174,22 @@ def after_attempt(outcome: str) -> Status:
     except KeyError as unknown:
         raise IllegalTransition(Status.DISPATCHED, outcome) from unknown
     return advance(Status.DISPATCHED, target)
+
+
+#: The outcomes a delivery attempt can produce — §6's table minus `Cancelled`.
+ATTEMPT_OUTCOMES = frozenset(AFTER_ATTEMPT)
+
+
+def after_cancellation(current: Status) -> Status:
+    """§6 v0.15: where a withdrawn envelope goes, from wherever it is now.
+
+    Legal from **Ready** (not yet dispatched) and from **Dispatched** (on a
+    route, stop not yet visited). Illegal from Delivered, which §5.2.6 draws
+    nothing out of — so a cancellation arriving after the stop was visited
+    raises here and §13.1 answers it `409` with the current state. That
+    refusal is `advance`'s, not a rule written twice.
+    """
+    return advance(current, Status.RETURN_RUN)
 
 
 def settles(outcome: str) -> bool:

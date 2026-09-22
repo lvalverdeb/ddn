@@ -57,12 +57,21 @@ class GeocodeConfidence(StrEnum):
 
 
 class Outcome(StrEnum):
-    """§6's four delivery outcomes, carried by §9.1's `previous_outcome`."""
+    """§6's outcomes, carried by §9.1's `previous_outcome`.
+
+    Four of these are the result of a delivery *attempt*. `CANCELLED` is not:
+    §6 v0.15 records it in the same table because the last column -- effect on
+    tomorrow's pool -- is answered the same way, but nobody went to the door.
+    `lifecycle.ATTEMPT_OUTCOMES` is the subset an attempt can produce, and it
+    is what `outcomes.record` asks its source for.
+    """
 
     DELIVERED = "Delivered"
     REJECTED = "Rejected"
     RETURNED = "Returned"
     POSTPONED = "Postponed"
+    #: §6 v0.15: withdrawn by the customer before delivery.
+    CANCELLED = "Cancelled"
 
 
 class VehicleType(StrEnum):

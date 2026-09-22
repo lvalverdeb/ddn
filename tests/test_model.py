@@ -89,8 +89,10 @@ def facility(**overrides: object) -> Facility:
 #: and Dispatched to each of §6's four outcomes (8); Postponed->Ready (1);
 #: Postponed->Transfer requested->In transfer->Ready (3); Transfer requested to
 #: Ready and to Return run, and Ready->Return run, all three added in v0.13 (3);
-#: Rejected and Returned to Return run, and Return run->Returned to customer (3).
-SECTION_5_2_6_EDGES = 25
+#: Rejected and Returned to Return run, and Return run->Returned to customer (3);
+#: Dispatched->Return run, added in v0.15 for a cancellation taken off a route
+#: (1).
+SECTION_5_2_6_EDGES = 26
 
 
 def test_the_transition_table_is_not_empty():
@@ -291,19 +293,25 @@ def test_between_refuses_a_facility_the_matrix_does_not_span():
 
 # --------------------------------------- §6's outcomes, as §5.2.6 statuses
 
-def test_every_outcome_section_6_names_has_a_status_and_no_others():
+def test_every_outcome_section_6_names_is_an_attempt_outcome_or_cancellation():
     """`records.Outcome` and `lifecycle.AFTER_ATTEMPT` must not drift apart.
 
     The table is keyed by §6's spelling rather than by the enum, because
     `records` imports `Status` from `lifecycle` and the other direction would
-    close the circle. That leaves two lists of the same four words in two
-    files, which is exactly the arrangement that goes stale — so this is the
-    guard. Nothing else in the repository would notice.
+    close the circle. That leaves the same words written in two files, which
+    is exactly the arrangement that goes stale — so this is the guard.
+
+    §6 v0.15 has five rows and only four of them are attempt outcomes. The
+    partition is asserted rather than the equality: `Cancelled` sits in the
+    table because its last column — effect on tomorrow's pool — is answered
+    like a rejection's, and it is not something a doorstep can produce.
     """
-    assert set(lifecycle.AFTER_ATTEMPT) == {str(o) for o in Outcome}
+    assert (lifecycle.ATTEMPT_OUTCOMES | {lifecycle.CANCELLED}
+            == {str(o) for o in Outcome})
+    assert lifecycle.CANCELLED not in lifecycle.AFTER_ATTEMPT
 
 
-@pytest.mark.parametrize("outcome", list(Outcome))
+@pytest.mark.parametrize("outcome", sorted(lifecycle.ATTEMPT_OUTCOMES))
 def test_an_outcome_reaches_a_status_dispatched_can_actually_reach(outcome):
     """§6's choice is validated against §5.2.6's edges, not asserted beside them.
 
@@ -327,9 +335,49 @@ def test_only_delivery_settles_an_envelope():
     """§6: a rejection or a defect goes to the return run, a postponement
     comes back to Ready. Both leave something for tomorrow to carry, and a
     day that counted them as finished would lose them."""
-    settled = {o for o in Outcome if lifecycle.settles(o)}
+    settled = {o for o in lifecycle.ATTEMPT_OUTCOMES if lifecycle.settles(o)}
 
-    assert settled == {Outcome.DELIVERED}
+    assert settled == {str(Outcome.DELIVERED)}
+
+
+def test_a_cancellation_is_refused_as_an_attempt_outcome():
+    """Nobody went to the door, so `after_attempt` must not answer for it.
+
+    §6 v0.15 keeps `Cancelled` in the outcome table for the sake of its last
+    column, which is a statement about tomorrow's pool and not about a
+    doorstep. Letting it through here would put it in `outcomes.record`'s
+    attempt loop and make it consume a draw.
+    """
+    with pytest.raises(lifecycle.IllegalTransition):
+        lifecycle.after_attempt(lifecycle.CANCELLED)
+
+
+@pytest.mark.parametrize("current", [lifecycle.Status.READY,
+                                     lifecycle.Status.DISPATCHED])
+def test_a_cancellation_reaches_the_return_run_from_either_side_of_dispatch(
+        current):
+    """§6 v0.15's two cases, and the two §5.2.6 edges behind them.
+
+    Before dispatch the envelope is still Ready; on a route it is Dispatched
+    and the stop comes off. e2e-3 §2.2 asked only for the first, and the
+    second is what its own next sentence needs — until v0.15 §5.2.6 drew
+    nothing out of Dispatched but the four attempt outcomes.
+    """
+    assert lifecycle.after_cancellation(current) is lifecycle.Status.RETURN_RUN
+
+
+def test_a_cancellation_after_delivery_is_refused_by_the_state_machine():
+    """§5.2.6 draws nothing out of Delivered, so the refusal is `advance`'s.
+
+    e2e-3 §2.2's third bullet — "if already visited and delivered, cancellation
+    is refused" — needs no rule of its own, and writing one would be a second
+    place for it to disagree with §5.2.6. §13.1 turns this into `409` with the
+    current state.
+    """
+    with pytest.raises(lifecycle.IllegalTransition) as refused:
+        lifecycle.after_cancellation(lifecycle.Status.DELIVERED)
+
+    assert "§5.2.6" in str(refused.value)
 
 
 # ------------------------------------ §6 applied to a facility's attempts
