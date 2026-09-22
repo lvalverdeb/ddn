@@ -37,6 +37,7 @@ from ddn.contract import Excluded
 from ddn.lastmile import select
 from ddn.linehaul import Transit
 from ddn.model import TransferReason, TransferRequest
+from ddn.model.outcomes import for_retry
 from ddn.simulation.capacity import Checks, check
 from ddn.simulation.metrics import Metrics, Tally, measure
 from ddn.solver_adapter import Day, check_day_constraints
@@ -235,7 +236,7 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
         elif outcome == POSTPONED:
             reason = sub_reason(rng)
             reasons[reason] = reasons.get(reason, 0) + 1
-            postponed.append(replace_record(envelope, reason))
+            postponed.append(for_retry(envelope, reason))
         else:
             # §5.5: the envelope is where it was refused, which for a depot
             # reject is the depot. Stamping the hub here made every rejection
@@ -553,13 +554,6 @@ def run_days(days: int, state: State, **kwargs: Any) -> list[DayReport]:
         report, state = run_day(state, **kwargs)
         reports.append(report)
     return reports
-
-
-def replace_record(envelope: dict[str, Any], reason: str) -> dict[str, Any]:
-    """§6: a postponed envelope is held Ready at its facility for another go."""
-    return dict(envelope, status="Ready", previous_outcome=POSTPONED,
-                postponed_reason=reason,
-                attempt_number=int(envelope.get("attempt_number", 0)) + 1)
 
 
 def _seconds(clock: Any) -> int:

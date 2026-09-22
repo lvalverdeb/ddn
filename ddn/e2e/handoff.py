@@ -51,9 +51,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ddn.contract import Excluded
 from ddn.linehaul.circuit import Declined
-from ddn.model.records import Outcome, Status, TransferRequest
+from ddn.model.records import DEFAULT_WEIGHT_G, Outcome, Status, TransferRequest
 from ddn.pickups import uncollected as _uncollected_envelopes
+from ddn.returns import goes_back
 from ddn.simulation.metrics import Tally
+from ddn.solver_adapter.output import NO_TIME as OUT_OF_TIME
 from ddn.solver_adapter.postcheck import Violation
 
 #: `PositionedPool.positioned` and `ReadyPool.ready` key hub-direct envelopes
@@ -65,6 +67,11 @@ HUB = "HUB"
 #: whenever it rolls anything, so this standing in for a real reason means the
 #: planner changed and §9.2's "with reason" is no longer being answered.
 NO_REASON = "rolled without a reason recorded"
+
+#: §9.2's reason for an envelope a vehicle was offered and could not reach in
+#: its shift. `solver_adapter.output` publishes the vocabulary; naming the
+#: string here rather than re-spelling it keeps the two from drifting.
+NO_TIME = OUT_OF_TIME
 
 
 class _Handoff(BaseModel):
@@ -245,6 +252,21 @@ class ReturnLoad(_Handoff):
     package_ids: tuple[str, ...] = ()
     weight_g: int = 0
 
+    @classmethod
+    def of(cls, going_back, *, facility_id: str) -> ReturnLoad:
+        """§5.5's load at one facility, over what §6 stamped as going back.
+
+        Gated through `returns.goes_back` rather than trusted: it is §5.5's own
+        predicate, and it reads the `previous_outcome` and `sla_expired` stamps
+        that `model.outcomes` writes. A load assembled without it would carry
+        whatever the caller happened to put in the list.
+        """
+        eligible = [e for e in going_back if goes_back(e)]
+        return cls(facility_id=facility_id,
+                   package_ids=tuple(e["package_id"] for e in eligible),
+                   weight_g=sum(int(e.get("weight_g") or DEFAULT_WEIGHT_G)
+                                for e in eligible))
+
 
 class DayOutcomes(_Handoff):
     """E2E-3 → E2E-2 next day, and → reporting. e2e-3 §4 rows 1-3, 5, 6.
@@ -269,3 +291,39 @@ class DayOutcomes(_Handoff):
     tally: Tally | None = None
     #: §13.1's obligation on this slice's routing result, empty on success.
     violations: tuple[Violation, ...] = ()
+
+    @classmethod
+    def of(cls, recorded, declined, refused, *, pool, swept,
+           facility_id: str, day: date) -> DayOutcomes:
+        """Assemble the hand-off from what §6 just recorded.
+
+        A shape mapping: every decision above it was made in a §5 module.
+        `outcomes` and `next_state` keep the attempt order, which `A2` of the
+        chain leans on and `positioned` explains.
+
+        `returns` is this facility's load either way. e2e-3 §2.5 sends it two
+        places — at a depot it waits for the next van leg, at the hub it
+        enters tonight's return run — and *this slice does not choose*: the
+        facility it was produced at does, and E2E-2 reads `facility_id`.
+        """
+        refused_ids = tuple(e["package_id"] for e in refused)
+        return cls(
+            delivery_day=day,
+            facility_id=facility_id,
+            outcomes={a.package_id: Outcome(a.outcome)
+                      for a in recorded.attempts},
+            next_state={a.package_id: a.status for a in recorded.attempts},
+            unassigned=(tuple(declined)
+                        + tuple(Excluded(pid, NO_TIME) for pid in refused_ids)),
+            returns=ReturnLoad.of(recorded.going_back, facility_id=facility_id),
+            tally=Tally(
+                ready_pool=len(pool) + len(swept),
+                dispatched=len(recorded.attempts),
+                delivered=recorded.counts.get("Delivered", 0),
+                delivered_first_attempt=recorded.first_attempt,
+                postponed=recorded.counts.get("Postponed", 0),
+                rejected=recorded.counts.get("Rejected", 0),
+                defective=recorded.counts.get("Returned", 0),
+                sla_expired=len(swept),
+                unassigned=len(declined) + len(refused_ids),
+                bikes_deployed=0))

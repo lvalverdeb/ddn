@@ -14,8 +14,11 @@ from ddn.model.lifecycle import (
     IllegalTransition,
     Status,
     advance,
+    after_attempt,
     may,
+    settles,
 )
+from ddn.model.outcomes import Attempt, Recorded, for_retry, record
 from ddn.model.records import (
     DEFAULT_SERVICE_MIN,
     DEFAULT_WEIGHT_G,
@@ -41,6 +44,7 @@ __all__ = [
     "ROUTABLE",
     "TERMINAL",
     "TRANSITIONS",
+    "Attempt",
     "CoordSource",
     "Envelope",
     "Facility",
@@ -51,6 +55,7 @@ __all__ = [
     "NoRoadPath",
     "Outcome",
     "PickupRequest",
+    "Recorded",
     "ReturnStop",
     "Status",
     "TransferReason",
@@ -59,7 +64,11 @@ __all__ = [
     "VehicleRole",
     "VehicleType",
     "advance",
+    "after_attempt",
+    "for_retry",
     "may",
     "nearest_facility",
     "ranked",
+    "record",
+    "settles",
 ]

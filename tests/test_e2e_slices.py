@@ -14,9 +14,11 @@ from dataclasses import replace
 import pytest
 
 from ddn import assumptions, linehaul
-from ddn.e2e import handoff, hub_to_depots, pickups_to_hub
+from ddn.e2e import depot_delivery, handoff, hub_to_depots, pickups_to_hub
+from ddn.e2e.depot_delivery.scenario import Scenario as Scenario3
 from ddn.e2e.hub_to_depots.scenario import Scenario as Scenario2
 from ddn.e2e.pickups_to_hub.scenario import Scenario
+from ddn.model import lifecycle
 from tests import peak_day_inputs
 
 CUT_OFF = (assumptions.PROCESSING_CUTOFF.hour * 3600
@@ -268,3 +270,198 @@ def test_slice_2_hands_off_through_a_file(positioned):
         pool.model_dump_json()) == pool
     assert handoff.TransferOutcomes.model_validate_json(
         transfers.model_dump_json()) == transfers
+
+
+# --------------------------------------- E2E-3, depot delivery and outcomes
+
+def _canned(sequence):
+    """An outcome source that answers from a fixed list, in order.
+
+    A real day is told what happened (e2e-3 §3, "Driver app"); a simulation
+    draws it. A test does neither — it says so outright, which is what makes
+    the assertions below about §6's *consequences* and not about a rate.
+    """
+    remaining = list(sequence)
+    return lambda envelope: remaining.pop(0)
+
+
+def _slice_3(positioned_pool, facility, bikes, outcomes_in, reason="recipient unavailable"):
+    return depot_delivery.run(
+        Scenario3(facility_id=facility,
+                  delivery_day=positioned_pool.delivery_day,
+                  bikes=bikes,
+                  deliver=lambda offered, _f, _b: (list(offered), []),
+                  outcome=_canned(outcomes_in),
+                  reason=lambda envelope: reason),
+        positioned_pool)
+
+
+@pytest.fixture(scope="module")
+def d1_pool(positioned):
+    pool, _ = positioned
+    return pool
+
+
+def test_slice_3_accounts_for_every_envelope_it_was_positioned(d1_pool):
+    """Attempted, declined for capacity, or swept as expired — no fourth place.
+
+    e2e-3 §1 ends when "every envelope dispatched that day has an outcome
+    recorded and its next-state assigned". An envelope in the pool and in none
+    of these three is one the facility lost, which no count would show.
+    """
+    facility = "D1"
+    offered = d1_pool.envelopes[facility]
+    result = _slice_3(d1_pool, facility, bikes=2,
+                      outcomes_in=["Delivered"] * len(offered))
+
+    seen = (set(result.outcomes)
+            | {u.package_id for u in result.unassigned}
+            | set(result.returns.package_ids))
+
+    assert seen == {e["package_id"] for e in offered}
+    assert result.tally.ready_pool == len(offered)
+
+
+def test_slice_3_assigns_the_next_state_section_5_2_6_draws(d1_pool):
+    """§6's outcome decides, §5.2.6 validates, and the pair is asserted here.
+
+    Not `Status(outcome)`: the two spellings coincide today and the point of
+    going through `lifecycle.after_attempt` is that they need not.
+    """
+    result = _slice_3(d1_pool, "D1", bikes=1,
+                      outcomes_in=["Delivered", "Postponed", "Rejected",
+                                   "Returned"] * 10)
+
+    assert all(result.next_state[pid] == lifecycle.after_attempt(outcome)
+               for pid, outcome in result.outcomes.items())
+    assert set(result.next_state.values()) == {
+        lifecycle.Status.DELIVERED, lifecycle.Status.POSTPONED,
+        lifecycle.Status.REJECTED, lifecycle.Status.RETURNED}
+
+
+def test_slice_3_keeps_the_order_it_attempted_them_in(d1_pool):
+    """The outcome source is asked in attempt order, and the map records it.
+
+    This is what lets the chain compare per-package rather than per-count:
+    reordering a pool leaves every total identical and changes hundreds of
+    individual outcomes, so the sequence is the evidence.
+
+    It is a *subsequence* of the pool, not a prefix of it. `lastmile.select`
+    chooses by (priority desc, package_id) and then returns the survivors in
+    **pool** order — so which envelopes go is a §8 decision and the order they
+    are attempted in is the pool's. Asserting a prefix here failed, correctly.
+    """
+    result = _slice_3(d1_pool, "D1", bikes=2, outcomes_in=["Delivered"] * 999)
+    attempted = list(result.outcomes)
+    pool_order = list(d1_pool.positioned["D1"])
+
+    assert set(attempted) < set(pool_order), "capacity should bind here"
+    assert attempted == [pid for pid in pool_order if pid in set(attempted)]
+
+
+def test_slice_3_sends_back_only_what_section_5_5_recognises(d1_pool):
+    """A delivery does not go back; a rejection and a defect do.
+
+    Gated through `returns.goes_back` rather than by the outcome name, because
+    that predicate reads the stamps `model.outcomes` writes and §5.3.2 asks the
+    same question at a depot. Two copies of it would be two places to forget
+    §6.1's expiry clock.
+    """
+    result = _slice_3(d1_pool, "D1", bikes=1,
+                      outcomes_in=["Rejected", "Returned", "Delivered",
+                                   "Postponed"] * 10)
+
+    going_back = set(result.returns.package_ids)
+    by_outcome = {str(o) for pid, o in result.outcomes.items() if pid in going_back}
+
+    assert by_outcome == {"Rejected", "Returned"}
+    assert result.returns.weight_g > 0
+
+
+def test_slice_3_hands_its_returns_to_the_facility_that_made_them(d1_pool):
+    """e2e-3 §2.5: the depot's load waits for a van; the hub's goes tonight.
+
+    The slice does not choose between them — it stamps the facility and E2E-2
+    reads it. Stamping the hub at outcome time is what once made every
+    rejection hub-resident the instant it happened, so it joined *tonight's*
+    return run, which is the one thing §5.5 says it must not do.
+    """
+    depot = _slice_3(d1_pool, "D1", bikes=1, outcomes_in=["Rejected"] * 99)
+    hub = _slice_3(d1_pool, handoff.HUB, bikes=1, outcomes_in=["Rejected"] * 99)
+
+    assert depot.returns.facility_id == "D1"
+    assert hub.returns.facility_id == handoff.HUB
+
+
+def test_slice_3_postpones_back_to_ready_with_the_attempt_counted(d1_pool):
+    """§5.2.6: "Postponed: back to Ready for next attempt".
+
+    The count is what stops a postponement being retried for ever, and §11
+    reads it as the first-attempt rate — so a retry that forgot to increment
+    would look like a day of first attempts that never end.
+    """
+    result = _slice_3(d1_pool, "D1", bikes=1, outcomes_in=["Postponed"] * 99,
+                      reason="driver out of time")
+
+    assert set(result.next_state.values()) == {lifecycle.Status.POSTPONED}
+    assert result.returns.package_ids == ()
+    assert result.tally.postponed == result.tally.dispatched
+    assert result.tally.delivered_first_attempt == 0
+
+
+def test_slice_3_sweeps_an_expired_envelope_instead_of_dispatching_it(d1_pool):
+    """§6.1: "not dispatched at all" — and it still goes back, not away.
+
+    Nothing has expired on §10's day, so deleting the sweep from the runner
+    leaves the entire suite green — measured. This is the scenario that makes
+    it bite: a pool where every envelope's SLA date is behind us.
+
+    The sweep runs *before* §8's capacity cut, which is the part worth pinning.
+    An expired envelope reaching `select` would compete for a bike it may not
+    board, and could push a live envelope out to make room for a journey it
+    cannot take.
+    """
+    stale = handoff.PositionedPool(
+        delivery_day=d1_pool.delivery_day,
+        positioned={"D1": ("P-1", "P-2")},
+        envelopes={"D1": ({"package_id": "P-1", "sla_date": "2026-09-01",
+                           "weight_g": 20, "priority": 900.0},
+                          {"package_id": "P-2", "sla_date": "2026-09-01",
+                           "weight_g": 20, "priority": 900.0})})
+
+    result = _slice_3(stale, "D1", bikes=1, outcomes_in=[])
+
+    assert result.outcomes == {}, "an expired envelope is not attempted"
+    assert result.tally.dispatched == 0
+    assert result.tally.sla_expired == 2
+    assert set(result.returns.package_ids) == {"P-1", "P-2"}, (
+        "§6.1 returns them to the customer; they are not discarded")
+
+
+def test_slice_3_claims_nothing_about_transfers_or_violations(d1_pool):
+    """A vacuity ledger, not a result.
+
+    e2e-3 §4 asks for transfer requests (row 5) and a §7.1 violation list
+    (row 1). §5.3.2 raises a transfer from a *re-geocode* the pool does not
+    carry, and the violation list needs the facility's `Solution`, which the
+    injected `deliver` does not produce — it returns envelopes. Rows C7 and
+    C12 own them.
+
+    If this fails, the slice gained a producer and the chain's comparison of
+    these two fields stops being an empty-against-empty.
+    """
+    result = _slice_3(d1_pool, "D1", bikes=1, outcomes_in=["Delivered"] * 99)
+
+    assert result.transfers == ()
+    assert result.violations == ()
+
+
+def test_slice_3_hands_off_through_a_file(d1_pool):
+    """Tomorrow's line-haul can be run from the file without running today."""
+    result = _slice_3(d1_pool, "D1", bikes=1,
+                      outcomes_in=["Delivered", "Rejected", "Postponed"] * 33)
+
+    reread = handoff.DayOutcomes.model_validate_json(result.model_dump_json())
+
+    assert reread == result
+    assert list(reread.outcomes) == list(result.outcomes), "attempt order"

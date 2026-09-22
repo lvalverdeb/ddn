@@ -29,6 +29,7 @@ from ddn.model import (
     advance,
     lifecycle,
     may,
+    outcomes,
 )
 from ddn.model.records import Outcome
 
@@ -329,3 +330,69 @@ def test_only_delivery_settles_an_envelope():
     settled = {o for o in Outcome if lifecycle.settles(o)}
 
     assert settled == {Outcome.DELIVERED}
+
+
+# ------------------------------------ §6 applied to a facility's attempts
+
+def test_record_asks_for_a_reason_immediately_after_the_postponement():
+    """The call order is `outcomes.record`'s contract, not an implementation note.
+
+    A caller whose `outcome` and `reason` read the same `random.Random` — which
+    is exactly what `simulation.day` does — gets a different day if the reasons
+    are drawn in a second pass. A different day with *identical totals*, since
+    the same number of draws come off the same generator: the counts match, the
+    per-envelope outcomes do not, and nothing downstream of a tally can see it.
+
+    So this pins the sequence directly. Asserting it through a simulated day
+    cannot: a test that feeds canned outcomes and a constant reason passes
+    either way, which is how this went uncaught at first.
+    """
+    calls: list[tuple[str, str]] = []
+    answers = iter(["Delivered", "Postponed", "Rejected", "Postponed"])
+
+    def outcome(envelope):
+        calls.append(("outcome", envelope["package_id"]))
+        return next(answers)
+
+    def reason(envelope):
+        calls.append(("reason", envelope["package_id"]))
+        return "recipient unavailable"
+
+    outcomes.record([{"package_id": f"P-{i}"} for i in range(4)],
+                    outcome=outcome, reason=reason)
+
+    assert calls == [("outcome", "P-0"),
+                     ("outcome", "P-1"), ("reason", "P-1"),
+                     ("outcome", "P-2"),
+                     ("outcome", "P-3"), ("reason", "P-3")]
+
+
+def test_record_never_asks_a_reason_for_anything_but_a_postponement():
+    """One draw per envelope, plus one per postponement, and not one more."""
+    asked: list[str] = []
+    answers = iter(["Delivered", "Rejected", "Returned"])
+
+    outcomes.record([{"package_id": f"P-{i}"} for i in range(3)],
+                    outcome=lambda envelope: next(answers),
+                    reason=lambda envelope: asked.append(envelope["package_id"]))
+
+    assert asked == []
+
+
+def test_record_sweeps_the_expired_without_attempting_them():
+    """§6.1: expired envelopes were never at a doorstep, and still go back.
+
+    `outcome` is not asked about them — asking would consume a draw for an
+    attempt that did not happen — but they are §5.5's load tonight all the
+    same, stamped so `returns.goes_back` recognises them.
+    """
+    attempted = [{"package_id": "P-live"}]
+    swept = [{"package_id": "P-old"}]
+
+    recorded = outcomes.record(attempted, swept,
+                               outcome=lambda envelope: "Delivered",
+                               reason=lambda envelope: "unused")
+
+    assert [a.package_id for a in recorded.attempts] == ["P-live"]
+    assert [e["package_id"] for e in recorded.going_back] == ["P-old"]
+    assert recorded.going_back[0]["sla_expired"] is True
