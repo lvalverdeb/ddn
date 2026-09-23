@@ -373,3 +373,64 @@ def test_no_model_file_still_carries_the_objective_nothing_reads():
 
 def _as_seconds(clock: time) -> int:
     return clock.hour * 3600 + clock.minute * 60
+
+
+#: Registry value -> where `models/*.json` states the same figure. The model
+#: is what the code actually reads — `contract.costs` and `_capacities` take
+#: both from the `fleet` block — so the registry holds the *second* copy, and
+#: the scan above cannot see it: it walks `ddn/**/*.py` and these are JSON.
+MODEL_COPIES = {
+    "VEHICLE_FIXED_COST": ("fixed_cost", None),
+    "MAILBAGS_PER_VAN": ("capacities.mailbags", "VAN"),
+    "ENVELOPES_PER_BIKE": ("capacities.count", "MOTORBIKE"),
+}
+
+
+def _fleet_specs() -> list[tuple[str, str, dict]]:
+    """(model name, vehicle class, spec) for every class every model declares."""
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "models"
+    found = []
+    for path in sorted(root.glob("*.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for spec in doc.get("fleet", ()):
+            found.append((path.name, spec["class"], spec))
+    return found
+
+
+def test_no_model_file_states_a_registry_value_differently():
+    """The registry and `models/*.json` hold the same figures; nothing held them.
+
+    `test_no_module_repeats_a_registered_placeholder` walks `ddn/**/*.py`, so
+    three JSON files sat outside it carrying `fixed_cost: 50000` and
+    `mailbags: 40` — the same numbers as `VEHICLE_FIXED_COST` and
+    `MAILBAGS_PER_VAN`, and the ones the code actually reads.
+
+    Asserted as agreement rather than forbidden as duplication, because the
+    model genuinely is where the platform puts per-vehicle costs and
+    capacities. What must not happen is the two drifting: changing the
+    registry and leaving the model would move a documented placeholder and
+    change no plan at all.
+    """
+    specs = _fleet_specs()
+    assert specs, "no model declares a fleet; this test would prove nothing"
+
+    checked = 0
+    for name, kind, spec in specs:
+        for registered, (path, only_for) in MODEL_COPIES.items():
+            if only_for is not None and kind != only_for:
+                continue
+            stated = spec
+            for part in path.split("."):
+                stated = (stated or {}).get(part) if isinstance(stated, dict) else None
+            if stated is None:
+                continue
+            assert int(stated) == getattr(assumptions, registered), (
+                f"{name}'s {kind} states {path} = {stated}; "
+                f"docs/assumptions.md registers {registered} = "
+                f"{getattr(assumptions, registered)}")
+            checked += 1
+
+    assert checked >= 4, f"only {checked} copies compared; the scan has drifted"

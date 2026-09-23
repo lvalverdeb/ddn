@@ -135,7 +135,7 @@ class Violation:
 
 @dataclass(frozen=True)
 class Day:
-    """One operating day, as the four cross-stage bullets need to see it."""
+    """One operating day, as the five cross-stage bullets need to see it."""
 
     today: date
     #: facility id -> that facility's last-mile solution (§5.4).
@@ -290,7 +290,7 @@ def check_route_constraints(
     today: date | None = None,
     stage: str = DELIVERY,
 ) -> list[Violation]:
-    """The seven §7.1 bullets one solve can answer, plus what the verifier says.
+    """The eight §7.1 bullets one solve can answer, plus what the verifier says.
 
     Args:
         problem: what was put to the solver.

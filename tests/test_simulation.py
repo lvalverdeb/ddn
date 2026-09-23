@@ -75,20 +75,37 @@ def test_section_10_cannot_clear_its_other_depots(simulated):
     assert share == 1330
     assert share - capacity == 130, "§10 is 130 envelopes over its own fleet"
 
+    # And 130 is itself §10's floor, not its answer: it pools five depots'
+    # bikes. Per depot the shortfall is 170, because D2's 38 envelopes of
+    # slack and D3's 2 cannot reach D4, D5 and D6 — §4.2 fixes a bike's depot
+    # before the solve, which is the whole reason it is two-stage.
+    # `docs/spec-proposals/v0.16-depot-capacity.md` proposes the correction.
+    per_depot = sum(max(peak_day.MORNING_BY_FACILITY[d]
+                        - peak_day.BIKE_ALLOCATION[d] * EFFECTIVE_PER_BIKE, 0)
+                    for d in depots)
+    assert per_depot == 170
+
     report, _ = simulated
     assert report.tally.unassigned > 20, "so more than D1's twenty fall out"
 
 
 def test_the_day_delivers_about_section_10s_total(simulated):
-    """§10: 2,880 delivered. Within 6%, and low for a reason it names itself.
+    """§10 v0.14: 2,750 delivered, 2,950 dispatched.
 
-    The shortfall is the 130 above: §10 dispatches 3,080 and this day can only
-    dispatch 2,910, because the depots §10 says clear their pools cannot. At
-    §10's own delivery rate that is about 160 fewer envelopes, which is most of
-    the gap.
+    **This said 2,880 within 6% for four revisions after §10 stopped saying
+    it.** v0.13 restated the end of day and the band was wide enough to hold
+    both figures, so nothing moved — and by the time §6.1's end-of-day clock
+    landed, 2,711 was 5.9% from the old target and one rounding from red
+    against a number the document no longer carried.
+
+    Retargeted to what §10 states, and tightened to 2% because the day is now
+    within 1.4% of it. The remaining gap is the 170 above: §10 dispatches
+    2,950 and this day dispatches 2,910, because the depots §10 says clear
+    their pools cannot.
     """
     report, _ = simulated
-    assert report.tally.delivered == pytest.approx(2880, rel=0.06)
+    assert report.tally.delivered == pytest.approx(2750, rel=0.02)
+    assert report.tally.dispatched == pytest.approx(2950, abs=50)
     assert report.tally.dispatched == peak_day.MORNING_POOL - report.tally.unassigned
 
 

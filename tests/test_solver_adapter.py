@@ -178,6 +178,14 @@ def test_the_two_halves_account_for_every_bullet():
     assert "Eight bullets" in postcheck.__doc__
     assert "Five are not" in postcheck.__doc__
 
+    # The module docstring was the only prose this held, so two more copies of
+    # the same split drifted beside it: `Day` said four cross-stage bullets
+    # and `check_route_constraints` said seven per-solve. Both were the
+    # pre-v0.12 numbers, and both are inside the code they describe.
+    assert "five cross-stage bullets" in postcheck.Day.__doc__
+    assert "eight §7.1 bullets" in postcheck.check_route_constraints.__doc__
+    assert "five §7.1 bullets" in postcheck.check_day_constraints.__doc__
+
 
 def test_section_7_1s_bullets_are_all_accounted_for():
     """Every bullet §7.1 writes is one this module transcribes, and no other.
