@@ -7,6 +7,8 @@ from datetime import date, datetime, time, timedelta
 import pytest
 
 from ddn import linehaul
+from ddn.linehaul import circuit
+from ddn.linehaul.circuit import MAX_LOAD_G
 from ddn.model import Status, TransferReason, TransferRequest, may
 from ddn.solver_adapter import Day, check_day_constraints, postcheck
 
@@ -18,6 +20,19 @@ RELEASE = datetime.combine(date(2026, 9, 17), time(7))
 RAISED = datetime.combine(TODAY, time(18))
 
 
+#: `circuit.choose`'s inputs for the ranking rows below. `release_of` carries
+#: `DAY + release` as `linehaul.plan` builds it — the release is the *next*
+#: morning, so it sits past 24 h and `_ranked` reads the time of day back out
+#: with `% DAY`.
+RELEASES = {"D1": circuit.DAY + 7 * HOUR, "D3": circuit.DAY + 7 * HOUR}
+HUB_TRANSIT = {"D1": 30 * 60, "D3": 30 * 60}
+
+
+def TRANSIT(origin: str, destination: str) -> int:
+    """Flat inter-depot travel: these rows are about ranking, not geography."""
+    return 30 * 60
+
+
 def depot(name: str, *, transit_min: int, release_h: int = 7) -> dict:
     return {"id": name, "route_release_time": release_h * HOUR,
             "transit_from_hub_min": transit_min}
@@ -25,9 +40,11 @@ def depot(name: str, *, transit_min: int, release_h: int = 7) -> dict:
 
 def transfer(transfer_id: str = "T1", *, frm: str = "D1", to: str = "D3",
              deadline: datetime = RELEASE, grams: int = 200,
+             priority: float = 100.0,
              reason: TransferReason = TransferReason.MISASSIGNMENT):
     return TransferRequest(transfer_id, f"PKG-{transfer_id}", frm, to, reason,
-                           RAISED, deadline, weight_g=grams)
+                           RAISED, deadline, weight_g=grams,
+                           priority=priority)
 
 
 def envelopes(facility: str, count: int, *, grams: int = 200) -> list[dict]:
@@ -219,3 +236,89 @@ def test_a_transfer_arriving_in_time_is_no_violation():
     found = check_day_constraints(
         Day(today=TODAY, linehaul=night, transfers=[transfer()]))
     assert postcheck.TRANSFER_WITHIN_SLA not in {v.bullet for v in found}
+
+
+# --------------------- §5.3.2's Priority rule (v0.16), under a short circuit
+
+def test_a_full_circuit_declines_the_lowest_priority_transfer():
+    """§5.3.2: "ranked by the same priority score as delivery (§8.1)".
+
+    `choose` used to take the caller's list order and decline once full, so
+    which transfers rode was decided by list position — and `simulation.day`
+    passes `[*state.transfers, *raised]`, which made it "yesterday's first"
+    the moment v0.15 gave it a queue. That is a policy and nobody chose it.
+    """
+    heavy = MAX_LOAD_G // 2 + 1
+    low = transfer("T-low", priority=10.0, grams=heavy)
+    high = transfer("T-high", priority=900.0, grams=heavy)
+
+    for order in ([low, high], [high, low]):
+        _, carried, declined = circuit.choose(
+            ["D1"], order, transit=TRANSIT, hub_transit=HUB_TRANSIT,
+            release_of=RELEASES, unload_seconds=0, earliest_departure=0,
+            carried_g=0)
+
+        assert [t.transfer_id for t in carried] == ["T-high"]
+        assert [d.transfer_id for d in declined] == ["T-low"]
+        assert declined[0].reason == circuit.OVER_CAPACITY
+
+
+def test_the_order_of_the_caller_s_list_no_longer_decides():
+    """Two runs of one night decline the same transfers, whatever the order.
+
+    The same property `lastmile.select` insists on, and for the same reason:
+    a plan that depends on list position is one nobody can reproduce.
+    """
+    third = MAX_LOAD_G // 3 + 1
+    pool = [transfer(f"T-{i}", priority=float(i), grams=third) for i in range(4)]
+
+    def ran(order):
+        _, carried, _ = circuit.choose(
+            ["D1"], order, transit=TRANSIT, hub_transit=HUB_TRANSIT,
+            release_of=RELEASES, unload_seconds=0, earliest_departure=0,
+            carried_g=0)
+        return [t.transfer_id for t in carried]
+
+    assert ran(pool) == ran(list(reversed(pool))) == ["T-3", "T-2"]
+
+
+def test_a_transfer_due_at_the_next_release_rides_whatever_it_scores():
+    """§5.3.2 v0.16's hard inclusion, and why it is not "SLA-today".
+
+    The old wording said a transfer for an SLA-today envelope was a hard
+    inclusion — a case §7.1 forbids, because line-haul runs on D and delivery
+    on D+1, so an envelope due today cannot be served by a transfer at all and
+    `_raise_transfers` never raises one. v0.16 names the envelope due on the
+    receiving depot's **next morning release** instead, which is the earliest
+    a transfer can still serve.
+
+    §9.1's `deadline` is `min(release, SLA date)`, so the case is the SLA
+    *winning* that minimum: its deadline falls before the release. A first
+    version of this test gave the slack transfer `RELEASE + 3 days`, which has
+    the same time of day as the release — so both looked due and the score
+    decided, which is what "hard" rules out.
+    """
+    heavy = MAX_LOAD_G // 2 + 1
+    due = transfer("T-due", priority=1.0, grams=heavy,
+                   deadline=datetime.combine(RELEASE.date(), time()))
+    rich = transfer("T-rich", priority=9999.0, grams=heavy, deadline=RELEASE)
+
+    _, carried, declined = circuit.choose(
+        ["D1"], [rich, due], transit=TRANSIT, hub_transit=HUB_TRANSIT,
+        release_of=RELEASES, unload_seconds=0, earliest_departure=0,
+        carried_g=0)
+
+    assert [t.transfer_id for t in carried] == ["T-due"], (
+        "the hard inclusion lost to a score, which is what 'hard' rules out")
+    assert [d.transfer_id for d in declined] == ["T-rich"]
+
+
+def test_a_transfer_without_a_score_is_refused_not_ranked_last():
+    """§9.1 v0.16 declares `priority`; absent is invisible and load-bearing.
+
+    A transfer defaulting to zero sorts last and never rides, silently — the
+    same failure `contract.costs` refuses a model that prices nothing for.
+    """
+    with pytest.raises(ValueError, match="no priority"):
+        TransferRequest("T-0", "PKG-0", "D1", "D3",
+                        TransferReason.MISASSIGNMENT, RAISED, RELEASE)

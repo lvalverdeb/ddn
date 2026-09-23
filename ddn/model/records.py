@@ -228,8 +228,25 @@ class TransferRequest:
     created_at: datetime
     deadline: datetime
     weight_g: int = DEFAULT_WEIGHT_G
+    #: §9.1 v0.16: §8.1's score for the envelope. §5.3.2 ranks hub-origin
+    #: loads and transfers together when van capacity is short, and until this
+    #: was declared a planner handed a transfer could not do it -- so
+    #: `circuit.choose` took them in the caller's list order, which since
+    #: v0.15's retry queue quietly meant "yesterday's first".
+    #:
+    #: Required at construction rather than defaulted, for the reason
+    #: `contract.costs` refuses a model that prices nothing: a transfer that
+    #: ranks as zero is one that never rides, and it would do so silently.
+    priority: float | None = None
 
     def __post_init__(self) -> None:
+        if self.priority is None:
+            raise ValueError(
+                f"{self.transfer_id} states no priority; §5.3.2 ranks it "
+                "against hub-origin loads by §8.1's score, and a transfer "
+                "without one is not free -- it sorts last and never rides")
+        object.__setattr__(self, "priority", _numeric(self.priority,
+                                                      "priority"))
         if self.from_facility_id == self.to_facility_id:
             raise ValueError(
                 f"{self.transfer_id} moves {self.package_id} from "

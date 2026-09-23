@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ddn.linehaul.circuit import (
+    DAY,
     NO_VAN_LEG,
     Declined,
     Leg,
@@ -46,7 +47,6 @@ from ddn.linehaul.circuit import (
 # a van is working to is tomorrow's, not today's. Treating it as today's puts
 # every deadline in the past before a single van is back from pickups — which
 # is what the first run of this module did, and it carried nothing at all.
-DAY = 24 * 3600
 
 
 @dataclass(frozen=True)

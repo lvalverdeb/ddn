@@ -1,7 +1,7 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.15
-**Date:** 22 September 2026
+**Status:** Draft v0.16
+**Date:** 23 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
 
@@ -264,7 +264,7 @@ An envelope already at a depot may need to move to another depot. Vans run betwe
 
 **Timing.** Transfer requests known before the evening line-haul plan are included in that night's circuits. Requests arising after departures wait for the next day's plan. A transfer therefore normally costs one day; via the hub it would cost two.
 
-**Priority.** When van capacity or van-hours are short, hub-origin loads and transfers compete. Both are ranked by the same priority score as delivery (§8.1); a transfer for an SLA-today envelope is a hard inclusion, like an SLA-today delivery.
+**Priority.** When van capacity or van-hours are short, hub-origin loads and transfers compete. Both are ranked by the same priority score as delivery (§8.1); a transfer whose envelope is due on the receiving depot's next morning release is a hard inclusion, as an SLA-today delivery is at §6.1. A transfer for an envelope due **today** is not raised at all (§7.1): line-haul runs on D and delivery on D+1, so it could not arrive in time.
 
 ### 5.4 Stage 4 — Last mile (Hub and each depot → recipient)
 
@@ -441,6 +441,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | created_at | datetime | |
 | deadline | datetime | min(receiving depot's next morning release, SLA date) |
 | weight_g | integer | |
+| priority | number | §8.1's score for the envelope, so §5.3.2 can rank a transfer against a hub-origin load |
 
 **Return-run stops** (built at end of day)
 | Field | Type | Notes |
@@ -578,6 +579,7 @@ Reconciliation, assembly and sorting are physical hub processes; the API only re
 | 0.4 | 2026-09-14 | [TBD] | Dynamic pickups; shared fleet; return run; SLA via priority; default weight; priority format discussion |
 | 0.5 | 2026-09-14 | [TBD] | Numeric priority score with tier offsets |
 | 0.6 | 2026-09-16 | [TBD] | Expanded pickup process |
+| 0.16 | 2026-09-23 | [TBD] | §9.1's transfer record gains `priority`, so §5.3.2's ranking rule has the score it asks for; §5.3.2's Priority paragraph reworded — its "SLA-today hard inclusion" named a case §7.1 forbids, because a transfer raised on D arrives on D+1 and an envelope due today cannot be served by it |
 | 0.15 | 2026-09-22 | [TBD] | Cancellation: a **Cancelled** outcome in §6, two §5.2.6 edges (`Ready → Return run` and `Dispatched → Return run`), a §2 glossary entry separating the envelope, transfer and pickup-request senses of the word, the §13.2 event, and a §11 cancellation rate |
 | 0.14 | 2026-09-19 | [TBD] | §8.2's "out" direction given a representation: `excluded_by_ops` in §9.1 and an "excluded by operations" reason in §9.2, withheld upstream of the solver rather than encoded as locks |
 | 0.13 | 2026-09-19 | [TBD] | Corrections from conformance audit: §10 arithmetic closed (10 discrepancies; D2–D6 leave 130 unassigned; 2,750 delivered; tomorrow's pool 4,820); §5.2.6 gains cancel, transfer-to-return and SLA-expiry edges; §5.1.6 late-request rule stated; §7.1 bullet count stated |

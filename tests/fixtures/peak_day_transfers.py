@@ -237,6 +237,7 @@ def build() -> PeakDayTransfers:
             reason=candidate.reason,
             created_at=raised,
             deadline=deadline,
+            priority=float(candidate.envelope.priority),
             # §4.1's default. `TransferRequest` already defaults to it; named
             # here because the 500 kg leg check reads it.
             weight_g=DEFAULT_WEIGHT_G))

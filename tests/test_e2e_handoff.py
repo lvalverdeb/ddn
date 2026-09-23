@@ -69,7 +69,7 @@ def _day_outcomes():
             from_facility_id="D1", to_facility_id="D2",
             reason=TransferReason.ADDRESS_CORRECTION,
             created_at=_at(DAY.delivery_day, 11),
-            deadline=_at(DAY.delivery_day, 7)),),
+            deadline=_at(DAY.delivery_day, 7), priority=100.0),),
         returns=handoff.ReturnLoad(facility_id="D1",
                                    package_ids=("P-4", "P-5"), weight_g=400),
         tally=Tally(ready_pool=10, dispatched=8, delivered=7),

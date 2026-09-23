@@ -353,7 +353,10 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
             reason=TransferReason.ADDRESS_CORRECTION,
             created_at=datetime.combine(today, time()),
             deadline=deadline,
-            weight_g=int(envelope.get("weight_g", 200))))
+            weight_g=int(envelope.get("weight_g", 200)),
+            # §9.1 v0.16: the envelope's own §8.1 score rides with it, so
+            # §5.3.2 can rank the transfer against a hub-origin load.
+            priority=float(envelope.get("priority", 0) or 0)))
     return raised, refused, staying
 
 

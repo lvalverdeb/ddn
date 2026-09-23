@@ -66,11 +66,58 @@ class Declined:
     reason: str
 
 
+#: Seconds in a day. §5.3's clock runs from the *line-haul* day's midnight and
+#: a depot's release is the next morning, so a release sits past 24 h and a
+#: deadline's time of day is `release % DAY`. Defined here rather than in
+#: `plan`, which imports from this module: one definition, and the comparison
+#: in `_ranked` needs it.
+DAY = 24 * 3600
+
 #: §9.2 asks for "transfers not carried, with reason". These are the three a
 #: planner can find; §5.3.2's own wording supplies the words.
 NO_VAN_LEG = "no van circuit reaches the destination depot tonight"
 MISSES_DEADLINE = "cannot arrive before the deadline"
 OVER_CAPACITY = "the circuit is already at 500 kg"
+
+
+def _ranked(transfers: Sequence[Any],
+            release_of: Mapping[str, int]) -> list[Any]:
+    """§5.3.2's order when the circuit cannot carry everything.
+
+    "Both are ranked by the same priority score as delivery (§8.1); a transfer
+    whose envelope is due on the receiving depot's next morning release is a
+    hard inclusion." So the due ones go first whatever they score, and the
+    rest descend by score with the transfer id settling a tie -- the same
+    shape as `lastmile.select`, and for the same reason: two runs of one night
+    must decline the same transfers.
+
+    This used to be the caller's list order, which `simulation.day` made
+    "yesterday's queue first" the moment v0.15 gave it a queue. That is a
+    policy, and it was not one anybody chose.
+
+    **Due** is read off the deadline, which §9.1 defines as `min(receiving
+    depot's next morning release, SLA date)`. When the SLA date is what set
+    that minimum -- the deadline falls *before* the release -- the envelope is
+    out of days after this circuit, and that is the hard inclusion v0.16's
+    rewording names. When the release set it, there is slack.
+
+    So the test is "the deadline is not the release", and it is a time of day
+    because the release is one: an envelope due three days out and one due
+    tomorrow both sit at the release's hour, and comparing dates would call
+    the first urgent. An envelope due *today* is not here at all -- §7.1
+    refuses to raise it, because line-haul runs on D and delivery on D+1.
+    """
+    def due(transfer: Any) -> bool:
+        release = release_of.get(transfer.to_facility_id)
+        if release is None:
+            return False
+        at = transfer.deadline
+        return (at.hour * 3600 + at.minute * 60 + at.second) != release % DAY
+
+    return sorted(transfers,
+                  key=lambda t: (not due(t),
+                                 -float(t.priority or 0),
+                                 t.transfer_id))
 
 
 def sequence_departure(stops: Sequence[str], *, hub_transit: Mapping[str, int],
@@ -143,7 +190,7 @@ def choose(stops: list[str], transfers: Sequence[Any], *,
     carried: list[Any] = []
     declined: list[Declined] = []
 
-    for transfer in transfers:
+    for transfer in _ranked(transfers, release_of):
         if transfer.from_facility_id not in stops:
             declined.append(Declined(transfer.transfer_id, NO_VAN_LEG))
             continue

@@ -912,7 +912,8 @@ def test_a_transfer_no_circuit_could_carry_waits_for_tomorrow(inputs):
         from_facility_id="D1", to_facility_id="D2",
         reason=TransferReason.ADDRESS_CORRECTION,
         created_at=datetime.combine(day.collection_day, time()),
-        deadline=datetime.combine(day.delivery_day, time()))
+        deadline=datetime.combine(day.delivery_day, time()),
+        priority=100.0)
 
     class _Night:
         declined = (Declined("TR-WAIT", linehaul.NO_VAN),)
@@ -956,7 +957,8 @@ def test_a_waiting_transfer_is_offered_to_the_next_nights_plan(inputs):
         from_facility_id="D1", to_facility_id="D2",
         reason=TransferReason.ADDRESS_CORRECTION,
         created_at=datetime.combine(day.collection_day, time()),
-        deadline=datetime.combine(day.delivery_day, time(23)))
+        deadline=datetime.combine(day.delivery_day, time(23)),
+        priority=100.0)
 
     report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"],
                               transfers=(held,)),
