@@ -1,7 +1,9 @@
 # Plan: T17 — Slice 1, pickups to hub
 
-**Status:** proposal. No code written. Step 0 is a gate that needs Luis's
-approval before Steps 1–5 may start.
+**Status:** **done** in 56e5aee. Step 0's gate was approved ("approved,
+continue with steps 2-5") and Steps 0–5 are all in the tree. Step 5's
+regression held: `tests/test_peak_day_baseline.py` and
+`tests/test_e2e_handoff.py` are unchanged to the byte.
 **Date:** 23 September 2026
 **Task:** `docs/claude-code-task-prompts.md:200`
 

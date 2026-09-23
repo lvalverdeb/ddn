@@ -356,3 +356,10 @@ spans four. One commit per step:
    API's published spec version (`tests/test_api_contract.py`) is the only
    release number this repo has. Take it as: accepted while the published
    version is v0.16, removed at v0.17?
+
+   **Answered, then overtaken.** Built as v0.17 (`planning.SUNSET = (0, 17)`).
+   The document then outran the driver app: three v0.17 proposals were queued
+   against v0.16 at once, and the bump that closed this window was §5.1.1's
+   late-file exception (56e5aee) — nothing to do with line-haul vocabulary.
+   `SUNSET` is at `(0, 18)` as a labelled stopgap; retiring the trip-level
+   names is Luis's call, not a side effect of an unrelated spec bump.
