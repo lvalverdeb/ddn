@@ -9,7 +9,7 @@ without losing any. Nothing here measures the operation.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -17,7 +17,7 @@ from ddn import assumptions, linehaul, returns
 from ddn.allocation import EFFECTIVE_PER_BIKE
 from ddn.linehaul import circuit
 from ddn.linehaul.circuit import Declined
-from ddn.model import TransferReason, TransferRequest
+from ddn.model import Status, TransferReason, TransferRequest
 from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Metrics, Tally, measure
@@ -936,8 +936,14 @@ def test_a_transfer_no_circuit_could_carry_waits_for_tomorrow(inputs):
     class _Reached:
         declined = (Declined("TR-WAIT", linehaul.NO_VAN_LEG),)
 
-    assert _still_waiting([waiting], _Reached()) == (waiting,)
-    assert _still_waiting([waiting], _Night()) == ()
+    holding = {"D1": ({"package_id": "PKG-W"},)}
+
+    assert _still_waiting([waiting], _Reached(), holding) == (waiting,)
+    assert _still_waiting([waiting], _Night(), holding) == ()
+    assert _still_waiting([waiting], _Reached(), {"D1": ()}) == (), (
+        "§6.1's clock reached the envelope while it waited for a van, so the "
+        "request is spent: asking tomorrow to move something that has left "
+        "the operation is a queue entry nothing can ever clear")
 
 
 def test_a_transfer_that_cannot_meet_its_deadline_is_not_queued_for_ever():
@@ -995,7 +1001,7 @@ def test_a_transfer_no_night_can_carry_goes_back_to_the_customer(inputs):
         "load and in tomorrow's pool at once is the defect `_handover` "
         "already records having had once"
     )
-    assert _still_waiting([late, waiting], _Night()) == (waiting,), (
+    assert _still_waiting([late, waiting], _Night(), kept) == (waiting,), (
         "the two halves of §5.3.2's sentence partition tonight's declines: "
         "what tomorrow can answer waits, the rest goes home")
 
@@ -1036,13 +1042,15 @@ def test_a_refused_transfer_leaves_the_pool_and_queues_for_the_return_run(
     §5.5 puts it in the queue and not on tonight's stops: it is at a depot,
     and `returns.sites` returns what is at the hub. It rides in tomorrow.
     """
+    from ddn.simulation.day import RETRIABLE_DECLINES
+
     (report, tomorrow), (control, carried_on) = refused
 
     assert report.transfers_raised and not report.transfers_carried
     assert len(report.transfers_declined) == report.transfers_raised
-    assert set(report.transfers_declined.values()) == {
-        ("no inter-depot transit supplied; §3.1 gives none and this planner "
-         "guesses none")}
+    assert not set(report.transfers_declined.values()) & RETRIABLE_DECLINES, (
+        "the property this run turns on is that tomorrow cannot answer the "
+        "decline; the wording of the reason is circuit.py's business")
     assert control.transfers_carried == control.transfers_raised, (
         "the control must differ by the decline alone; if the table-less run "
         "is not the only one refusing, this test is measuring something else")
@@ -1170,3 +1178,164 @@ def test_an_envelope_going_back_is_not_also_in_tomorrows_pool(inputs):
     going_back = {e["package_id"] for e in tomorrow.returns_queue}
 
     assert not in_pool & going_back
+
+
+# --------- §7.1's "not routable", at the offering and not only at the check
+
+
+def _held_over(inputs, *, weight_g: int, sla_date: str | None = None):
+    """§10's day cut down to one depot holding an envelope with a transfer out.
+
+    Seeded through `State` rather than by reaching into `_attempt`, because
+    `State` is the hand-over itself: a pool holding the envelope *and* the
+    request no circuit could carry, in one object, is precisely what §5.3.2's
+    "requests arising after departures wait for the next day's plan" leaves on
+    the table. Yesterday is the thing under test, so yesterday is what the test
+    supplies.
+
+    The envelope is copied off §10's own D1 pool so its coordinates, priority
+    and customer are a real row rather than invented ones, and three of its
+    neighbours ride along -- an empty round would satisfy "PKG-WAIT was not
+    offered" for the wrong reason.
+
+    The collection side is left whole. §5.3.2 raises a transfer "onto an
+    existing or added van leg", so a day with no hub-to-depot load has no
+    circuit for one to ride and every request is declined `NO_VAN_LEG` --
+    which would leave the carried case untestable and the declined ones
+    passing for a reason that is not the one under test.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+
+    at_d1 = inputs["_pools"]["D1"]
+    held = dict(at_d1[0], package_id="PKG-WAIT", facility_id="D1",
+                status=Status.TRANSFER_REQUESTED.value,
+                sla_date=sla_date or at_d1[0]["sla_date"])
+    pending = TransferRequest(
+        transfer_id="TR-PKG-WAIT", package_id="PKG-WAIT",
+        from_facility_id="D1", to_facility_id="D2",
+        reason=TransferReason.ADDRESS_CORRECTION,
+        created_at=datetime.combine(day.collection_day, time()),
+        deadline=datetime.combine(day.delivery_day, time(23)),
+        weight_g=weight_g, priority=float(held["priority"]))
+
+    offered: list[str] = []
+
+    def spy(pool, _facility, _bikes):
+        offered.extend(e["package_id"] for e in pool)
+        return list(pool), []
+
+    state = State(day=day.delivery_day, transfers=(pending,),
+                  pools={"D1": (held, *at_d1[1:4])})
+    report, tomorrow = run_day(state, seed=7, deliver=spy, **kwargs)
+    return report, tomorrow, offered
+
+
+def test_an_envelope_awaiting_a_transfer_is_never_offered_to_the_round(inputs):
+    """§7.1: "an envelope in transfer is not routable until it arrives at the
+    destination depot".
+
+    That is a rule about what the day offers, not only about what the
+    post-check refuses afterwards, and §6's table starts the state at the
+    raise: "a transfer request is raised (§5.3.2) and the envelope enters *In
+    transfer* until it arrives". Sending a rider to the address the correction
+    already ruled wrong is the operational reading of getting this wrong.
+
+    **And it must still be there tomorrow.** Holding it back without a bucket
+    would have destroyed it: `_handover` builds tomorrow out of what was
+    positioned, what stayed after a doorstep attempt, and what capacity
+    declined, and an envelope in none of those three is in none of them.
+    """
+    report, tomorrow, offered = _held_over(inputs, weight_g=600_000)
+
+    assert offered, "nothing was offered at all, so the round did not run"
+    assert "PKG-WAIT" not in offered, (
+        "§7.1 says this envelope is not routable from D1 today")
+    assert "PKG-WAIT" in {e["package_id"] for pool in tomorrow.pools.values()
+                          for e in pool}, "held off the round, then dropped"
+    assert not any(u.package_id == "PKG-WAIT" for u in report.unassigned), (
+        "§10 pins the unassigned count, and §7.1's hold is not §8's "
+        "'the bikes could not take it'")
+
+
+def test_a_waiting_transfer_never_outlives_the_envelope_it_moves(inputs):
+    """A request whose envelope has left the operation is a queue entry nothing
+    can ever clear.
+
+    `RETRIABLE_DECLINES` excludes `MISSES_DEADLINE` to avoid exactly this, and
+    the everyday route to the same place was one level up: the envelope was
+    offered to the round, delivered from the depot its own correction says is
+    wrong, and its request went on being re-offered every night against nothing.
+    `transfer_id` is `TR-{package_id}`, so the other end of the same draw --
+    postponed again -- raised a second request the first could not be told from.
+
+    Two days, because one cannot show a queue failing to empty.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+
+    at_d1 = inputs["_pools"]["D1"]
+    held = dict(at_d1[0], package_id="PKG-WAIT", facility_id="D1",
+                status=Status.TRANSFER_REQUESTED.value)
+    pending = TransferRequest(
+        transfer_id="TR-PKG-WAIT", package_id="PKG-WAIT",
+        from_facility_id="D1", to_facility_id="D2",
+        reason=TransferReason.ADDRESS_CORRECTION,
+        created_at=datetime.combine(day.collection_day, time()),
+        deadline=datetime.combine(day.delivery_day, time(23)),
+        weight_g=600_000, priority=float(held["priority"]))
+
+    state = State(day=day.delivery_day, transfers=(pending,),
+                  pools={"D1": (held, *at_d1[1:4])})
+    for _ in range(2):
+        _, state = run_day(state, seed=7, **kwargs)
+        assert state.transfers, (
+            "the queue emptied, so the next day would assert about nothing")
+        holds = {e["package_id"] for pool in state.pools.values() for e in pool}
+        orphans = [t.transfer_id for t in state.transfers
+                   if t.package_id not in holds]
+        assert not orphans, (
+            f"{orphans} ask tomorrow to move envelopes tomorrow does not hold")
+        assert len({t.transfer_id for t in state.transfers}) == len(
+            state.transfers), "two requests under one id, and §5.3.2 has one"
+
+
+def test_a_carried_transfer_takes_the_envelope_it_held_back(inputs):
+    """§5.2.6 ends the transfer at "Ready (at new depot)".
+
+    The envelope held off today's round is the *common* case for this: a
+    retriable decline is a request that waits and is then carried, so the
+    hand-over has to route a waiting envelope by the same rule as one that
+    simply stayed. Reading only the stayers leaves this one at D1 with its
+    circuit already run -- and it would leave no other trace, because the count
+    of transfers carried would be right.
+    """
+    _, tomorrow, offered = _held_over(inputs, weight_g=200)
+
+    assert "PKG-WAIT" not in offered
+    moved = [e for e in tomorrow.pools.get("D2", ())
+             if e["package_id"] == "PKG-WAIT"]
+    assert moved, "the circuit carried it and the pool did not"
+    assert moved[0]["status"] == Status.READY.value, (
+        "§7.1 makes it routable on arrival, so the status moves with it")
+    assert not any(t.package_id == "PKG-WAIT" for t in tomorrow.transfers), (
+        "it has arrived; there is nothing left for tomorrow's plan to do")
+
+
+def test_an_expired_envelope_takes_its_transfer_request_with_it(inputs):
+    """§6.1's clock reaches a waiting envelope too, and the request is spent.
+
+    An envelope can wait for a van until its SLA passes; then it goes back
+    whatever the transfer wanted. That is a real outcome and §5.5 already has
+    the envelope, so the request is dropped rather than carried -- the decline
+    reason is still retriable, which is why filtering on the reason alone is
+    not enough.
+    """
+    yesterday = (inputs["_day"].delivery_day - timedelta(days=1)).isoformat()
+    _, tomorrow, _ = _held_over(inputs, weight_g=600_000, sla_date=yesterday)
+
+    assert "PKG-WAIT" in {e["package_id"] for e in tomorrow.returns_queue}, (
+        "§6.1 sweeps it whether or not a transfer was waiting on it")
+    assert not any(t.package_id == "PKG-WAIT" for t in tomorrow.transfers), (
+        "a request to move an envelope that has left the operation is a "
+        "queue entry nothing can ever clear")

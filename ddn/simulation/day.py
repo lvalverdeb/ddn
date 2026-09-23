@@ -36,13 +36,27 @@ from ddn.allocation import FleetPlan, allocate, capacity_for, place
 from ddn.contract import Excluded
 from ddn.lastmile import select
 from ddn.linehaul import Transit, circuit
-from ddn.model import TransferReason, TransferRequest, outcomes
+from ddn.model import (
+    Status,
+    TransferReason,
+    TransferRequest,
+    outcomes,
+)
 from ddn.model.outcomes import postponed as record_postponement
 from ddn.simulation.capacity import Checks, check
 from ddn.simulation.metrics import Metrics, Tally, measure
 from ddn.solver_adapter import Day, check_day_constraints
 
 HOUR = 3600
+
+#: §7.1: "an envelope in transfer is not routable until it arrives at the
+#: destination depot". §6's own table says where that starts -- "a transfer
+#: request is raised (§5.3.2) and the envelope enters *In transfer* until it
+#: arrives" -- so the raise, not the loading, is what takes it off the round.
+#: `postcheck._across_the_day` refuses any *served* order whose status is not
+#: `Ready`; this is the same bullet one stage earlier, where the simulator
+#: decides what to offer rather than where the solver's answer is checked.
+AWAITING_TRANSFER = frozenset({Status.TRANSFER_REQUESTED, Status.IN_TRANSFER})
 
 DELIVERED, REJECTED, DEFECTIVE, POSTPONED = (
     "Delivered", "Rejected", "Returned", "Postponed")
@@ -167,6 +181,11 @@ class _Attempted:
     attempted: list[dict[str, Any]]
     unassigned: list[Excluded]
     expired: list[dict[str, Any]]
+    #: §7.1's envelopes held off today's round for a transfer already raised.
+    #: A fourth bucket rather than a reason on `unassigned`, because that list
+    #: is §8's "the bikes could not take it" and this is "§7.1 says not from
+    #: here" -- and §10 pins the count of the first one.
+    waiting: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,16 +221,36 @@ def _attempt(pools: Mapping[str, list[dict[str, Any]]],
     """Each facility's pool, cut to capacity and attempted.
 
     §6.1 comes first: an envelope past its SLA date is not dispatched at all,
-    it goes back. What remains is §8's decision -- `lastmile.select` trims to
-    what the bikes can carry -- and only then is anything attempted.
+    it goes back. Then §7.1's `AWAITING_TRANSFER`, because an envelope with a
+    transfer raised against it is not this facility's to deliver -- its own
+    corrected address says so. What remains is §8's decision --
+    `lastmile.select` trims to what the bikes can carry -- and only then is
+    anything attempted.
+
+    **The order of those two is §6.1's and not a preference.** An envelope
+    waiting for a transfer whose SLA passes goes back like any other; holding
+    it for a transfer that can no longer help would be the "queue that never
+    empties" one bullet down, built out of the bullet above it.
+
+    Offering them, as this used to, cost two things at once. A rider was sent
+    each morning to the address the correction had already ruled wrong, so §6
+    drew a fresh postponement and `_raise_transfers` raised a *second* request
+    with the same `TR-{package_id}` id -- and when the draw came up delivered
+    or expired instead, the request outlived its envelope and waited for ever
+    on something no pool held. Five simulated days of it left eight requests
+    circling with nothing to move.
     """
     attempted: list[dict[str, Any]] = []
     unassigned: list[Excluded] = []
     expired: list[dict[str, Any]] = []
+    waiting: list[dict[str, Any]] = []
 
     for facility, pool in pools.items():
         live = [e for e in pool if not lastmile.expired(e, today)]
         expired.extend(e for e in pool if lastmile.expired(e, today))
+        held = [e for e in live if e.get("status") in AWAITING_TRANSFER]
+        waiting.extend(held)
+        live = [e for e in live if e.get("status") not in AWAITING_TRANSFER]
 
         bikes = per_facility.get(facility, 0)
         offered, declined = select(live, capacity=capacity_for(bikes),
@@ -221,7 +260,7 @@ def _attempt(pools: Mapping[str, list[dict[str, Any]]],
         attempted.extend(served)
         unassigned.extend(Excluded(e["package_id"], "time") for e in refused)
 
-    return _Attempted(attempted, unassigned, expired)
+    return _Attempted(attempted, unassigned, expired, waiting)
 
 
 def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
@@ -369,17 +408,32 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
 RETRIABLE_DECLINES = frozenset({circuit.NO_VAN_LEG, circuit.OVER_CAPACITY})
 
 
-def _still_waiting(transfers: Sequence[TransferRequest],
-                   night: Any) -> tuple[TransferRequest, ...]:
+def _still_waiting(transfers: Sequence[TransferRequest], night: Any,
+                   tomorrow: Mapping[str, tuple[dict[str, Any], ...]]
+                   ) -> tuple[TransferRequest, ...]:
     """§5.3.2: "Requests arising after departures wait for the next day's plan."
 
     Read off the plan rather than accumulated beside it, for the reason
     `LinehaulPlan.returned` gives: a count kept alongside can disagree with
     what the plan says it carried.
+
+    **And only while tomorrow still holds the envelope.** A request is a
+    request to move something; once the something has left the operation there
+    is nothing for tomorrow's plan to do with it, and keeping it builds the
+    same never-emptying queue that `RETRIABLE_DECLINES` excludes
+    `MISSES_DEADLINE` to avoid. `_attempt` now holds these envelopes off the
+    round, which closes the everyday way one used to disappear -- delivered
+    from the depot its own corrected address ruled wrong. What is left is
+    §6.1's clock: an envelope can wait for a van until its SLA passes, and
+    then it goes back whatever the transfer wanted. That is a real outcome and
+    the request is simply spent, so it is dropped rather than carried or
+    counted as refused -- §5.5 already has the envelope.
     """
     retry = {d.transfer_id for d in night.declined
              if d.reason in RETRIABLE_DECLINES}
-    return tuple(t for t in transfers if t.transfer_id in retry)
+    holds = {e["package_id"] for pool in tomorrow.values() for e in pool}
+    return tuple(t for t in transfers
+                 if t.transfer_id in retry and t.package_id in holds)
 
 
 def _collect(facilities: Sequence[dict[str, Any]],
@@ -442,7 +496,8 @@ def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
 def _handover(pools: Mapping[str, list[dict[str, Any]]],
               collection: _Collection, staying: Sequence[dict[str, Any]],
               unassigned: Sequence[Excluded],
-              transfers: Sequence[TransferRequest] = ()
+              transfers: Sequence[TransferRequest] = (),
+              waiting: Sequence[dict[str, Any]] = ()
               ) -> dict[str, tuple[dict[str, Any], ...]]:
     """Tomorrow's pools: what was positioned, what was held, what moved depot.
 
@@ -456,6 +511,14 @@ def _handover(pools: Mapping[str, list[dict[str, Any]]],
     back to the customer **absent**. It used to take `doorstep.postponed`,
     which still held the refused ones -- so an envelope could be in tonight's
     return load and in tomorrow's pool at once.
+
+    `waiting` is §7.1's other set: envelopes `_attempt` did not offer because a
+    transfer was already raised against them. They take the same route as
+    `staying` and not a separate clause, because the question tomorrow asks of
+    both is the same one -- did tonight's circuit carry your transfer? A
+    request declined on the night it was raised and carried on the next is the
+    case that separating them would get wrong, and it is the common one: that
+    is what a retriable decline *is*.
     """
     declined = {u.package_id for u in unassigned}
     carried = {t.package_id: t.to_facility_id for t in transfers
@@ -464,7 +527,7 @@ def _handover(pools: Mapping[str, list[dict[str, Any]]],
 
     def held(facility: str) -> list[dict[str, Any]]:
         moved = []
-        for envelope in staying:
+        for envelope in [*staying, *waiting]:
             destination = carried.get(envelope["package_id"],
                                       envelope["facility_id"])
             if destination != facility:
@@ -644,7 +707,7 @@ def run_day(
     # "otherwise" needs tomorrow's pools, because that is the one place the day
     # still holds the envelope of a transfer no circuit will ever carry.
     tomorrow = _handover(pools, collection, staying, attempt.unassigned,
-                         transfers)
+                         transfers, attempt.waiting)
     tomorrow, refused = _refused_transfers(tomorrow, transfers,
                                            collection.night)
     going_back = [*doorstep.going_back, *unreachable, *refused]
@@ -697,7 +760,7 @@ def run_day(
              if e.get("facility_id") != hub_id]
             + [e for e in state.returns_queue
                if e["package_id"] not in rode_home]),
-        transfers=_still_waiting(transfers, collection.night),
+        transfers=_still_waiting(transfers, collection.night, tomorrow),
         placement={a.vehicle_id: a.facility_id for a in fleet.allocations})
 
 
