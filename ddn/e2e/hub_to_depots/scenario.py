@@ -8,12 +8,13 @@ elsewhere that tonight's circuits have to carry.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from ddn import assumptions
+from ddn.allocation import capacity_for
 from ddn.linehaul import Transit
 
 
@@ -43,7 +44,32 @@ class Scenario:
     #: the pool reaches this slice they are already under HUB, so what arrives
     #: here is the list, for the hand-off to report.
     straddling: Sequence[str] = ()
+    #: §4.2's bikes per facility, for e2e-2 §3's rebalancing trigger: a depot
+    #: over its motorbikes × 25 with a neighbour in slack. Empty means the
+    #: trigger is not evaluated, which is a silence rather than "no proposal".
+    bikes: Mapping[str, int] = field(default_factory=dict)
     hub_id: str = "HUB"
+
+    def projected(self, positioned: Mapping[str, Any]) -> dict[str, int]:
+        """Tomorrow's pool per facility, which e2e-2 §3 compares to capacity."""
+        return {facility: len(pool) for facility, pool in positioned.items()}
+
+    def capacity(self) -> dict[str, int]:
+        """§4.2's bikes turned into envelopes, by the one function that knows."""
+        return {facility: capacity_for(bikes)
+                for facility, bikes in self.bikes.items()}
+
+    def reaches(self, night: Any) -> Callable[[str, str], bool]:
+        """Whether tonight's circuits already run a leg between two depots.
+
+        e2e-2 §3 makes an existing leg the precondition — "propose transfers
+        if a leg exists or fits within van-hours" — and the second half needs
+        van-hours this slice does not compute, so only the first is answered.
+        A pair with no leg is a silence, not a refusal.
+        """
+        legs = {(leg.from_facility, leg.to_facility)
+                for trip in night.trips for leg in trip.legs}
+        return lambda origin, destination: (origin, destination) in legs
     unload_seconds: int = assumptions.FACILITY_UNLOAD_MIN * 60
     #: The day the circuits run. Deliveries are D+1 (§3.1's one-day lag).
     collection_day: date | None = None

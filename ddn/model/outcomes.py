@@ -26,9 +26,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ddn.model.lifecycle import Status, after_attempt
+from ddn.model.lifecycle import (
+    IllegalTransition,
+    Status,
+    advance,
+    after_attempt,
+)
 
-__all__ = ["Attempt", "Recorded", "for_retry", "record"]
+__all__ = ["Attempt", "Recorded", "arrived", "for_retry", "in_transfer",
+           "record", "transfer_requested"]
 
 #: §6's outcome for an envelope refused at the doorstep for the recipient's
 #: own reason, as `records.Outcome` spells them. Named here because this module
@@ -92,6 +98,52 @@ def for_retry(envelope: Mapping[str, Any], reason: str) -> dict[str, Any]:
     return dict(envelope, status="Ready", previous_outcome=POSTPONED,
                 postponed_reason=reason,
                 attempt_number=int(envelope.get("attempt_number", 0)) + 1)
+
+
+def _move(envelope: Mapping[str, Any], target: Status) -> dict[str, Any]:
+    """Advance a §9.1 record, refusing an edge §5.2.6 does not draw.
+
+    The source is the record's own `status`; a record without one is refused
+    rather than assumed, because assuming it is where the caller wanted it to
+    be is how a check becomes decorative.
+    """
+    current = envelope.get("status")
+    if current is None:
+        raise IllegalTransition(Status.READY, target)
+    return dict(envelope, status=str(advance(Status(current), target)))
+
+
+def transfer_requested(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """§5.2.6: "Postponed with facility change ... Transfer requested".
+
+    The edge was drawn and nothing took it, so an envelope with a transfer
+    raised against it was indistinguishable from one sitting at its depot.
+    That matters to §7.1, whose "an envelope in transfer is not routable until
+    it arrives" is a statement about status: `postcheck._across_the_day`
+    refuses any served order whose record is not `Ready`, so stamping this is
+    what lets the existing check see a transfer at all.
+
+    Validated through `advance` **from the record's own status**, not from a
+    hard-coded source: the first version passed `Status.POSTPONED` in, so it
+    would happily stamp a Delivered envelope as awaiting transfer and the
+    check was decorative.
+    """
+    return _move(envelope, Status.TRANSFER_REQUESTED)
+
+
+def in_transfer(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """§5.2.6: the leg has picked it up and it is not at either depot."""
+    return _move(envelope, Status.IN_TRANSFER)
+
+
+def arrived(envelope: Mapping[str, Any], facility_id: str) -> dict[str, Any]:
+    """§5.2.6 ends a transfer at "Ready (at new depot)", and not before.
+
+    §7.1: routable the moment it arrives and not one moment earlier, so the
+    facility and the status move together — an envelope stamped with its new
+    depot while still `In transfer` is exactly the thing the bullet forbids.
+    """
+    return dict(_move(envelope, Status.READY), facility_id=facility_id)
 
 
 def sent_back(envelope: Mapping[str, Any], outcome: str) -> dict[str, Any]:

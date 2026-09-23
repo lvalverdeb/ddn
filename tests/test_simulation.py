@@ -9,12 +9,15 @@ without losing any. Nothing here measures the operation.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, time
 
 import pytest
 
-from ddn import assumptions
+from ddn import assumptions, linehaul, returns
 from ddn.allocation import EFFECTIVE_PER_BIKE
+from ddn.linehaul import circuit
+from ddn.linehaul.circuit import Declined
+from ddn.model import TransferReason, TransferRequest
 from ddn.simulation import Rates, State, render, run_day, run_days
 from ddn.simulation.capacity import check, hub_throughput
 from ddn.simulation.metrics import Metrics, Tally, measure
@@ -448,9 +451,15 @@ def test_a_carried_transfer_starts_tomorrow_at_its_new_depot(corrected):
     assert len(moved) == 10, "carried transfers are pooled at the destination"
 
 
-def test_a_correction_that_cannot_arrive_in_time_raises_nothing():
+def test_a_correction_that_cannot_arrive_in_time_sends_the_envelope_back():
     """§7.1: "A transfer is not raised for an envelope that cannot reach the
-    destination before its SLA date; it goes to the return run instead."
+    destination before its SLA date; **it goes to the return run instead**."
+
+    The second clause is the one this used to skip. `_raise_transfers`
+    `continue`d, so the envelope stayed in tomorrow's pool at a depot its own
+    corrected address says is the wrong one — and §5.3.2's sentence is a pair:
+    "transferred if it can reach the correct depot before its SLA date;
+    otherwise it is returned to the customer via the hub".
 
     This used to be covered by the peak day happening to contain one such
     envelope — MRN-01761, whose SLA was the delivery day itself. v0.13's
@@ -465,12 +474,17 @@ def test_a_correction_that_cannot_arrive_in_time_raises_nothing():
                "postponed_reason": "incorrect address",
                "sla_date": "2026-09-16", "lat": 9.99, "lon": -84.11}
 
-    raised = _raise_transfers(
+    raised, refused = _raise_transfers(
         _Doorstep({}, {}, [expired], [], 0, 0),
         [{"id": "D3", "route_release_time": 7 * 3600}],
         today=date(2026, 9, 16), regeocode=lambda _envelope: "D3")
 
     assert raised == [], "its deadline is already behind it"
+    assert [e["package_id"] for e in refused] == ["PKG-1"]
+    assert refused[0]["sla_expired"] is True, (
+        "§5.5's gate reads this; without it the envelope reaches the return "
+        "run and is filtered straight back out")
+    assert returns.goes_back(refused[0])
 
 
 def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
@@ -613,7 +627,7 @@ def test_a_facility_that_states_no_release_falls_back_to_the_registry():
              "sla_date": "2026-09-30", "lat": 9.99, "lon": -84.11}
     doorstep = _Doorstep({}, {}, [moved], [], 0, 0)
 
-    raised = _raise_transfers(
+    raised, _ = _raise_transfers(
         doorstep, [{"id": "D3"}], today=date(2026, 9, 16),
         regeocode=lambda _envelope: "D3")
 
@@ -875,3 +889,76 @@ def test_a_metric_nothing_counted_is_none_and_not_zero():
     assert measure(Tally(received=100)).reconciliation_discrepancy_rate is None
     assert measure(Tally(received=100, disputed=10)
                    ).reconciliation_discrepancy_rate == 0.1
+
+
+def test_a_transfer_no_circuit_could_carry_waits_for_tomorrow(inputs):
+    """§5.3.2: "Requests arising after departures wait for the next day's plan."
+
+    `DayReport.transfers_declined` counted them and `State` had nowhere to put
+    them, so a declined request evaporated: the envelope stayed where it was —
+    correctly — but the correction had to be rediscovered by the envelope
+    being postponed again for the same reason, which is a different envelope's
+    worth of luck each night.
+    """
+    from ddn.simulation.day import RETRIABLE_DECLINES, _still_waiting
+
+    day = inputs["_day"]
+    waiting = TransferRequest(
+        transfer_id="TR-WAIT", package_id="PKG-W",
+        from_facility_id="D1", to_facility_id="D2",
+        reason=TransferReason.ADDRESS_CORRECTION,
+        created_at=datetime.combine(day.collection_day, time()),
+        deadline=datetime.combine(day.delivery_day, time()))
+
+    class _Night:
+        declined = (Declined("TR-WAIT", linehaul.NO_VAN),)
+
+    assert linehaul.NO_VAN not in RETRIABLE_DECLINES, (
+        "NO_VAN is the depot's envelopes, not a transfer's; the transfer "
+        "reasons are circuit.NO_VAN_LEG and circuit.OVER_CAPACITY")
+
+    class _Reached:
+        declined = (Declined("TR-WAIT", linehaul.NO_VAN_LEG),)
+
+    assert _still_waiting([waiting], _Reached()) == (waiting,)
+    assert _still_waiting([waiting], _Night()) == ()
+
+
+def test_a_transfer_that_cannot_meet_its_deadline_is_not_queued_for_ever():
+    """§9.1 fixes a transfer's deadline when it is raised.
+
+    So one that cannot arrive tonight cannot arrive tomorrow either, and
+    queueing it would build a queue that never empties. Those envelopes go
+    back by `_raise_transfers`' refusal instead — the same sentence of §5.3.2
+    answering both halves.
+    """
+    from ddn.simulation.day import RETRIABLE_DECLINES
+
+    assert circuit.MISSES_DEADLINE not in RETRIABLE_DECLINES
+    assert RETRIABLE_DECLINES == {circuit.NO_VAN_LEG, circuit.OVER_CAPACITY}
+
+
+def test_a_waiting_transfer_is_offered_to_the_next_nights_plan(inputs):
+    """The queue is seeded into tomorrow, ahead of what tomorrow raises.
+
+    Yesterday's requests have already waited a day, so they are offered first
+    when van-hours are short — which is the only thing "wait for the next
+    day's plan" can mean beyond being remembered.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    held = TransferRequest(
+        transfer_id="TR-HELD", package_id="PKG-H",
+        from_facility_id="D1", to_facility_id="D2",
+        reason=TransferReason.ADDRESS_CORRECTION,
+        created_at=datetime.combine(day.collection_day, time()),
+        deadline=datetime.combine(day.delivery_day, time(23)))
+
+    report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"],
+                              transfers=(held,)),
+                        seed=7, transit=kwargs.pop("transit"), **kwargs)
+
+    assert (report.transfers_carried
+            + len(report.transfers_declined)) >= 1, (
+        "the held request reached tonight's plan as carried or declined; "
+        "neither means State.transfers is not being seeded")

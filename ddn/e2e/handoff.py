@@ -53,6 +53,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ddn.contract import Excluded
 from ddn.lastmile import expired as sla_expired
 from ddn.linehaul.circuit import Declined
+from ddn.linehaul.plan import Proposal
 from ddn.model.records import DEFAULT_WEIGHT_G, Outcome, Status, TransferRequest
 from ddn.pickups import uncollected as _uncollected_envelopes
 from ddn.processing import HELD_STRADDLE
@@ -202,7 +203,8 @@ class PositionedPool(_Handoff):
 
     @classmethod
     def of(cls, positioned, night, violations, *, day: date,
-           held: Sequence[str] = ()) -> PositionedPool:
+           held: Sequence[str] = (),
+           rebalancing: Sequence[Proposal] = ()) -> PositionedPool:
         """Assemble the hand-off from what §5.3 just decided.
 
         A shape mapping: it names and groups, and decides nothing. `rolled`
@@ -222,6 +224,7 @@ class PositionedPool(_Handoff):
                          for package_id in ids),
             held=tuple(Excluded(package_id, HELD_STRADDLE)
                        for package_id in held),
+            rebalancing=tuple(rebalancing),
             violations=tuple(violations))
     #: e2e-2 §5: "Rolled envelopes with reason: no van / weight / deadline
     #: unreachable / held-straddle".
@@ -236,6 +239,11 @@ class PositionedPool(_Handoff):
     #: partition the whole slice rests on. B6 says "appear in rolled list";
     #: that is the contradiction, and this is the reading that keeps §1 true.
     held: tuple[Excluded, ...] = ()
+    #: e2e-2 §5: "Rebalancing proposals: from, to, package_ids, expected leg".
+    #: Offers, not decisions — §5.3.2 gives the choice between moving
+    #: envelopes and moving motorbikes to §4.2's cost comparison, and this
+    #: slice "does not decide them alone". Nothing applies them.
+    rebalancing: tuple[Proposal, ...] = ()
     #: §13.1's obligation, empty on success — from `check_day_constraints`,
     #: which is the half of §7.1 a single solve cannot see.
     violations: tuple[Violation, ...] = ()

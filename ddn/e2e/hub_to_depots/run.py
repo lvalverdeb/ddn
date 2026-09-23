@@ -14,9 +14,14 @@ did not travel is `linehaul.strip_rolled`'s, and §7.1's cross-stage half is
 confirms no shipment support, so `linehaul` uses the documented fallback and
 this slice does not reach for a solver it was told it does not have.
 
-What e2e-2 §5 asks for and this does not produce: rebalancing proposals (row 5,
-Task 16 owns them) and van-hours used against available (row 7, §8.3's check,
-which `simulation.capacity` computes over a whole day rather than a night).
+Rebalancing proposals are **offers**, not decisions. §5.3.2 gives the choice
+between moving envelopes and moving motorbikes to §4.2's cost comparison —
+which needs a relocation cost `docs/assumptions.md` does not carry — so this
+emits the proposals e2e-2 §5 asks for and applies none of them.
+
+What e2e-2 §5 asks for and this still does not produce: van-hours used against
+available (row 7, §8.3's check, which `simulation.capacity` computes over a
+whole day rather than a night).
 """
 
 from __future__ import annotations
@@ -52,5 +57,10 @@ def run(scenario: Scenario,
     ))
     return (PositionedPool.of(positioned, night, violations,
                               day=scenario.delivery_day,
-                              held=scenario.straddling),
+                              held=scenario.straddling,
+                              rebalancing=linehaul.rebalancing(
+                                  scenario.projected(positioned),
+                                  scenario.capacity(),
+                                  pools=positioned,
+                                  reaches=scenario.reaches(night))),
             TransferOutcomes.of(night))

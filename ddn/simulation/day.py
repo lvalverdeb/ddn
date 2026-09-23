@@ -35,7 +35,7 @@ from ddn import assumptions, lastmile, linehaul, pickups, processing, returns
 from ddn.allocation import FleetPlan, allocate, capacity_for, place
 from ddn.contract import Excluded
 from ddn.lastmile import select
-from ddn.linehaul import Transit
+from ddn.linehaul import Transit, circuit
 from ddn.model import TransferReason, TransferRequest
 from ddn.model.outcomes import for_retry
 from ddn.simulation.capacity import Checks, check
@@ -107,6 +107,13 @@ class State:
     pools: Mapping[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
     #: §5.5: rejected and defective envelopes waiting for a return run.
     returns_queue: tuple[dict[str, Any], ...] = ()
+    #: §5.3.2: "Requests arising after departures wait for the next day's
+    #: plan." A transfer no circuit could carry was counted in
+    #: `DayReport.transfers_declined` and then dropped, so the correction had
+    #: to be rediscovered by the envelope being postponed again for the same
+    #: reason. Only the two reasons tomorrow can answer are held --
+    #: `MISSES_DEADLINE` cannot, because §9.1 fixes the deadline at raising.
+    transfers: tuple[TransferRequest, ...] = ()
     #: §7.2: where each vehicle was yesterday, so relocation can be counted.
     placement: Mapping[str, str] = field(default_factory=dict)
 
@@ -267,7 +274,7 @@ def _doorstep(attempt: _Attempted, *, rates: Rates, rng: random.Random,
 
 def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
                      *, today: date, regeocode: Regeocode | None
-                     ) -> list[TransferRequest]:
+                     ) -> tuple[list[TransferRequest], list[dict[str, Any]]]:
     """§5.3.2's first trigger: an address correction moves the facility.
 
     §6 sends a postponement with sub-reason "incorrect address" back for
@@ -279,11 +286,25 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
 
     §9.1 defines the deadline as min(receiving depot's next morning release,
     SLA date), and §7.1 forbids raising one that cannot make it -- so a
-    correction whose SLA has already passed produces no transfer, and the
-    envelope goes back through §5.5 instead.
+    correction whose SLA has already passed produces no transfer.
+
+    **And the envelope then goes back, which is the half this used to skip.**
+    §5.3.2: "the envelope is transferred if it can reach the correct depot
+    before its SLA date; otherwise it is returned to the customer via the
+    hub." This `continue`d instead, leaving the envelope in tomorrow's pool at
+    a depot its own corrected address says is the wrong one, until §6.1's
+    clock eventually swept it. So the second return value is those envelopes,
+    for the caller to hand to §5.5.
+
+    They carry `sla_expired`, which is the honest flag available rather than
+    an exact one: the envelope cannot reach a facility that could deliver it
+    in time, which is an SLA failure in substance. §6 has no "transfer
+    refused" outcome and inventing one here would be inventing a §9.2
+    vocabulary entry; `docs/spec-proposals/v0.16-depot-capacity.md` carries the
+    request.
     """
     if regeocode is None:
-        return []
+        return [], []
 
     # The facility's own release where it states one; the registry's where it
     # does not. A literal here was a second copy of `ROUTE_RELEASE` that no
@@ -293,6 +314,7 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
     releases = {f["id"]: f.get("route_release_time", default_release)
                 for f in facilities}
     raised: list[TransferRequest] = []
+    refused: list[dict[str, Any]] = []
     for envelope in doorstep.postponed:
         if envelope.get("postponed_reason") != BAD_ADDRESS:
             continue
@@ -306,6 +328,7 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
         deadline = min(release, datetime.combine(date.fromisoformat(sla), time())
                        ) if sla else release
         if deadline <= datetime.combine(today, time()):
+            refused.append(dict(envelope, sla_expired=True))
             continue
 
         raised.append(TransferRequest(
@@ -317,7 +340,29 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
             created_at=datetime.combine(today, time()),
             deadline=deadline,
             weight_g=int(envelope.get("weight_g", 200))))
-    return raised
+    return raised, refused
+
+
+#: §5.3.2's declines that tomorrow can still answer. `MISSES_DEADLINE` is not
+#: among them: §9.1 fixes a transfer's deadline when it is raised, so one that
+#: cannot arrive tonight cannot arrive tomorrow either, and queueing it would
+#: build a queue that never empties. Those envelopes go back by
+#: `_raise_transfers`' second return value instead -- the same sentence of
+#: §5.3.2 answering both halves.
+RETRIABLE_DECLINES = frozenset({circuit.NO_VAN_LEG, circuit.OVER_CAPACITY})
+
+
+def _still_waiting(transfers: Sequence[TransferRequest],
+                   night: Any) -> tuple[TransferRequest, ...]:
+    """§5.3.2: "Requests arising after departures wait for the next day's plan."
+
+    Read off the plan rather than accumulated beside it, for the reason
+    `LinehaulPlan.returned` gives: a count kept alongside can disagree with
+    what the plan says it carried.
+    """
+    retry = {d.transfer_id for d in night.declined
+             if d.reason in RETRIABLE_DECLINES}
+    return tuple(t for t in transfers if t.transfer_id in retry)
 
 
 def _collect(facilities: Sequence[dict[str, Any]],
@@ -399,10 +444,26 @@ def _handover(pools: Mapping[str, list[dict[str, Any]]],
         for envelope in doorstep.postponed:
             destination = carried.get(envelope["package_id"],
                                       envelope["facility_id"])
-            if destination == facility:
-                moved.append(dict(envelope, facility_id=destination)
-                             if destination != envelope["facility_id"]
-                             else envelope)
+            if destination != facility:
+                continue
+            if destination != envelope["facility_id"]:
+                # §5.2.6 ends a transfer at "Ready (at new depot)" and the
+                # record is already Ready -- `for_retry` set it when the
+                # postponement was recorded. So only the facility moves here.
+                #
+                # **The three intermediate statuses are not written, and
+                # `model.outcomes` now has the functions for them.** Writing
+                # them needs the branch to happen where §5.2.6 draws it: at
+                # the postponement, which reaches *either* Ready *or*
+                # Transfer requested, not Ready and then Transfer requested.
+                # `_doorstep` chooses Ready before `_raise_transfers` knows a
+                # correction moved the facility, so taking the other edge
+                # means reordering those two -- a change to the outcome loop's
+                # shape rather than a stamp, and it is not in this change.
+                # `tests/test_model.py` holds the transitions meanwhile.
+                moved.append(dict(envelope, facility_id=destination))
+            else:
+                moved.append(envelope)
         return moved
 
     return {
@@ -499,8 +560,13 @@ def run_day(
     attempt = _attempt(pools, per_facility, today=state.day, deliver=deliver)
     doorstep = _doorstep(attempt, rates=rates, rng=rng, today=state.day,
                          hub_id=hub_id)
-    transfers = _raise_transfers(doorstep, facilities, today=state.day,
-                                 regeocode=regeocode)
+    raised, unreachable = _raise_transfers(doorstep, facilities,
+                                           today=state.day,
+                                           regeocode=regeocode)
+    # §5.3.2: yesterday's undelivered requests are tonight's, ahead of the
+    # ones raised today, because they have already waited a day.
+    transfers = [*state.transfers, *raised]
+    going_back = [*doorstep.going_back, *unreachable]
     # §5.5: yesterday's depot rejects ride tonight's circuits home. The
     # line-haul plan is built before the return run is solved, which is the
     # order the operation runs in and the reason this works in one day.
@@ -510,7 +576,7 @@ def run_day(
     rode_home = set(collection.night.returned)
     arrived = [dict(e, facility_id=hub_id) for e in state.returns_queue
                if e["package_id"] in rode_home]
-    stops = _return_run([*doorstep.going_back, *arrived], hub_id)
+    stops = _return_run([*going_back, *arrived], hub_id)
     tomorrow = _handover(pools, collection, doorstep, attempt.unassigned,
                          transfers)
 
@@ -557,10 +623,11 @@ def run_day(
         # §5.5: refused at a depot today, home on a van tomorrow. Plus
         # anything queued yesterday that found no circuit tonight.
         returns_queue=tuple(
-            [e for e in doorstep.going_back
+            [e for e in going_back
              if e.get("facility_id") != hub_id]
             + [e for e in state.returns_queue
                if e["package_id"] not in rode_home]),
+        transfers=_still_waiting(transfers, collection.night),
         placement={a.vehicle_id: a.facility_id for a in fleet.allocations})
 
 

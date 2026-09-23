@@ -14,6 +14,7 @@ point of keeping it separate from the code under test.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 
 import pytest
@@ -61,6 +62,12 @@ def _through_the_slice(*, transfers=(), returning=(), straddling=()):
                  transit=FX.transit, transfers=list(transfers),
                  returning=list(returning), straddling=tuple(straddling),
                  collection_day=FX.clock_day, delivery_day=FX.day), ready)
+
+
+def _ready_pool():
+    return {FX.hub["id"]: (), **{
+        d["id"]: tuple(e for e in FX.hub_loads if e["facility_id"] == d["id"])
+        for d in FX.depots}}
 
 
 def _legs(plan):
@@ -373,3 +380,37 @@ def test_every_b_row_has_a_test_named_for_it(row_id):
     assert f"test_{row_id.lower()}" in globals(), f"{row_id} has no test"
     assert rows.document(row_id) == "e2e-2-hub-to-depots.md"
     assert isinstance(rows.expected(row_id), str) and rows.expected(row_id)
+
+
+def test_slice_2_offers_rebalancing_proposals_and_applies_none():
+    """e2e-2 §5 row 5, which nothing produced until now.
+
+    §5.3.2 gives the choice between moving envelopes and moving motorbikes to
+    §4.2's cost comparison — and that needs a relocation cost
+    `docs/assumptions.md` does not carry — so this slice offers and decides
+    nothing. A planner that moved envelopes on its own authority would be
+    making an allocation decision from inside §5.3, which is the one thing
+    e2e-2 §3 rules out by name.
+    """
+    from tests.fixtures import peak_day
+
+    ready = ReadyPool(collection_day=FX.clock_day, ready=_ready_pool())
+    base = Scenario(facilities=[FX.hub, *FX.depots], vans=list(FX.vans),
+                    transit=FX.transit, collection_day=FX.clock_day,
+                    delivery_day=FX.day)
+
+    pool, _ = hub_to_depots.run(
+        replace(base, bikes={d["id"]: peak_day.BIKE_ALLOCATION[d["id"]]
+                             for d in FX.depots}), ready)
+    plain, _ = hub_to_depots.run(base, ready)
+
+    assert plain.rebalancing == (), "no bikes given means the trigger is not run"
+    for proposal in pool.rebalancing:
+        assert proposal.from_facility_id != proposal.to_facility_id
+        assert proposal.package_ids
+        assert proposal.leg == (proposal.from_facility_id,
+                                proposal.to_facility_id)
+
+    # Nothing moved: the positioned pool is identical with and without the
+    # proposals, which is what "offers, not decisions" has to mean.
+    assert pool.positioned == plain.positioned

@@ -444,3 +444,66 @@ def test_record_sweeps_the_expired_without_attempting_them():
     assert [a.package_id for a in recorded.attempts] == ["P-live"]
     assert [e["package_id"] for e in recorded.going_back] == ["P-old"]
     assert recorded.going_back[0]["sla_expired"] is True
+
+
+# ------------------------------- §5.2.6's transfer edges, which nothing took
+
+def test_a_transfer_moves_the_envelope_through_every_status_5_2_6_draws():
+    """Postponed -> Transfer requested -> In transfer -> Ready (at new depot).
+
+    All three edges were in `TRANSITIONS` and nothing took any of them, so an
+    envelope with a transfer raised against it was indistinguishable from one
+    sitting at its depot. §7.1's "an envelope in transfer is not routable
+    until it arrives" is a statement about status, so until something wrote
+    one there was nothing for a check to read.
+    """
+    envelope = {"package_id": "PKG-1", "facility_id": "D1",
+                "status": "Postponed"}
+
+    requested = outcomes.transfer_requested(envelope)
+    moving = outcomes.in_transfer(requested)
+    there = outcomes.arrived(moving, "D3")
+
+    assert requested["status"] == "Transfer requested"
+    assert moving["status"] == "In transfer"
+    assert (there["status"], there["facility_id"]) == ("Ready", "D3")
+    assert envelope["status"] == "Postponed", "the caller's record is its own"
+
+
+def test_the_facility_and_the_status_move_together():
+    """§7.1: routable the moment it arrives and not one moment earlier.
+
+    An envelope stamped with its new depot while still `In transfer` is
+    exactly what the bullet forbids, and `_handover` used to move the facility
+    alone — leaving `Postponed` on a record §5.4 would then be offered.
+    """
+    moving = outcomes.in_transfer(
+        outcomes.transfer_requested({"package_id": "P", "facility_id": "D1",
+                                     "status": "Postponed"}))
+
+    assert moving["facility_id"] == "D1", "not there yet"
+    assert outcomes.arrived(moving, "D3")["facility_id"] == "D3"
+
+
+@pytest.mark.parametrize("step, source", [
+    (lambda e: outcomes.in_transfer(e), "Ready"),
+    (lambda e: outcomes.arrived(e, "D3"), "Delivered"),
+    (lambda e: outcomes.transfer_requested(e), "Delivered"),
+])
+def test_a_transfer_step_out_of_the_wrong_status_is_refused(step, source):
+    """Each advances from the record's own status, so §5.2.6 refuses what it
+    does not draw.
+
+    `Postponed -> Ready` is deliberately not among these: §5.2.6 draws it
+    ("Postponed: back to Ready for next attempt"), so `arrived` from Postponed
+    is legal and using it here would be asserting the diagram is something it
+    is not.
+    """
+    with pytest.raises(lifecycle.IllegalTransition):
+        step({"package_id": "P", "facility_id": "D1", "status": source})
+
+
+def test_a_record_with_no_status_is_refused_rather_than_assumed():
+    """Assuming it is where the caller wanted it is how a check goes quiet."""
+    with pytest.raises(lifecycle.IllegalTransition):
+        outcomes.in_transfer({"package_id": "P", "facility_id": "D1"})
