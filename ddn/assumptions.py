@@ -39,6 +39,17 @@ VANS_TOTAL = 10
 PICKUP_VANS_EARMARKED = 6
 PICKUP_VANS_AFTER_TAPER = 2
 
+# §4.2's other half of the same sentence: "relocation between distant
+# facilities has a time cost". The document never says what that cost is --
+# §12 Q15 asks for the basis and Q2 for the minutes per depot -- so §5.3.2's
+# comparison of a transfer against moving bikes has nothing to weigh the
+# second side with. This is that missing side, and it is invented.
+#
+# Minutes, one way, per bike: Q2 leaves open whether it is the rider who
+# travels or the machine, and this key presumes the machine, which is the
+# reading that makes the bike unavailable at both ends.
+BIKE_RELOCATION_MIN = 45
+
 # §4.2's own planning figure: "~25 envelopes per motorbike per day", which
 # §7.4 derives from the ten-minute service time against an 8-hour shift.
 ENVELOPES_PER_BIKE = 25

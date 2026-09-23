@@ -25,6 +25,7 @@ Three provenances are used, and they are not equally trustworthy:
 | `VANS_TOTAL` | 10 | §4.2 fleet table | document (§10) |
 | `PICKUP_VANS_EARMARKED` | 6 | §5.1.3 | document (§10) |
 | `PICKUP_VANS_AFTER_TAPER` | 2 | §5.1.3 | document (§10) |
+| `BIKE_RELOCATION_MIN` | 45 | §4.2 says "relocation between distant facilities has a time cost" and gives none; §12 Q15 asks for the cost basis and Q2 for the per-depot relocation time, leaving rider-vs-bike open — this key presumes the bike | **invented** |
 
 ## Capacities (§4.1, §7.1, Open Question 1)
 
