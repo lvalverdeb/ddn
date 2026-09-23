@@ -396,7 +396,7 @@ def test_what_this_day_proves_nothing_about(oracle, chained):
     _, positioned, transfers, days = chained
 
     assert (collected.rolled, collected.rolled_envelopes) == ({}, 0)
-    assert (collected.transfers_raised, collected.transfers_carried) == (0, 0)
+    assert (collected.transfers_offered, collected.transfers_carried) == (0, 0)
     assert collected.violations == () and delivered.violations == ()
     # §6.1 *does* bite here, on nine envelopes postponed on their SLA date —
     # so this is a live path, not an empty one, and it is the one thing in

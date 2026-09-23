@@ -8,6 +8,8 @@ numbers that all look equally solid and are not.
 
 from __future__ import annotations
 
+import textwrap
+
 from ddn.simulation.day import DayReport
 from ddn.simulation.metrics import EXPECTED_PER_BIKE
 
@@ -61,18 +63,43 @@ def render(report: DayReport) -> str:
     for facility, reason in sorted(report.rolled.items()):
         out.append(f"  rolled at {facility}: {reason}")
 
-    if report.transfers_raised:
+    # `transfers_offered`, not `transfers_raised`: a night whose whole queue
+    # was held over from earlier days raises nothing new and is exactly the
+    # night a reader needs to see. Guarding on today's raises printed no
+    # transfer block at all on the day the backlog mattered most.
+    if report.transfers_offered:
         out += [
             "",
             "TRANSFERS (§5.3.2)",
-            f"  raised                    {report.transfers_raised:>8,}",
+            f"  offered tonight           {report.transfers_offered:>8,}",
+            f"    raised today            {report.transfers_raised:>8,}",
+            (f"    held over from before   "
+             f"{report.transfers_offered - report.transfers_raised:>8,}"),
             f"  carried tonight           {report.transfers_carried:>8,}",
             f"  declined                  {len(report.transfers_declined):>8,}",
+            f"    deferred to tomorrow    {report.transfers_deferred:>8,}",
+            f"    sent back on the return {report.transfers_returned:>8,}",
+            f"    overtaken by §6.1       {report.transfers_spent:>8,}",
         ]
-        for reason in sorted(set(report.transfers_declined.values())):
-            count = sum(1 for r in report.transfers_declined.values()
-                        if r == reason)
-            out.append(f"    {reason[:40]:<40}{count:>6,}")
+        # The reason in full, wrapped, rather than a count against a truncated
+        # label. "no inter-depot transit supplied; §3.1 gives none" is a gap in
+        # the inputs, not an operational outcome, and the two are indis-
+        # tinguishable once the sentence is cut at forty characters.
+        if report.transfers_declined:
+            out.append("  declined because (§9.2's reason, in full):")
+            counts: dict[str, int] = {}
+            for reason in report.transfers_declined.values():
+                counts[reason] = counts.get(reason, 0) + 1
+            for reason, count in sorted(counts.items(),
+                                        key=lambda pair: (-pair[1], pair[0])):
+                head = f"    {count:>5,} × "
+                out += textwrap.wrap(reason, WIDTH, initial_indent=head,
+                                     subsequent_indent=" " * len(head))
+        out += [
+            (f"  van-hours added (§8.3)    "
+             f"{_num(tally.transfer_van_seconds / 3600, 2):>8}"),
+            f"    of van-hours used       {_pct(metrics.transfer_van_hour_share):>8}",
+        ]
 
     out += [
         "",

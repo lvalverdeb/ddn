@@ -116,6 +116,18 @@ class LinehaulPlan:
         return sum(len(ids) for ids in self.rolled.values())
 
     @property
+    def van_seconds(self) -> int:
+        """§8.3's line-haul van-hours for this night, in seconds.
+
+        `Trip.returns` and not `Trip.arrival` closes the span, because §5.3
+        says so itself: "the van (and driver) are unavailable until they
+        return". Here rather than at each caller so that §8.3's check and
+        §8.3's transfer share are the same accounting and can be subtracted
+        from one another.
+        """
+        return sum(trip.returns - trip.departure for trip in self.trips)
+
+    @property
     def returned(self) -> tuple[str, ...]:
         """§5.5's depot rejects that actually rode home tonight.
 

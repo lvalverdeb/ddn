@@ -131,6 +131,65 @@ def test_the_circuit_departs_early_enough_for_its_last_stop():
     assert last.arrival <= linehaul.DAY + 7 * HOUR
 
 
+# --------------------------------------------------------------- §8.3
+
+def test_the_night_is_van_hours_until_the_van_is_back_at_the_hub():
+    """§5.3: "the van (and driver) are unavailable until they return".
+
+    `Trip.arrival` is arrival at the *first* depot (`plan.py:350` reads it off
+    `legs[0]`), so a span closed there stops counting the moment the first
+    load is dropped and charges §8.3 nothing for the rest of the circuit.
+    The van is out past even the last leg: `returns` adds the unload at the
+    hub, and the spelling below is the leg plus that unload rather than
+    `trip.returns`, so it is the claim being checked and not the code restated.
+    """
+    unload = 1800
+    night = linehaul.plan([depot("D1", transit_min=30), depot("D3", transit_min=45)],
+                          envelopes("D1", 3), [{"vehicle_id": "VAN-01"}],
+                          unload_seconds=unload, transfers=[transfer()],
+                          transit=transit)
+    trip, = night.trips
+
+    assert trip.legs[-1].to_facility == "HUB", (
+        "§5.3.2: the circuit ends at the hub, so the last leg is the run home")
+    assert night.van_seconds == trip.legs[-1].arrival + unload - trip.departure
+    assert trip.arrival < trip.legs[-1].arrival, (
+        "arrival at the first depot is not the end of the shift; a span closed "
+        "there would under-count §8.3 by the rest of the circuit")
+
+
+def test_transfer_van_hours_are_the_legs_added_not_the_transfers_carried():
+    """§8.3: line-haul hours "including inter-depot legs ... transfers **add
+    to it**" -- added legs, not added requests.
+
+    The marginal is the night as planned less the same night with no transfers
+    at all. One transfer to D3 appends a stop and costs the detour; the
+    twentieth rides the leg the first one already bought, and costs nothing.
+    A per-request charge, or one that bills the whole circuit rather than the
+    difference, cannot produce the same number at n=1 and n=20.
+    """
+    depots = [depot("D1", transit_min=30), depot("D3", transit_min=45)]
+
+    def marginal(count: int) -> tuple[int, int]:
+        args = (depots, envelopes("D1", 3), [{"vehicle_id": "VAN-01"}])
+        night = linehaul.plan(*args, unload_seconds=1800, transit=transit,
+                              transfers=[transfer(f"T{i}") for i in range(count)])
+        alone = linehaul.plan(*args, unload_seconds=1800)
+        return (night.van_seconds - alone.van_seconds,
+                len(night.transfers_carried))
+
+    first, carried_first = marginal(1)
+    twentieth, carried_twentieth = marginal(20)
+
+    assert (carried_first, carried_twentieth) == (1, 20), (
+        "all twenty have to be carried, or the flat cost below is only telling "
+        "us the planner refused nineteen of them")
+    assert first > 0, "the first transfer buys a leg the plan would not have flown"
+    assert twentieth == first, (
+        f"twenty transfers cost {twentieth}s and one costs {first}s; §8.3 "
+        "charges for the legs added, and both nights added the same one leg")
+
+
 def test_a_transfer_nobody_passes_is_declined_with_a_reason():
     """§9.2: "transfers not carried, with reason"."""
     night = linehaul.plan([depot("D1", transit_min=30)], envelopes("D1", 2),

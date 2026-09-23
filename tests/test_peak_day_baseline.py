@@ -15,7 +15,9 @@ did rather than what was there before.
 Three guards make it complete rather than merely long. `Tally`, `Metrics` and
 `DayReport` are each checked field-for-field against their own `fields()`, so a
 field added later fails here until someone states its peak-day value. That is
-the point of the guard: T9 adds four transfer fields, and a pin that quietly
+the point of the guard, and it has already done its work: T9 added six
+transfer fields to `DayReport`, two van-hour counts to `Tally` and one share
+to `Metrics`, and every one of them failed here first. A pin that quietly
 ignored them would report "same numbers" about a smaller set of numbers than
 it started with.
 
@@ -63,6 +65,15 @@ TALLY = {
     # routed day, which is a different fixture.
     "distance_m": 0,
     "solver_seconds": 0.0,
+    # §8.3's used side, in seconds: 121.29 van-hours of pickups and line-haul
+    # against the 110 the fleet offers, which is why the van check binds here.
+    # `_checks` derives the line-haul half from the same
+    # `LinehaulPlan.van_seconds` the numerator below is measured against, so
+    # the two are the same accounting.
+    "van_seconds": 436643,
+    # §5.3.2 raises nothing on this day, so no leg was flown for a transfer
+    # and §8.3's "transfers **add to it**" adds nothing.
+    "transfer_van_seconds": 0,
 }
 
 METRICS = {
@@ -78,6 +89,10 @@ METRICS = {
     "envelopes_per_bike": 2711 / 120,
     "solver_seconds": None,
     "cancellation_rate": 0.0,
+    # 0.0 and not `None`: the denominator is 436,643 seconds of real van work,
+    # so the day did answer the question -- the answer is that transfers cost
+    # none of it. `None` would mean nobody asked.
+    "transfer_van_hour_share": 0.0,
 }
 
 REPORT = {
@@ -88,8 +103,12 @@ REPORT = {
     # §5.3.2 never fires on this day: §10 has no re-geocoding, so no
     # correction changes a depot. The zeroes are what make this fixture the
     # control against which `peak_day_transfers` is read.
+    "transfers_offered": 0,
     "transfers_raised": 0,
     "transfers_carried": 0,
+    "transfers_deferred": 0,
+    "transfers_returned": 0,
+    "transfers_spent": 0,
     "outcomes": {"Delivered": 2711, "Postponed": 116,
                  "Rejected": 49, "Returned": 34},
     "postponed_reasons": {"driver out of time": 38,

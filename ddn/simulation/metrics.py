@@ -54,6 +54,19 @@ class Tally:
     bikes_deployed: int = 0
     distance_m: int = 0
     solver_seconds: float = 0.0
+    #: §8.3's van-hours, in seconds, on both sides of the same ratio. The
+    #: denominator is hours *used* -- `Checks.vans.load`, which is §8.3's own
+    #: `pickup_hours + linehaul_hours` -- and not hours available, because a
+    #: share of available hours moves when a shift changes and nothing about
+    #: transfers did. Seconds rather than hours so a week's share is the
+    #: week's: `Tally` adds, and §11's ratios are derived from the sum.
+    van_seconds: int = 0
+    #: §8.3: line-haul hours "including inter-depot legs for transfers ...
+    #: transfers **add to it**". "Add to it" is marginal, so this is the night
+    #: as planned less the same night planned with no transfers at all, and it
+    #: reads zero when every transfer rode a leg the plan would have flown
+    #: anyway. A subset of `van_seconds`, already inside it.
+    transfer_van_seconds: int = 0
 
     def __add__(self, other: Tally) -> Tally:
         return Tally(**{f.name: getattr(self, f.name) + getattr(other, f.name)
@@ -79,6 +92,10 @@ class Metrics:
     #: the outcome and not to this table, so `Metrics` answered eleven of
     #: twelve and four prose counts went on saying "eleven".
     cancellation_rate: float | None
+    #: §8.3's question rather than §11's row -- "van-hours ... including
+    #: inter-depot legs for transfers" -- kept here because it is a ratio and
+    #: this is where ratios are derived from summed counts.
+    transfer_van_hour_share: float | None
 
     @property
     def within_expected_per_bike(self) -> bool | None:
@@ -94,7 +111,12 @@ class Metrics:
 
 
 def measure(tally: Tally) -> Metrics:
-    """§11's twelve rows from one tally, daily or cumulative."""
+    """§11's twelve rows from one tally, daily or cumulative — and §8.3's one.
+
+    `transfer_van_hour_share` is the thirteenth field and not a thirteenth
+    row: §8.3 asks it, §11 does not list it, and it is here because this is
+    where ratios are derived from summed counts.
+    """
     return Metrics(
         pickup_responsiveness_s=_ratio(tally.pickup_wait_seconds, tally.pickups),
         same_day_readiness=_ratio(tally.ready_by_cut_off,
@@ -117,4 +139,6 @@ def measure(tally: Tally) -> Metrics:
                                  else _ratio(tally.distance_m, tally.delivered)),
         envelopes_per_bike=_ratio(tally.delivered, tally.bikes_deployed),
         cancellation_rate=_ratio(tally.cancelled, tally.ready_pool),
-        solver_seconds=(None if not tally.solver_seconds else tally.solver_seconds))
+        solver_seconds=(None if not tally.solver_seconds else tally.solver_seconds),
+        transfer_van_hour_share=_ratio(tally.transfer_van_seconds,
+                                       tally.van_seconds))

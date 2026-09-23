@@ -159,10 +159,26 @@ class DayReport:
     #: §5.3: reached the hub, missed every van. `rolled` names the depot
     #: and the reason; this counts the envelopes.
     rolled_envelopes: int = 0
-    #: §5.3.2: raised today, carried tonight, and declined with §9.2's reason.
+    #: §5.3.2, as one ledger. `transfers_offered` is every request tonight's
+    #: plan was shown -- yesterday's deferred plus today's raises -- and is
+    #: what the other rows account for; `transfers_raised` is today's new ones
+    #: alone. They were the same field until this task, under the second name
+    #: and with the first meaning, so every figure derived from "raised"
+    #: silently included a queue that had been waiting for days.
+    transfers_offered: int = 0
     transfers_raised: int = 0
     transfers_carried: int = 0
     transfers_declined: dict[str, str] = field(default_factory=dict)
+    #: What became of the declines, read off the day rather than subtracted
+    #: from it -- `LinehaulPlan.returned`'s rule, that a count kept alongside
+    #: can disagree with what the plan says. `deferred` is `_still_waiting`,
+    #: `returned` is §5.3.2's "otherwise" as `_refused_transfers` sends it, and
+    #: `spent` is neither: §6.1's clock reached the envelope while its request
+    #: waited for a van, so there is nothing left to move and nothing to send
+    #: back -- §5.5 already has it. The three partition the declines.
+    transfers_deferred: int = 0
+    transfers_returned: int = 0
+    transfers_spent: int = 0
     #: §7.1's day-spanning bullets, over this day's own plans (§13.1).
     violations: tuple[Any, ...] = ()
 
@@ -213,6 +229,11 @@ class _Collection:
     dispatch: Any
     night: linehaul.LinehaulPlan
     positioned: dict[str, list[dict[str, Any]]]
+    #: §8.3's marginal transfer hours, in seconds. Computed here because this
+    #: is the only scope holding the night's inputs *before* `strip_rolled`
+    #: consumes them, and the counterfactual has to be planned from the same
+    #: ones. `DayReport` reduces the night to counts on its way out.
+    transfer_van_seconds: int = 0
 
 
 def _attempt(pools: Mapping[str, list[dict[str, Any]]],
@@ -436,6 +457,67 @@ def _still_waiting(transfers: Sequence[TransferRequest], night: Any,
                  if t.transfer_id in retry and t.package_id in holds)
 
 
+def _marginal_van_seconds(night: linehaul.LinehaulPlan,
+                          replan: Callable[..., linehaul.LinehaulPlan],
+                          bound: Sequence[dict[str, Any]],
+                          transfers: Sequence[TransferRequest]) -> int:
+    """§8.3's "transfers **add to it**", taken as the marginal question it is.
+
+    §8.3 compares van-hours available against pickup hours plus line-haul
+    hours "including inter-depot legs for transfers ... transfers add to it".
+    *Add to* is a difference, so this is the night as planned less the same
+    night planned with nothing to transfer -- same depots, same hub-origin
+    load, same returns queue, same vans.
+
+    It reads **zero** on a night where every transfer rode a leg the circuits
+    were flying anyway, which is the honest answer to "what did transfers cost"
+    and the one an apportioned reading gets wrong. The tempting apportionment
+    -- bill a leg to transfers when its `hub_loads` is empty -- is wrong twice
+    over: `plan` attaches a trip's whole hub manifest to its first leg only, so
+    later legs carrying hub-origin envelopes report `hub_loads == {}`, and
+    `return_ids` accumulate homewards so a returns-carrying leg reads the same.
+
+    No counterfactual is planned when there is nothing to take out of it: the
+    marginal cost of no transfers is zero by arithmetic, not by measurement.
+    """
+    if not transfers:
+        return 0
+    return night.van_seconds - replan(bound, ()).van_seconds
+
+
+def _spent(transfers: Sequence[TransferRequest], night: Any,
+           tomorrow: Mapping[str, tuple[dict[str, Any], ...]],
+           refused: Sequence[Mapping[str, Any]]
+           ) -> tuple[TransferRequest, ...]:
+    """The declines that are neither tomorrow's nor §5.3.2's "otherwise".
+
+    `_still_waiting` and `_refused_transfers` were built to partition tonight's
+    declines between them, and since §7.1 began holding a transferring envelope
+    off the round they no longer quite do. Both read tomorrow's pools, and an
+    envelope can leave the operation while its request waits for a van: §6.1's
+    clock runs on it like any other, and then §5.5 has the envelope and the
+    request has nothing left to move. It is not deferred -- there is no subject
+    -- and it is not returned, because §5.5 was handed the envelope by the
+    expiry sweep and not by this rule; counting it as returned would credit
+    §5.3.2 with a channel §6.1 used.
+
+    Read off the day rather than subtracted from the other two, so that
+    `declined == deferred + returned + spent` stays a check on three
+    independently-derived numbers instead of a definition that cannot fail.
+    The reading is the absent subject: tomorrow does not hold the envelope and
+    §5.5 was not handed it by this rule. Defining it as "the declines the
+    other two did not claim" would make the equality true however wrong they
+    were -- and would silently absorb a fourth outcome, if one ever arose,
+    into §6.1's name.
+    """
+    declined = {d.transfer_id for d in night.declined}
+    holds = {e["package_id"] for pool in tomorrow.values() for e in pool}
+    home = {e["package_id"] for e in refused}
+    return tuple(t for t in transfers
+                 if t.transfer_id in declined and t.package_id not in holds
+                 and t.package_id not in home)
+
+
 def _collect(facilities: Sequence[dict[str, Any]],
              requests: Sequence[dict[str, Any]],
              inflow: Sequence[dict[str, Any]],
@@ -447,14 +529,21 @@ def _collect(facilities: Sequence[dict[str, Any]],
              transit: Transit | None = None) -> _Collection:
     """§5.1 collects, §5.2 times, §5.3 positions. The other half of the day."""
     positioned = processing.at_facilities(facilities)
+    depots = linehaul.depots(facilities, hub_id=hub_id)
+
+    def night_over(bound: Sequence[dict[str, Any]],
+                   carrying: Sequence[TransferRequest]) -> linehaul.LinehaulPlan:
+        return linehaul.plan(depots, bound, vans, transfers=carrying,
+                             returning=returning, transit=transit,
+                             unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
+
     if not requests:
         # §5.3.2's circuits still run for transfers alone: a van goes out for
         # them whether or not the hub has anything to send.
-        night = linehaul.plan(linehaul.depots(facilities, hub_id=hub_id),
-                              [], vans, transfers=transfers,
-                              returning=returning, transit=transit,
-                              unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
-        return _Collection(None, night, positioned)
+        night = night_over([], transfers)
+        return _Collection(None, night, positioned,
+                           _marginal_van_seconds(night, night_over, [],
+                                                 transfers))
 
     if travel is None:
         raise ValueError(
@@ -467,14 +556,15 @@ def _collect(facilities: Sequence[dict[str, Any]],
     ready_at = processing.ready_times(dispatch, inflow)
     processing.position(positioned, ready_at, requests, inflow)
 
-    night = linehaul.plan(linehaul.depots(facilities, hub_id=hub_id),
-                          linehaul.depot_bound(positioned, hub_id=hub_id),
-                          vans, transfers=transfers,
-                          returning=returning, transit=transit,
-                          unload_seconds=assumptions.FACILITY_UNLOAD_MIN * 60)
+    # Before `strip_rolled`, and reused: the counterfactual has to be planned
+    # from the same list this one was, or the difference is two plans of two
+    # different nights.
+    bound = linehaul.depot_bound(positioned, hub_id=hub_id)
+    night = night_over(bound, transfers)
+    marginal = _marginal_van_seconds(night, night_over, bound, transfers)
 
     positioned = linehaul.strip_rolled(positioned, night, hub_id=hub_id)
-    return _Collection(dispatch, night, positioned)
+    return _Collection(dispatch, night, positioned, marginal)
 
 
 def _return_run(going_back: Sequence[dict[str, Any]], hub_id: str):
@@ -604,7 +694,7 @@ def _refused_transfers(
 def _count(state: State, attempt: _Attempted, doorstep: _Doorstep,
            collection: _Collection, requests: Sequence[dict[str, Any]],
            inflow: Sequence[dict[str, Any]],
-           per_facility: Mapping[str, int]) -> Tally:
+           per_facility: Mapping[str, int], checks: Checks) -> Tally:
     """The day's raw counts, which §11's ratios are all derived from."""
     dispatch = collection.dispatch
     return Tally(
@@ -623,7 +713,16 @@ def _count(state: State, attempt: _Attempted, doorstep: _Doorstep,
         ready_by_cut_off=sum(len(p) for p in collection.positioned.values()),
         pickups=len(dispatch.visits) if dispatch else 0,
         pickup_wait_seconds=_waiting(dispatch, requests),
-        bikes_deployed=sum(per_facility.values()))
+        bikes_deployed=sum(per_facility.values()),
+        # §8.3's own used-side -- `Check.required`, which for the van check is
+        # `pickup_hours + linehaul_hours` -- so the share moves when the day's
+        # work moves and not when a shift length does. `Check.load` is the
+        # ratio against hours *available* and is a different question. The
+        # numerator is a subset of this: `linehaul_hours` is the same night's
+        # `LinehaulPlan.van_seconds`, inter-depot legs included, and the
+        # transfer share is a difference of two of those, not a second charge.
+        van_seconds=round(checks.vans.required * HOUR),
+        transfer_van_seconds=collection.transfer_van_seconds)
 
 
 def run_day(
@@ -710,12 +809,17 @@ def run_day(
                          transfers, attempt.waiting)
     tomorrow, refused = _refused_transfers(tomorrow, transfers,
                                            collection.night)
+    # §5.3.2's three answers to a declined request, each read off the day:
+    # tomorrow's queue, tonight's return run, and neither. See `_spent`.
+    deferred = _still_waiting(transfers, collection.night, tomorrow)
+    spent = _spent(transfers, collection.night, tomorrow, refused)
     going_back = [*doorstep.going_back, *unreachable, *refused]
     stops = _return_run([*going_back, *arrived], hub_id)
 
     dispatch, night = collection.dispatch, collection.night
+    checks = _checks(state, per_facility, inflow, dispatch, night, vans)
     tally = _count(state, attempt, doorstep, collection, requests, inflow,
-                   per_facility)
+                   per_facility, checks)
 
     # §7.1's day-spanning bullets. Computed here rather than by the caller
     # because this is where the night's plan, the vans' return times and
@@ -733,7 +837,7 @@ def run_day(
         day=state.day,
         tally=tally,
         metrics=measure(tally),
-        checks=_checks(state, per_facility, inflow, dispatch, night, vans),
+        checks=checks,
         allocation=fleet,
         outcomes=doorstep.outcomes,
         postponed_reasons=doorstep.reasons,
@@ -744,10 +848,14 @@ def run_day(
         carried_into_tomorrow=sum(len(p) for p in tomorrow.values()),
         uncollected=pickups.uncollected(dispatch, inflow),
         rolled_envelopes=sum(len(ids) for ids in night.rolled.values()),
-        transfers_raised=len(transfers),
+        transfers_offered=len(transfers),
+        transfers_raised=len(raised),
         transfers_carried=sum(len(trip.transfer_ids) for trip in night.trips),
         transfers_declined={d.transfer_id: d.reason
                             for d in night.declined},
+        transfers_deferred=len(deferred),
+        transfers_returned=len(refused),
+        transfers_spent=len(spent),
         violations=tuple(violations))
 
     return report, State(
@@ -760,7 +868,7 @@ def run_day(
              if e.get("facility_id") != hub_id]
             + [e for e in state.returns_queue
                if e["package_id"] not in rode_home]),
-        transfers=_still_waiting(transfers, collection.night, tomorrow),
+        transfers=deferred,
         placement={a.vehicle_id: a.facility_id for a in fleet.allocations})
 
 
@@ -821,8 +929,7 @@ def _checks(state: State, per_facility: Mapping[str, int],
         pickup_hours = sum(
             max(back - started.get(van_id, 0), 0)
             for van_id, back in dispatch.returned_at.items()) / HOUR
-    linehaul_hours = sum((trip.returns - trip.departure)
-                         for trip in night.trips) / HOUR
+    linehaul_hours = night.van_seconds / HOUR
 
     assembly = sum(1 for e in inflow if e.get("package_type") == "assembly")
     return check(

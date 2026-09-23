@@ -412,7 +412,7 @@ def test_a_day_with_no_regeocode_raises_no_transfer(simulated):
     """§5.3.2's trigger is an address *correction*, and inventing one would
     invent the trigger. The `simulated` run passes no `regeocode`."""
     report, _ = simulated
-    assert report.transfers_raised == 0
+    assert report.transfers_offered == 0
     assert report.transfers_carried == 0
     assert report.transfers_declined == {}
 
@@ -429,14 +429,55 @@ def test_a_correction_that_changes_depot_raises_a_transfer(corrected):
     """
     report, _, seen = corrected
     assert len(seen) == 10
-    assert report.transfers_raised == 10
+    assert report.transfers_offered == 10
+
+
+def test_transfer_van_hours_are_the_added_leg_and_not_the_requests(inputs):
+    """§8.3: transfers "**add to it**" -- the legs they add, once.
+
+    The plan-level property is pinned in `tests/test_transfers.py`; this is
+    the same claim through `run_day`, because the subtraction that produces it
+    happens there and a per-request charge would be invisible from the plan.
+    One correction to D2 buys VAN-02 the detour through D2; the tenth rides
+    the leg the first one bought. A charge of c seconds per request reports
+    ten times what it reports for one, and a charge for the whole circuit
+    reports the trip rather than the difference.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+
+    def run_with_at_most(cap: int):
+        moved: list[str] = []
+
+        def regeocode(envelope):
+            if envelope["facility_id"] != "D1" or len(moved) >= cap:
+                return None
+            moved.append(envelope["package_id"])
+            return "D2"
+
+        report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+                            seed=7, regeocode=regeocode, **kwargs)
+        return report
+
+    one, ten = run_with_at_most(1), run_with_at_most(10)
+
+    assert (one.transfers_carried, ten.transfers_carried) == (1, 10), (
+        "both nights carried what they raised, or the equality below is only "
+        "saying the planner refused the extra nine")
+    assert one.tally.transfer_van_seconds > 0, (
+        "the first correction to D2 added a leg VAN-02 would not have flown")
+    assert ten.tally.transfer_van_seconds == one.tally.transfer_van_seconds, (
+        f"ten transfers added {ten.tally.transfer_van_seconds}s and one added "
+        f"{one.tally.transfer_van_seconds}s; both nights added the same leg")
+    assert ten.tally.transfer_van_seconds < ten.tally.van_seconds, (
+        "the marginal is a part of the night's van-hours, not the night")
 
 
 def test_every_transfer_is_carried_or_declined(corrected):
     """§9.2 accounts for each one; none may simply vanish between stages."""
     report, _, _ = corrected
     assert (report.transfers_carried + len(report.transfers_declined)
-            == report.transfers_raised)
+            == report.transfers_offered)
 
 
 def test_a_carried_transfer_starts_tomorrow_at_its_new_depot(corrected):
@@ -509,15 +550,52 @@ def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
     assert set(report.transfers_declined.values()) == {
         "no van circuit reaches the destination depot tonight"}
     assert (report.transfers_carried + len(report.transfers_declined)
-            == report.transfers_raised)
+            == report.transfers_offered)
 
 
 def test_the_report_renders_the_transfer_block(corrected):
-    """§5.3.2 is a stage of the day, so it reports with the others."""
+    """§5.3.2 is a stage of the day, so it reports with the others.
+
+    §8.3's two lines are read off the page rather than off `Metrics`, because
+    the renderer is where a share can be printed against the wrong figure and
+    still look right: 0.93 h is what the night added, and 0.8% is that against
+    the van-hours the day *used*. A share against hours available would print
+    0.8% of a different denominator and read identically.
+    """
     report, _, _ = corrected
     page = render(report)
     assert "TRANSFERS (§5.3.2)" in page
     assert "raised" in page and "carried" in page
+
+    hours = report.tally.transfer_van_seconds / 3600
+    assert f"{hours:.2f}" == "0.93"
+    assert "van-hours added (§8.3)" in page and "0.93" in page
+    share = report.metrics.transfer_van_hour_share
+    assert share == pytest.approx(report.tally.transfer_van_seconds
+                                  / report.tally.van_seconds)
+    assert f"{share * 100:.1f}%" == "0.8%"
+
+
+def test_a_declined_transfers_reason_is_printed_whole(inputs):
+    """§9.2 asks for the reason, and the reason is the whole sentence.
+
+    "no inter-depot transit supplied; §3.1 gives none" is a gap in this run's
+    *inputs*; "no van circuit reaches the destination depot tonight" is an
+    operational outcome. Truncated to a column width they begin to look alike,
+    and the day below reports both at once.
+    """
+    report, _ = _day_without_transit(
+        inputs, lambda e: "D3" if e["facility_id"] != "D3" else None)
+    page = render(report)
+
+    # Unwrapped: the renderer breaks long reasons across lines with a hanging
+    # indent, so the page is compared with its line breaks and their following
+    # indent collapsed back to single spaces.
+    flat = " ".join(page.split())
+    for reason in set(report.transfers_declined.values()):
+        assert reason in flat, f"{reason!r} is not on the page in full"
+    assert "15 ×" in page and "9 ×" in page, (
+        "each reason is reported with how many requests it refused")
 
 
 # ------------------------------------------- §5.5's day boundary for returns
@@ -878,18 +956,32 @@ def test_every_row_of_section_11_is_a_field_of_metrics():
     and three prose copies of "eleven" went on agreeing with each other.
     Counting the rows rather than restating the number is what stops the next
     row going the same way.
+
+    `NOT_SECTION_11` is named rather than subtracted by count: a field that
+    answers a different section is allowed, but it has to be written down
+    here, so the next §11 row cannot arrive by hiding behind it.
     """
     import pathlib
     from dataclasses import fields
+
+    #: §8.3 asks for van-hours "including inter-depot legs for transfers".
+    #: That is a ratio, and `metrics.py` is where ratios are derived from
+    #: summed counts -- but it is not one of §11's rows.
+    not_section_11 = {"transfer_van_hour_share"}
 
     spec = pathlib.Path("docs/vrp-problem-definition.md").read_text()
     table = spec.split("## 11.")[1].split("## 12.")[0]
     rows = [line for line in table.splitlines()
             if line.startswith("|") and "---" not in line][1:]
 
-    assert len(rows) == len(fields(Metrics)), (
-        f"§11 has {len(rows)} rows and Metrics has {len(fields(Metrics))} "
-        "fields")
+    named = {f.name for f in fields(Metrics)}
+    assert not_section_11 <= named, (
+        f"{not_section_11 - named} is excused from §11's count but is not a "
+        "field of Metrics; delete it here rather than leaving a hole")
+    answering = named - not_section_11
+    assert len(rows) == len(answering), (
+        f"§11 has {len(rows)} rows and Metrics answers {len(answering)} of "
+        f"them ({sorted(answering)})")
     assert len(rows) == 12
 
 
@@ -1046,12 +1138,12 @@ def test_a_refused_transfer_leaves_the_pool_and_queues_for_the_return_run(
 
     (report, tomorrow), (control, carried_on) = refused
 
-    assert report.transfers_raised and not report.transfers_carried
-    assert len(report.transfers_declined) == report.transfers_raised
+    assert report.transfers_offered and not report.transfers_carried
+    assert len(report.transfers_declined) == report.transfers_offered
     assert not set(report.transfers_declined.values()) & RETRIABLE_DECLINES, (
         "the property this run turns on is that tomorrow cannot answer the "
         "decline; the wording of the reason is circuit.py's business")
-    assert control.transfers_carried == control.transfers_raised, (
+    assert control.transfers_carried == control.transfers_offered, (
         "the control must differ by the decline alone; if the table-less run "
         "is not the only one refusing, this test is measuring something else")
 
@@ -1059,7 +1151,7 @@ def test_a_refused_transfer_leaves_the_pool_and_queues_for_the_return_run(
                 for e in pool} - {e["package_id"]
                                   for pool in tomorrow.pools.values()
                                   for e in pool}
-    assert len(stranded) == report.transfers_raised, (
+    assert len(stranded) == report.transfers_offered, (
         "every refused envelope left tomorrow's pool, and only those")
 
     going_home = {e["package_id"] for e in tomorrow.returns_queue}
@@ -1138,10 +1230,10 @@ def test_a_declined_transfer_leaves_its_envelope_not_routable(corrected_day):
     pool = [e for facility in tomorrow.pools.values() for e in facility]
     waiting = [e for e in pool if e.get("status") == "Transfer requested"]
 
-    assert report.transfers_raised > report.transfers_carried, (
+    assert report.transfers_offered > report.transfers_carried, (
         "every transfer was carried, so nothing is left waiting to check")
     assert waiting, "a declined transfer left its envelope routable"
-    assert len(waiting) == report.transfers_raised - report.transfers_carried
+    assert len(waiting) == report.transfers_offered - report.transfers_carried
 
 
 def test_a_carried_transfer_arrives_ready_at_the_new_depot(corrected_day):
@@ -1339,3 +1431,104 @@ def test_an_expired_envelope_takes_its_transfer_request_with_it(inputs):
     assert not any(t.package_id == "PKG-WAIT" for t in tomorrow.transfers), (
         "a request to move an envelope that has left the operation is a "
         "queue entry nothing can ever clear")
+
+
+# ------------------- §9.2's ledger: the three ways a decline ends, counted apart
+
+def _day_without_transit(inputs, regeocode):
+    """§10's day with §3.1's inter-depot table withheld.
+
+    The one shape that declines for two reasons at once: origins off the
+    destination's circuit are refused retriably, and the rest are refused
+    because nothing can say how far apart two depots are. A day with a single
+    reason cannot tell a ledger that defers everything from one that returns
+    everything.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items()
+              if not k.startswith("_") and k != "transit"}
+    return run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+                   seed=7, regeocode=regeocode, **kwargs)
+
+
+def test_every_decline_is_deferred_or_returned_or_spent_exactly_once(inputs):
+    """§9.2 accounts for each declined request once, and `DayReport` counts
+    the three outcomes separately rather than deriving one by subtraction.
+
+    The sum is a *check* here, not a definition: `transfers_deferred` reads
+    the queue handed to tomorrow, `transfers_returned` reads what §5.5 took,
+    and `transfers_spent` is computed on its own. A field defined as "the
+    declines the other two did not claim" would satisfy this equality however
+    wrong the other two were.
+
+    Both arms have to fire on the same day for that to mean anything, which
+    is why the transit table is withheld: 9 requests wait for tomorrow and 15
+    go home, on one night, under two different reasons.
+    """
+    report, tomorrow = _day_without_transit(
+        inputs, lambda e: "D3" if e["facility_id"] != "D3" else None)
+
+    assert (report.transfers_deferred, report.transfers_returned,
+            report.transfers_spent) == (9, 15, 0)
+    assert len(report.transfers_declined) == (
+        report.transfers_deferred + report.transfers_returned
+        + report.transfers_spent)
+    assert len(set(report.transfers_declined.values())) == 2, (
+        "both refusal reasons fired; with one reason the split below could be "
+        "produced by keying on the reason alone")
+
+    # Disjointness by identity and not by the arithmetic above: an envelope
+    # cannot both be waiting for tomorrow's van and be riding today's return
+    # run, and two counts that summed correctly could still name one envelope
+    # twice.
+    waiting = {t.package_id for t in tomorrow.transfers}
+    going_back = {e["package_id"] for e in tomorrow.returns_queue}
+    assert len(waiting) == report.transfers_deferred
+    assert not waiting & going_back
+
+
+def test_a_decline_is_deferred_or_spent_by_whether_the_envelope_survived(inputs):
+    """§6.1 reaches a waiting envelope, and the reason cannot tell you it did.
+
+    Both runs decline one request for "the circuit is already at 500 kg" --
+    retriable, so a ledger keyed on the reason defers both. The only
+    difference is the SLA date on the envelope underneath: one is still in the
+    operation and waits, the other has gone back on §5.5's run and the request
+    is spent. That is why the sixth field exists rather than folding into
+    `transfers_returned`: nothing on the *request* distinguishes these two.
+    """
+    yesterday = (inputs["_day"].delivery_day - timedelta(days=1)).isoformat()
+    alive, _, _ = _held_over(inputs, weight_g=600_000)
+    expired, gone, _ = _held_over(inputs, weight_g=600_000, sla_date=yesterday)
+
+    assert (set(alive.transfers_declined.values())
+            == set(expired.transfers_declined.values())), (
+        "the two days must be told apart by the envelope and not the reason")
+    assert (alive.transfers_deferred, alive.transfers_spent) == (1, 0)
+    assert (expired.transfers_deferred, expired.transfers_spent) == (0, 1)
+    assert "PKG-WAIT" in {e["package_id"] for e in gone.returns_queue}
+
+
+def test_todays_deferred_transfers_are_tomorrows_backlog(inputs):
+    """§5.3.2: requests that miss tonight "wait for the next day's plan".
+
+    Offered is what the night was asked to carry and raised is what the day
+    newly raised, so their difference is the backlog -- and it has to equal
+    what yesterday deferred, or the queue is either dropping requests or
+    re-raising them. Two days of the same fixture, chained through `State`.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    def regeocode(envelope):
+        return "D3" if envelope["facility_id"] != "D3" else None
+
+    first, tomorrow = run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+                              seed=7, regeocode=regeocode, **kwargs)
+    second, _ = run_day(tomorrow, seed=7, regeocode=regeocode, **kwargs)
+
+    assert first.transfers_deferred == 9
+    assert len(tomorrow.transfers) == first.transfers_deferred
+    assert second.transfers_offered - second.transfers_raised == (
+        first.transfers_deferred), (
+        f"{second.transfers_offered} offered less {second.transfers_raised} "
+        f"raised is not yesterday's {first.transfers_deferred} deferred")
