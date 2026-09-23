@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from ddn.api.routers import planning, transfers
 from ddn.api.schemas import Envelope as EnvelopeSchema
 from ddn.api.schemas import Mailbag as MailbagSchema
 from ddn.model import CoordSource, GeocodeConfidence, Outcome, Status
@@ -39,6 +40,20 @@ def paths_in_section_13_2() -> set[str]:
     """
     table = SECTION_13.split("### 13.2 Resources")[1].split("### 13.3")[0]
     return set(re.findall(r"`((?:POST|GET|PUT|DELETE)?\s*/[^`?]+)`", table))
+
+
+def events_in_section_13_2(path: str) -> set[str]:
+    """The event names §13.2 writes beside an events endpoint.
+
+    `paths_in_section_13_2` above reads backticked *paths*, and every event
+    name in the table sits in plain prose outside the backticks. So a rename
+    of the events -- which is a contract change as much as a new endpoint is
+    -- moves nothing that parser can see.
+    """
+    table = SECTION_13.split("### 13.2 Resources")[1].split("### 13.3")[0]
+    found = re.search(rf"`[A-Z]+ {re.escape(path)}`\s*\(([^)]+)\)", table)
+    assert found, f"§13.2 names no events beside {path}"
+    return {name.strip() for name in found[1].split(",")}
 
 
 #: Every row of §13.2, as (method, path, expected status).
@@ -107,6 +122,27 @@ def test_no_endpoint_is_offered_that_section_13_2_does_not_list(spec):
     served = {path for path in spec["paths"]}
     listed = {path for _, path, _ in ENDPOINTS}
     assert served == listed, f"undocumented: {sorted(served - listed)}"
+
+
+@pytest.mark.parametrize(("path", "served"), [
+    ("/linehaul/plans/{id}/events", planning.LEG_MOVES),
+    ("/transfers/{id}/events", set(transfers.MOVES)),
+], ids=["line-haul", "transfers"])
+def test_the_event_names_are_the_ones_section_13_2_writes(path, served):
+    """§13.2's event names, held to the handlers that accept them.
+
+    This closes the hole `paths_in_section_13_2`'s own docstring describes,
+    one level down: a contract change the path parser cannot see. v0.16
+    renamed the line-haul milestones to `leg departed, leg arrived` inside a
+    parenthetical, and every test in this file stayed green while the service
+    went on answering 422 to both of the names the document now lists.
+
+    Trip-level `departed`/`arrived` are deliberately *not* in `LEG_MOVES`:
+    they are accepted for one release (T9) while §13.2 has already stopped
+    listing them, which is precisely what a deprecation window is.
+    `tests/test_api_behaviour.py` holds both of its sides.
+    """
+    assert events_in_section_13_2(path) == set(served)
 
 
 def test_solver_endpoints_are_jobs_not_synchronous_calls(spec):

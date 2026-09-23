@@ -697,3 +697,176 @@ async def test_a_job_that_raised_does_not_report_itself_complete(client, pool):
 
     assert done["status"] == "failed", done
     assert done["result"] is None
+
+
+# ------------------------------------------ §13.2's line-haul legs (§5.3)
+
+def _linehaul_body() -> dict:
+    """The smallest plan with legs: one van, two depots, one envelope each."""
+    return {
+        "day": "2026-09-16",
+        "facilities": [{"id": "D1", "route_release_time": 7 * 3600,
+                        "transit_from_hub_min": 30},
+                       {"id": "D2", "route_release_time": 7 * 3600,
+                        "transit_from_hub_min": 45}],
+        "envelopes": [{"package_id": "P1", "facility_id": "D1",
+                       "expected_ready_at": 0},
+                      {"package_id": "P2", "facility_id": "D2",
+                       "expected_ready_at": 0}],
+        "vans": [{"vehicle_id": "VAN-01"}],
+        "unload_seconds": 1800,
+    }
+
+
+async def test_a_plan_returns_its_legs_and_their_loads(client, pool):
+    """§9.2 over HTTP: T9 asks `GET` to return legs and per-leg loads.
+
+    Nothing was added to make this pass. `JobState.result` is `dict | None`
+    (`api/schemas.py:244`), so nothing prunes what `runner.linehaul_plan`
+    returned, and `asdict(trip)` already recurses into `Leg`. That makes this
+    a pin rather than a feature: the field being *untyped* is the whole reason
+    the legs survive, and typing it later without naming `legs` would take
+    §9.2's answer away with no test to notice.
+    """
+    accepted = (await client.post("/linehaul/plans",
+                                  json=_linehaul_body())).json()
+    await drain(pool)
+
+    state = (await client.get(accepted["poll"])).json()
+
+    trips = state["result"]["trips"]
+    assert trips, state
+    legs = [leg for trip in trips for leg in trip["legs"]]
+    assert legs, "§9.2 asks for legs; a trip made of none is not a trip"
+    assert all("hub_loads" in leg for leg in legs), legs
+
+
+async def test_a_leg_event_names_the_leg_that_moved(client, store):
+    """§13.2 v0.16 spells these per leg, and the leg rides in the body."""
+    response = await client.post(
+        "/linehaul/plans/JOB-1/events",
+        json={"event": "leg departed", "leg": 1, "actor": "ops-anna"},
+        headers={"Idempotency-Key": "leg-1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"plan_id": "JOB-1", "event": "leg departed",
+                               "leg": 1}
+    # The current spelling is not deprecated. Asserted here because a handler
+    # that set the header unconditionally would pass every test below.
+    assert "Deprecation" not in response.headers
+    assert next(store.audit_for("JOB-1")).action == "linehaul:leg departed"
+
+
+@pytest.mark.parametrize("leg", [None, -1, True, "1", 1.5])
+async def test_a_leg_event_that_does_not_say_which_leg_is_refused(client, leg):
+    """The leg is the point of the rename: `leg departed` that names no leg
+    carries exactly what `departed` carried, which is what §5.3 outgrew.
+
+    `True` is in the list because `isinstance(True, int)` is true and JSON's
+    `true` arrives as a Python bool -- a check written on the type alone reads
+    a client that meant "yes" as a client that meant leg 1.
+    """
+    body = {"event": "leg arrived", "actor": "ops-anna"}
+    if leg is not None:
+        body["leg"] = leg
+
+    response = await client.post("/linehaul/plans/JOB-1/events", json=body,
+                                 headers={"Idempotency-Key": f"bad-{leg}"})
+
+    assert response.status_code == 422
+    assert "leg" in response.json()["detail"]
+
+
+async def test_an_unknown_linehaul_event_is_refused(client):
+    """And the refusal names the two §13.2 draws, not the two it dropped."""
+    response = await client.post(
+        "/linehaul/plans/JOB-1/events",
+        json={"event": "loaded", "leg": 0, "actor": "ops-anna"},
+        headers={"Idempotency-Key": "unknown"})
+
+    assert response.status_code == 422
+    assert "leg arrived, leg departed" in response.json()["detail"]
+
+
+async def test_the_trip_level_names_are_still_accepted_and_say_so(client):
+    """T9: the old names keep working for one release, with a warning.
+
+    The warning is a response header and not `warnings.warn`, because the
+    caller this protects is a driver app over HTTP: a Python warning raised
+    inside the handler is invisible to it and to this test.
+    """
+    response = await client.post(
+        "/linehaul/plans/JOB-1/events",
+        json={"event": "departed", "actor": "ops-anna"},
+        headers={"Idempotency-Key": "old-1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"plan_id": "JOB-1", "event": "departed"}
+    assert response.headers["Deprecation"] == "true"
+    assert 'rel="sunset"' in response.headers["Link"]
+    assert "0.17" in response.headers["Link"]
+
+
+async def test_a_trip_level_name_is_recorded_as_itself(client, store):
+    """Accepted, not translated.
+
+    Trip-level `departed` means the first leg left and `arrived` the last one
+    landed -- but *which* leg that is lives in the plan, and this handler
+    holds the store. Writing a leg index the caller never sent would put a
+    number in §13.1's audit trail that nobody stands behind, so the audit says
+    what arrived.
+    """
+    await client.post("/linehaul/plans/JOB-1/events",
+                      json={"event": "arrived", "actor": "ops-anna"},
+                      headers={"Idempotency-Key": "old-2"})
+
+    entry = next(store.audit_for("JOB-1"))
+    assert entry.action == "linehaul:arrived"
+    assert "leg" not in store.plans["JOB-1"]["events"][0]
+
+
+async def test_a_replayed_deprecated_event_is_still_deprecated(client):
+    """The second call is the one that would lose the warning.
+
+    `once` short-circuits on a replayed key and hands back the first call's
+    body, so a header set inside `produce` -- or on an injected `Response`,
+    which FastAPI merges only when the handler returns something it has to
+    serialise -- is absent here. A driver app retrying on a flaky connection
+    would be told once and then never again, which is the half of the window
+    that matters: retries are how it learns.
+    """
+    sent = {"event": "departed", "actor": "ops-anna"}
+    key = {"Idempotency-Key": "replayed"}
+
+    first = await client.post("/linehaul/plans/JOB-1/events", json=sent,
+                              headers=key)
+    again = await client.post("/linehaul/plans/JOB-1/events", json=sent,
+                              headers=key)
+
+    assert again.headers.get("Idempotent-Replay") == "true", "not a replay"
+    assert again.json() == first.json()
+    assert again.headers["Deprecation"] == "true"
+    assert "0.17" in again.headers["Link"]
+
+
+async def test_the_trip_level_names_go_when_the_published_version_arrives(pool):
+    """The other side of "one release", and what closes the window.
+
+    The window is measured against the app's own published version, which
+    `create_app` reads from the spec's `**Status:** Draft v…`. Pinned from
+    both sides because that is an unusual coupling -- a document edit changes
+    what the API accepts -- and an unusual coupling nobody asserted is one
+    that gets reverted by someone who thought it was a bug.
+    """
+    app = make_app(pool, Store())
+    app.version = "0.17"
+
+    async with AsyncClient(transport=ASGITransport(app=app),
+                           base_url="http://api") as sunset:
+        response = await sunset.post(
+            "/linehaul/plans/JOB-1/events",
+            json={"event": "departed", "actor": "ops-anna"},
+            headers={"Idempotency-Key": "past-sunset"})
+
+    assert response.status_code == 422
+    assert "leg arrived, leg departed" in response.json()["detail"]

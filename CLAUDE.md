@@ -37,7 +37,7 @@ API rules (§13): solver-invoking endpoints are async jobs returning 202; never 
 ## Commands
 
 ```sh
-make test       # 1057 tests, no xfail: every e2e row built; no gateway, no Redis, no routing data
+make test       # 1071 tests, no xfail: every e2e row built; no gateway, no Redis, no routing data
 make check      # and ruff
 make bootstrap  # §13's stack: redis, the API, an Arq worker
 ```
