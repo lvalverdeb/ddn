@@ -132,9 +132,17 @@ async def state(pool: ArqRedis, job_id: str) -> dict[str, Any]:
     status = await job.status()
     info = await job.result_info()
     result = info.result if info and info.success else None
+    # §13.1 reports what became of the job, and a job that raised did not
+    # finish. `info.success` was read for the *result* and dropped for the
+    # *status*, so a failure came back as `complete` with a null result —
+    # indistinguishable from a job that ran and had nothing to say, which is
+    # how the lock re-run's `KeyError` stayed invisible.
+    reported = str(getattr(status, "value", status))
+    if info is not None and not info.success:
+        reported = "failed"
     envelope = {
         "job_id": job_id,
-        "status": str(getattr(status, "value", status)),
+        "status": reported,
         "result": result if isinstance(result, dict) else None,
     }
     # §13.1 asks every *routing* result to carry its §7.1 list. Defaulting the

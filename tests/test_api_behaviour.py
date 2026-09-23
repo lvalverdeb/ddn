@@ -172,7 +172,8 @@ async def test_the_audit_records_actor_and_time_on_a_lock(client, store, pool):
     """§13.1: "Overrides (§8.2) and outcome events record the actor and time"."""
     await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
                       headers={"Idempotency-Key": "ingest"})
-    response = await client.post("/routes/runs/run-1/locks", json={
+    run = (await client.post("/routes/runs", json=_route_body())).json()
+    response = await client.post(f"/routes/runs/{run['job_id']}/locks", json={
         "package_id": "PKG-1", "locked_vehicle_id": "MOTO-050",
         "actor": "ops-anna"})
 
@@ -195,7 +196,8 @@ async def test_operations_can_force_an_envelope_out_and_it_is_audited(client, st
     """
     await client.post("/envelopes/batch", json={"envelopes": [envelope()]},
                       headers={"Idempotency-Key": "ingest"})
-    response = await client.post("/routes/runs/run-1/locks", json={
+    run = (await client.post("/routes/runs", json=_route_body())).json()
+    response = await client.post(f"/routes/runs/{run['job_id']}/locks", json={
         "package_id": "PKG-1", "excluded_by_ops": True, "actor": "ops-anna"})
 
     assert response.status_code == 202, "§8.2 re-runs, so it is a job"
@@ -568,3 +570,123 @@ async def test_cancelling_a_delivered_envelope_is_refused_with_where_it_is(clien
     assert body["current_state"] == "Delivered"
     assert body["package_id"] == package_id
     assert "§5.2.6" in body["detail"]
+
+
+def _route_body(stops: int = 1) -> dict:
+    """A §5.4 run the worker can actually execute.
+
+    `flat_matrix` because these rows are about the API's plumbing — which
+    facility is re-run, what a failed job reports — and not about geography.
+    """
+    from tests.matrices import flat_matrix
+
+    matrix = flat_matrix(stops + 1)
+    return {
+        "facility": {"id": "HUB", "lat": 9.94, "lon": -84.05,
+                     "shift_start": 25200, "shift_end": 54000},
+        "day": "2026-09-17",
+        "bikes": [{"vehicle_id": "MOTO-1", "type": "motorbike",
+                   "facility_id": "HUB", "role": "delivery",
+                   "capacity_envelopes": 35, "capacity_weight_g": 35_000,
+                   "shift_start": 25200, "shift_end": 54000}],
+        "matrix": {"durations": [list(r) for r in matrix.durations],
+                   "distances": [list(r) for r in matrix.distances]},
+    }
+
+
+async def test_a_lock_re_runs_the_same_facility_and_not_an_empty_payload(
+        client, store, pool):
+    """§8.2: "The solver must support re-running with locked assignments."
+
+    The re-run built its payload from `store.runs[job_id]` and **nothing ever
+    wrote it** — the only writer is the nightly worker, under the key
+    `"nightly"`. So every lock enqueued a packages-only body and the job died
+    on `KeyError: 'facility'`, which `jobs.state` then reported as
+    `status: complete, result: null`: a re-run that never happened, answering
+    like one that had.
+    """
+    await client.post("/envelopes/batch",
+                      headers={"Idempotency-Key": "ingest-lock"},
+                      json={"envelopes": [envelope(status="Ready")]})
+
+    accepted = (await client.post("/routes/runs", json=_route_body())).json()
+    await drain(pool)
+    first = (await client.get(accepted["poll"])).json()
+    assert first["status"] == "complete" and first["result"] is not None
+
+    relocked = (await client.post(
+        f"/routes/runs/{accepted['job_id']}/locks",
+        json={"package_id": "PKG-1", "locked_vehicle_id": "MOTO-1",
+              "actor": "ops-anna"})).json()
+    await drain(pool)
+    again = (await client.get(relocked["poll"])).json()
+
+    assert again["status"] == "complete"
+    assert again["result"] is not None, (
+        "the re-run produced nothing; §8.2's override is not applied")
+    assert again["result"]["facility_id"] == "HUB", (
+        "the re-run must route the same facility, not whatever a bare payload "
+        "defaults to")
+
+
+async def test_a_second_override_finds_the_run_the_first_one_made(client, store,
+                                                                  pool):
+    """§8.2 does not say an override may only be applied once.
+
+    The re-run is itself a run, so a lock on it must find the same facility —
+    otherwise the second override hits exactly the hole the first one just
+    left, and the API answers 404 for a run it issued moments earlier.
+    """
+    await client.post("/envelopes/batch",
+                      headers={"Idempotency-Key": "ingest-twice"},
+                      json={"envelopes": [envelope(status="Ready")]})
+    first = (await client.post("/routes/runs", json=_route_body())).json()
+
+    locked = (await client.post(
+        f"/routes/runs/{first['job_id']}/locks",
+        json={"package_id": "PKG-1", "locked_vehicle_id": "MOTO-1",
+              "actor": "ops-anna"})).json()
+    # A second pin rather than an exclusion: excluding the only envelope
+    # empties the pool and the supplied matrix then spans more locations than
+    # there are stops, which `runner._matrix` refuses — correctly, and for a
+    # reason that has nothing to do with what this row is about.
+    again = await client.post(
+        f"/routes/runs/{locked['job_id']}/locks",
+        json={"package_id": "PKG-1", "locked_vehicle_id": "MOTO-1",
+              "actor": "ops-ben"})
+
+    assert again.status_code == 202, again.text
+    await drain(pool)
+    done = (await client.get(again.json()["poll"])).json()
+    assert done["status"] == "complete"
+    assert done["result"]["facility_id"] == "HUB"
+
+
+async def test_an_override_on_a_run_that_does_not_exist_is_refused(client):
+    """§8.2 applies an override to a plan; an id naming none is a 404.
+
+    It used to be a 202 for a job that then died on `KeyError`, which is the
+    worst of the three answers: the caller is told the override was accepted.
+    """
+    refused = await client.post("/routes/runs/no-such-run/locks", json={
+        "package_id": "PKG-1", "locked_vehicle_id": "MOTO-1",
+        "actor": "ops-anna"})
+
+    assert refused.status_code == 404
+
+
+async def test_a_job_that_raised_does_not_report_itself_complete(client, pool):
+    """§13.1 reports status; a job that died is not a job that finished.
+
+    `jobs.state` dropped `info.success`, so a raised job came back as
+    `status: complete, result: null` — indistinguishable from one that ran and
+    had nothing to say, which is how the lock re-run above stayed invisible.
+    """
+    body = {k: v for k, v in _route_body().items() if k != "facility"}
+    accepted = (await client.post("/routes/runs", json=body)).json()
+    await drain(pool)
+
+    done = (await client.get(accepted["poll"])).json()
+
+    assert done["status"] == "failed", done
+    assert done["result"] is None

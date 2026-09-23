@@ -93,7 +93,14 @@ async def start_routes(payload: dict[str, Any], pool: PoolDep, store: StoreDep):
         payload = dict(payload, packages=[
             e for e in store.envelopes.values()
             if e.get("facility_id") == payload.get("facility", {}).get("id")])
-    return await _accept(pool, "run_routes", "/routes/runs", payload=payload)
+    accepted = await _accept(pool, "run_routes", "/routes/runs",
+                             payload=payload)
+    # §8.2 re-runs this facility with an override applied, and the re-run has
+    # to know which facility and which day. Nothing kept them: `store.runs`
+    # was written only by the nightly worker, under its own key, so every
+    # lock enqueued a packages-only body and the job died on `KeyError`.
+    store.runs[accepted.job_id] = payload
+    return accepted
 
 
 @router.get("/routes/runs/{job_id}", response_model=JobState,
@@ -129,11 +136,23 @@ async def add_lock(job_id: str, lock: Lock, request: Request, pool: PoolDep,
                  subject=lock.package_id,
                  vehicle_id=lock.locked_vehicle_id, run_id=job_id)
 
-    payload = dict(store.runs.get(job_id, {}))
+    original = store.runs.get(job_id)
+    if original is None:
+        raise HTTPException(
+            status_code=http.HTTP_404_NOT_FOUND,
+            detail=f"no run {job_id} to re-run; §8.2 applies an override to a "
+                   "plan, and this id names none")
+
+    payload = dict(original)
     payload["packages"] = [store.envelopes[lock.package_id]] + [
         e for e in payload.get("packages", [])
         if e.get("package_id") != lock.package_id]
-    return await _accept(pool, "run_routes", "/routes/runs", payload=payload)
+    rerun = await _accept(pool, "run_routes", "/routes/runs", payload=payload)
+    # The re-run is itself a run: another lock on it must find the same
+    # facility, or §8.2's second override would hit the hole the first just
+    # left.
+    store.runs[rerun.job_id] = payload
+    return rerun
 
 
 # ------------------------------------------------------------------ §5.5
