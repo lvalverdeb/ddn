@@ -325,3 +325,35 @@ def test_position_falls_back_to_the_envelope_when_no_request_carries_the_bag():
 
     placed, = positioned["HUB"]
     assert (placed["customer_lat"], placed["customer_lon"]) == (10.0, -84.2)
+
+
+def test_why_the_pipeline_does_not_presort_and_what_would_change_it():
+    """§3.3's rule has one caller, and the reason is the road recording.
+
+    `presort` ranks by road distance, so it needs a matrix over every envelope
+    address. `tests/matrices.py` replays 94 recorded points — the facilities
+    and the pickup sites — and refuses a coordinate it does not hold rather
+    than falling back to arithmetic, which §3.3 exists to prevent. So the
+    suite cannot sort §10's 4,550 envelopes at all, and the day pipeline reads
+    the `facility_id` §5.2.4 says the hub stamps at file receipt.
+
+    Measured rather than asserted from memory: calling `presort` on the
+    fixture's own inflow raises, naming the first missing coordinate.
+
+    If envelope-level travel ever arrives — §3.1's real coordinates, or a
+    recording extended to addresses — this test fails and `presort` should be
+    wired into `processing`'s stage properly, along with e2e-2 §2 item 1's
+    `keep_straddlers_at_hub`.
+    """
+    from ddn.model import travel as road
+    from tests import peak_day_inputs
+    from tests.matrices import road_matrix
+
+    built = peak_day_inputs.build()
+    facilities = built.kwargs["facilities"]
+    sample = built.kwargs["inflow"][:20]
+    points = [*facilities, *sample]
+
+    with pytest.raises(KeyError, match="no recorded road travel"):
+        processing.presort(sample, facilities, road_matrix(points),
+                           road.index_of(points))

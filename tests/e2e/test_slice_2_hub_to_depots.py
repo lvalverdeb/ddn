@@ -112,16 +112,32 @@ def test_b2():
     Expected: Plan leg-for-leg identical to the single-destination baseline
     (regression, Task 8)
     """
-    baseline = _night()
-    with_nothing = _night(transfers=(), returning=())
+    # **This compared `_night()` with `_night(transfers=(), returning=())`
+    # and `_night` defaults both** — a self-comparison that could not fail.
+    # The row's real content is §5.3.1's shape: before Task 8 a trip was one
+    # hub-to-depot leg, and the regression is that the multi-leg *capability*
+    # leaves that shape alone when nothing needs it.
+    plain = _night()
 
-    assert _legs(with_nothing) == _legs(baseline)
-    assert with_nothing.declined == ()
-    assert with_nothing.returned == ()
+    def depots_called(trip):
+        return [leg.to_facility for leg in trip.legs
+                if leg.to_facility != FX.hub["id"]]
+
+    assert plain.trips, "an empty night would make the rest vacuous"
+    assert all(len(depots_called(trip)) == 1 for trip in plain.trips), (
+        "§5.3.1: with nothing to carry between depots, a circuit is one "
+        "hub-to-depot run and the leg home")
+    assert plain.declined == ()
+    assert plain.returned == ()
     assert all(leg.transfer_ids == () and leg.return_ids == ()
-               for trip in with_nothing.trips for leg in trip.legs), (
-        "a night with neither carries neither; Task 8's regression is that "
-        "adding the *capability* did not change the plan when it is unused")
+               for trip in plain.trips for leg in trip.legs)
+
+    # And the assertion is not vacuous: the same night with transfers aboard
+    # does produce multi-depot circuits, so "one depot" is a property of the
+    # empty night rather than of this planner.
+    carrying = _night(transfers=FX.requests)
+    assert any(len(depots_called(trip)) > 1 for trip in carrying.trips), (
+        "no circuit ever calls twice, so B2 asserts nothing about Task 8")
 
 
 def test_b3():

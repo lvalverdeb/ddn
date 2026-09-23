@@ -24,6 +24,24 @@ is the artefact.
 assigns "by road distance" and a straddle margin measured any other way is a
 margin in the wrong units. §5.2.4 sorts at upload-file receipt, so the caller is
 whoever holds a gateway at that point.
+
+**Nothing in the day pipeline calls `presort`, and that is a data gap rather
+than an oversight.** §3.3 ranks by *road* distance, so sorting a pool needs a
+matrix spanning every envelope address and every facility. §3.1 supplies no
+real coordinates, and `tests/matrices.py` replays a recording of 94 points --
+the seven facilities and the pickup sites -- so the suite cannot build one over
+4,550 addresses and `road_matrix` refuses rather than guessing.
+
+Where the rule *does* run is `ddn/simulation/on_road.py:155`, which builds a
+real matrix against the gateway and calls `model.facility.nearest_facility`.
+Everything else -- `simulation.day`, the slices, the API -- reads the
+`facility_id` already stamped on the §9.1 record, which is what §5.2.4 says the
+hub does at file receipt.
+
+So `presort` is the rule plus §3.2's straddle flag, exercised by its own tests
+and by nothing else, and `keep_straddlers_at_hub` is e2e-2's decision on that
+flag. Wiring either into the pipeline needs envelope-level road travel that
+this repository does not have. `tests/test_processing.py` pins the reason.
 """
 
 from __future__ import annotations
