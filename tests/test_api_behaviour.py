@@ -6,6 +6,8 @@ them exactly the rules worth testing directly.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -727,6 +729,19 @@ async def test_a_plan_returns_its_legs_and_their_loads(client, pool):
     a pin rather than a feature: the field being *untyped* is the whole reason
     the legs survive, and typing it later without naming `legs` would take
     §9.2's answer away with no test to notice.
+
+    The loads are read by content and not by key, because the key proves
+    nothing: `Leg.hub_loads` is `field(default_factory=dict)`
+    (`linehaul/circuit.py:48`), so `asdict` emits it whether or not anything
+    is aboard. The first version of this test asserted `"hub_loads" in leg`
+    and a mutant that re-emitted every leg with `hub_loads={},
+    transfer_ids=[], return_ids=[]` survived it -- legs on the wire, cargo
+    gone, test green. What is asserted below is what that mutant took away.
+
+    Which envelopes ride is `linehaul.plan`'s business and
+    `tests/test_linehaul.py` holds it to that; this asks only that whatever
+    it loaded reaches the wire, so the set is checked against the request's
+    own two rather than pinned to one of them.
     """
     accepted = (await client.post("/linehaul/plans",
                                   json=_linehaul_body())).json()
@@ -738,7 +753,26 @@ async def test_a_plan_returns_its_legs_and_their_loads(client, pool):
     assert trips, state
     legs = [leg for trip in trips for leg in trip["legs"]]
     assert legs, "§9.2 asks for legs; a trip made of none is not a trip"
-    assert all("hub_loads" in leg for leg in legs), legs
+
+    # §9.2's leg clause field for field: "from_facility, to_facility,
+    # departure, expected arrival ... the loads on board (hub-origin
+    # package_ids by destination, transfer_ids, return package_ids) with
+    # total weight". A typed model that dropped one fails here.
+    assert all(set(leg) == {"from_facility", "to_facility", "departure",
+                            "arrival", "hub_loads", "transfer_ids",
+                            "return_ids", "weight_g"} for leg in legs), legs
+
+    aboard = {pid for leg in legs
+              for ids in leg["hub_loads"].values() for pid in ids}
+    assert aboard, "§9.2's loads: every leg empty is a van that carried air"
+    assert aboard <= {"P1", "P2"}, aboard
+    assert any(leg["weight_g"] for leg in legs), "§9.2 asks each leg its weight"
+
+    # "an ordered list of legs": a circuit leaves the hub and each leg starts
+    # where the one before it ended, which a set or a reordering loses.
+    assert legs[0]["from_facility"] == "HUB", legs
+    assert all(nxt["from_facility"] == prev["to_facility"]
+               for prev, nxt in pairwise(legs)), legs
 
 
 async def test_a_leg_event_names_the_leg_that_moved(client, store):
