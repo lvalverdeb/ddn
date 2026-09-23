@@ -105,12 +105,19 @@ exactly this reason) and it needs no new datum.
 
 ## 6. Mutation plan
 
-| | Mutation | Caught by |
-|---|---|---|
-| P1 | `choose` reverts to caller order | two runs with the list reversed decline different transfers |
-| P2 | the SLA-today partition is dropped | an SLA-today transfer is declined while a lower-priority one rides |
-| P3 | hub-origin loads board before ranking | a high-priority transfer is declined behind a low-priority envelope |
-| P4 | `TransferRequest` defaults `priority` to 0 | a transfer with no score ranks last instead of being refused |
+| | Mutation | Caught by | Killed by |
+|---|---|---|---|
+| P1 | `choose` reverts to caller order | two runs with the list reversed decline different transfers | `test_transfers.py::test_the_order_of_the_caller_s_list_no_longer_decides` (+2) |
+| P2 | the SLA-today partition is dropped | an SLA-today transfer is declined while a lower-priority one rides | `test_transfers.py::test_a_transfer_due_at_the_next_release_rides_whatever_it_scores`; also `e2e/test_slice_2_hub_to_depots.py::test_b4` since step 4 |
+| P3 | hub-origin loads board before ranking | a high-priority transfer is declined behind a low-priority envelope | `test_transfers.py::test_a_higher_scoring_transfer_takes_the_seat_from_a_hub_origin_envelope`; `e2e/…::test_b4` |
+| P4 | `TransferRequest` defaults `priority` to 0 | a transfer with no score ranks last instead of being refused | `test_transfers.py::test_a_transfer_without_a_score_is_refused_not_ranked_last` |
+| P3b | envelopes ranked worst-first among themselves | the dropped set is not the lowest-scoring one | `e2e/…::test_b4`; `test_transfers.py::test_a_transfer_that_would_overload_the_van_is_declined` |
+
+P3b is not one this plan predicted. It was added while writing step 4, because
+P3 alone does not prove B4's *first* clause discriminates: P3 moves the boundary
+between the two kinds of load, and that clause is about the order within one
+kind. Every row above was run and observed to fail the named tests; none is
+recorded on the strength of the code reading as if it would.
 
 ## 7. What this does not do
 

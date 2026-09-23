@@ -439,7 +439,13 @@ def test_the_linehaul_endpoint_reports_an_overloaded_leg():
     line-haul plan is made of legs, so it was the one check most obviously
     owed and least obviously missing.
 
-    Three envelopes at 200 kg are 600 kg on one leg, against §7.1's 500.
+    The breach is built from §5.5 returns: three depot rejects at 200 kg are
+    600 kg on the leg home. It used to be built from hub-origin envelopes, but
+    §5.3.2's competition now holds those to the 500 kg itself -- offering six
+    hundred kilos of them yields a 400 kg leg and a rolled remainder, not a
+    violation. Returns are the load the planner genuinely cannot refuse: §5.3.2
+    ranks hub-origin loads and transfers against each other and says nothing
+    about returns, so they ride whatever else competes and the breach is real.
     """
     from ddn.api import runner
 
@@ -447,9 +453,10 @@ def test_the_linehaul_endpoint_reports_an_overloaded_leg():
         "day": "2026-09-16",
         "facilities": [{"id": "D1", "route_release_time": 7 * 3600,
                         "transit_from_hub_min": 30}],
-        "envelopes": [{"package_id": f"P{n}", "facility_id": "D1",
-                       "expected_ready_at": 0, "weight_g": 200_000}
-                      for n in range(3)],
+        "envelopes": [{"package_id": "P0", "facility_id": "D1",
+                       "expected_ready_at": 0, "weight_g": 200}],
+        "returning": [{"package_id": f"R{n}", "facility_id": "D1",
+                       "weight_g": 200_000} for n in range(3)],
         "vans": [{"vehicle_id": "VAN-01"}],
         "unload_seconds": 1800,
     })

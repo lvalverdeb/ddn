@@ -47,9 +47,11 @@ def transfer(transfer_id: str = "T1", *, frm: str = "D1", to: str = "D3",
                            priority=priority)
 
 
-def envelopes(facility: str, count: int, *, grams: int = 200) -> list[dict]:
+def envelopes(facility: str, count: int, *, grams: int = 200,
+              priority: float = 0.0) -> list[dict]:
     return [{"package_id": f"{facility}-{i}", "facility_id": facility,
-             "expected_ready_at": 16 * HOUR, "weight_g": grams}
+             "expected_ready_at": 16 * HOUR, "weight_g": grams,
+             "priority": priority}
             for i in range(count)]
 
 
@@ -149,12 +151,65 @@ def test_without_inter_depot_transit_a_transfer_is_refused_not_guessed():
 
 
 def test_a_transfer_that_would_overload_the_van_is_declined():
-    """§7.1: 500 kg across hub-origin, transfer and return envelopes."""
-    heavy = envelopes("D1", 1, grams=500_000)
+    """§7.1: 500 kg across hub-origin, transfer and return envelopes.
+
+    The envelope outscores the transfer (§8.1), so §5.3.2's competition seats
+    it first and there is nothing left for the transfer. Before Step 3 the
+    priorities were not read at all and the envelope boarded because it was
+    hub-origin; the outcome was the same for the wrong reason, which is what
+    the score here pins.
+    """
+    heavy = envelopes("D1", 1, grams=500_000, priority=900.0)
     night = linehaul.plan([depot("D1", transit_min=30), depot("D3", transit_min=45)],
                           heavy, [{"vehicle_id": "VAN-01"}], unload_seconds=1800,
                           transfers=[transfer(grams=1000)], transit=transit)
     assert [d.reason for d in night.declined] == [linehaul.OVER_CAPACITY]
+
+
+def test_hub_origin_load_is_held_to_the_same_five_hundred_kilos():
+    """§7.1's combined load bounds hub-origin envelopes too, not just transfers.
+
+    This is the hole Step 3 closed. `plan` used to board a depot's whole pool
+    unconditionally and offer `choose` only the remainder, so a transfer could
+    be declined `OVER_CAPACITY` on a van the planner had *itself* loaded past
+    500 kg. Three envelopes at 200 kg were 600 kg on one leg and the plan
+    reported no trouble at all.
+
+    Two ride, the third is rolled, and no leg exceeds the cap.
+    """
+    night = linehaul.plan([depot("D1", transit_min=30)],
+                          envelopes("D1", 3, grams=200_000),
+                          [{"vehicle_id": "VAN-01"}], unload_seconds=1800)
+
+    legs = [leg for trip in night.trips for leg in trip.legs]
+    assert [leg.weight_g for leg in legs] == [400_000, 0], "out laden, home empty"
+    assert not any(leg.overloaded for leg in legs)
+    assert night.rolled == {"D1": ("D1-2",)}
+    assert night.reasons["D1"] == linehaul.OVER_CAPACITY
+
+
+def test_a_higher_scoring_transfer_takes_the_seat_from_a_hub_origin_envelope():
+    """§5.3.2: "hub-origin loads and transfers compete", ranked by §8.1.
+
+    The competition is only observable when the van is short and the transfer
+    outranks the load, which is the case §10's data never reaches -- its worst
+    leg is 30.7% of the cap. So it is built here: 400 kg of hub-origin envelopes
+    scoring 1 against a 200 kg transfer scoring 900, on one 500 kg van.
+
+    The transfer boards and the lower-scoring envelope is bumped. Board the
+    hub-origin pool first, as `plan` did before Step 3, and the reverse happens:
+    the two envelopes take the van and the transfer is declined.
+    """
+    night = linehaul.plan([depot("D1", transit_min=30), depot("D3", transit_min=45)],
+                          envelopes("D1", 2, grams=200_000, priority=1.0),
+                          [{"vehicle_id": "VAN-01"}], unload_seconds=1800,
+                          transfers=[transfer(grams=200_000, priority=900.0)],
+                          transit=transit)
+
+    assert night.trips[0].transfer_ids == ("T1",)
+    assert night.declined == ()
+    assert night.rolled == {"D1": ("D1-1",)}, "the loser is the lower score"
+    assert night.reasons["D1"] == linehaul.OVER_CAPACITY
 
 
 def test_every_transfer_is_carried_or_declined():

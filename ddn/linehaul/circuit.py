@@ -80,6 +80,25 @@ MISSES_DEADLINE = "cannot arrive before the deadline"
 OVER_CAPACITY = "the circuit is already at 500 kg"
 
 
+def _key(hard: bool, priority: float | None, ident: str) -> tuple[bool, float, str]:
+    """§5.3.2's ranking key, for a transfer or a hub-origin envelope alike.
+
+    "Both are ranked by the same priority score as delivery (§8.1)" -- so there
+    is one key and both sides are sorted by it. Hard inclusions first, then
+    descending score, then the id so that two runs of one night agree.
+    """
+    return (not hard, -float(priority or 0), ident)
+
+
+def _due(transfer: Any, release_of: Mapping[str, int]) -> bool:
+    """Whether this transfer is §5.3.2's hard inclusion. See `_ranked`."""
+    release = release_of.get(transfer.to_facility_id)
+    if release is None:
+        return False
+    at = transfer.deadline
+    return (at.hour * 3600 + at.minute * 60 + at.second) != release % DAY
+
+
 def _ranked(transfers: Sequence[Any],
             release_of: Mapping[str, int]) -> list[Any]:
     """§5.3.2's order when the circuit cannot carry everything.
@@ -106,18 +125,16 @@ def _ranked(transfers: Sequence[Any],
     tomorrow both sit at the release's hour, and comparing dates would call
     the first urgent. An envelope due *today* is not here at all -- §7.1
     refuses to raise it, because line-haul runs on D and delivery on D+1.
-    """
-    def due(transfer: Any) -> bool:
-        release = release_of.get(transfer.to_facility_id)
-        if release is None:
-            return False
-        at = transfer.deadline
-        return (at.hour * 3600 + at.minute * 60 + at.second) != release % DAY
 
+    The comparison degenerates if a depot ever releases at 00:00: an SLA-set
+    deadline landing on midnight would read as slack. `ROUTE_RELEASE` is one
+    invented placeholder at 07:00 for every facility (§3.1's own column is
+    still [TBD]), so no such depot exists today; a real §3.1 that gives one a
+    midnight release needs the deadline compared against its own date instead.
+    """
     return sorted(transfers,
-                  key=lambda t: (not due(t),
-                                 -float(t.priority or 0),
-                                 t.transfer_id))
+                  key=lambda t: _key(_due(t, release_of), t.priority,
+                                     t.transfer_id))
 
 
 def sequence_departure(stops: Sequence[str], *, hub_transit: Mapping[str, int],
@@ -212,3 +229,107 @@ def choose(stops: list[str], transfers: Sequence[Any], *,
         carried_g += transfer.weight_g
 
     return stops, carried, declined
+
+
+@dataclass(frozen=True, slots=True)
+class Loaded:
+    """What one circuit carries once §5.3.2's competition has been run."""
+
+    stops: list[str]
+    #: hub-origin envelopes that won capacity, and those that lost it.
+    boarded: list[dict[str, Any]]
+    bumped: list[dict[str, Any]]
+    carried: list[Any]
+    declined: list[Declined]
+
+
+def compete(stops: list[str], envelopes: Sequence[dict[str, Any]],
+            transfers: Sequence[Any], *,
+            transit: Transit | None, hub_transit: Mapping[str, int],
+            release_of: Mapping[str, int], unload_seconds: int,
+            earliest_departure: int, reserved_g: int) -> Loaded:
+    """§5.3.2's Priority paragraph: one 500 kg, two kinds of load.
+
+    "When van capacity or van-hours are short, hub-origin loads and transfers
+    compete. Both are ranked by the same priority score as delivery (§8.1)."
+
+    Before this, `plan` weighed the *whole* hub-origin pool and handed `choose`
+    only what was left: a depot's envelopes boarded unconditionally and a
+    transfer could have the remainder. That is not a competition. On a van that
+    is short it is also the wrong answer, because §8.1's score is what decides
+    which load rides, and a hub-origin envelope scoring 1 has no claim over a
+    transfer scoring 900 simply for having started at the hub.
+
+    So both sides are ranked by `_key` and walked in that one order.
+
+    **Feasibility first, capacity second**, because they are different
+    questions. `choose` settles which transfers this circuit can reach in time
+    at all -- a transfer with no leg or no hours is declined there and never
+    reaches the walk, where it would otherwise displace an envelope over a seat
+    it could not use. Only the feasible ones compete.
+
+    **The hard inclusion is one-sided, deliberately.** A transfer keeps the one
+    `_ranked` gives it. §6.1's SLA-today has no envelope equivalent here: `plan`
+    holds no reference date to compare `sla_date` against, and by the same D/D+1
+    reasoning that removed the transfer's SLA-today case in v0.16, an envelope
+    due *today* cannot be served by a line-haul that arrives tomorrow morning
+    either. An envelope due tomorrow is the one that would qualify, and saying
+    so needs a `today` this planner is not given -- recorded rather than
+    guessed.
+
+    Args:
+        reserved_g: weight already committed and outside the contest -- §5.5's
+            returns, which ride back to the hub and which §5.3.2 does not rank
+            against anything. It is deliberately *not* bounded by `MAX_LOAD_G`:
+            returns over 500 kg leave nothing for anyone, so every envelope is
+            bumped and every feasible transfer declined `OVER_CAPACITY` -- whose
+            wording, "already at 500 kg", stays true of that circuit. The
+            planner has no authority to refuse a return, so the breach it makes
+            is real and is left for §7.1's post-check to report rather than
+            hidden by dropping load the spec never ranked.
+    """
+    stops, feasible, declined = choose(
+        stops, transfers, transit=transit, hub_transit=hub_transit,
+        release_of=release_of, unload_seconds=unload_seconds,
+        earliest_departure=earliest_departure, carried_g=reserved_g)
+
+    candidates: list[tuple[tuple[bool, float, str], int, Any, Any]] = [
+        (_key(_due(t, release_of), t.priority, t.transfer_id),
+         int(t.weight_g), t, None)
+        for t in feasible
+    ] + [
+        (_key(False, e.get("priority"), e["package_id"]),
+         int(e.get("weight_g", 200)), None, e)
+        for e in envelopes
+    ]
+
+    weight = reserved_g
+    carried: list[Any] = []
+    boarded: list[dict[str, Any]] = []
+    bumped: list[dict[str, Any]] = []
+    # Sorted on the key alone: two candidates that tie would otherwise have
+    # Python compare the payloads, and a transfer does not order against a dict.
+    for _, grams, transfer, envelope in sorted(candidates, key=lambda c: c[0]):
+        if weight + grams > MAX_LOAD_G:
+            if transfer is None:
+                bumped.append(envelope)
+            else:
+                declined.append(Declined(transfer.transfer_id, OVER_CAPACITY))
+            continue
+        weight += grams
+        if transfer is None:
+            boarded.append(envelope)
+        else:
+            carried.append(transfer)
+
+    # A transfer that lost the walk may have pulled its destination into the
+    # circuit on the way in. Drop the stops nothing is left for: the van has no
+    # reason to drive there, and a shorter circuit only ever departs later, so
+    # no deadline `choose` already cleared can be missed by the pruning.
+    # Both ends of a carried transfer are kept, not just its destination: today
+    # every transfer starts at `stops[0]`, but a keep-set that assumed so would
+    # silently drop a pickup the first time this is called with two origins.
+    keep = ({stops[0]} | {t.from_facility_id for t in carried}
+            | {t.to_facility_id for t in carried})
+    return Loaded(stops=[s for s in stops if s in keep], boarded=boarded,
+                  bumped=bumped, carried=carried, declined=declined)

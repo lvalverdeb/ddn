@@ -207,6 +207,75 @@ def test_b4():
         "one is a fleet too small, the other a hub too slow"
     )
 
+    # --- "dropped loads are the lowest-priority" (§5.3.2, §8.1)
+    #
+    # §10's envelopes are 200 g each and carry no score, so the fixture's own
+    # night never fills a van -- its worst leg is 30.7% of the 500 kg -- and
+    # nothing is ever dropped for capacity. The weights and scores below are
+    # the test's, not the document's: sixty of D1's envelopes at 10 kg are
+    # 600 kg against a 500 kg van, scored 60 down to 1 so that "lowest" names
+    # something checkable rather than whichever ten the loop reached last.
+    ready = min(int(e["expected_ready_at"]) for e in FX.hub_loads)
+    d1 = [e for e in FX.hub_loads if e["facility_id"] == "D1"][:60]
+    scored = [dict(e, weight_g=10_000, priority=float(len(d1) - i),
+                   expected_ready_at=ready)
+              for i, e in enumerate(d1)]
+    score_of = {e["package_id"]: e["priority"] for e in scored}
+
+    heavy = _night(envelopes=scored)
+    dropped = set(heavy.rolled.get("D1", ()))
+    assert dropped, "500 kg offered against a 500 kg van has to drop something"
+    assert heavy.reason_for("D1") == linehaul.OVER_CAPACITY
+    assert (max(score_of[p] for p in dropped)
+            < min(v for k, v in score_of.items() if k not in dropped)), (
+        "every dropped envelope must score below every carried one, or "
+        "'lowest-priority' names something the planner did not do"
+    )
+
+    # --- "every SLA-today transfer and envelope is carried" (§5.3.2, §6.1)
+    #
+    # The clause is quoted whole because only its first half is asserted.
+    #
+    # v0.16 retired the row's literal wording for the transfer half: §7.1
+    # forbids *raising* a transfer for an envelope due today, because
+    # line-haul runs on D and delivery on D+1. What replaced it is the hard
+    # inclusion this asserts — a transfer whose deadline was set by the SLA
+    # rather than by the receiving depot's morning release. The fixture
+    # carries none (all 28 deadlines sit on the release), so one is built here.
+    #
+    # The envelope half asserts nothing, and that is a decision rather than an
+    # omission: `compete`'s docstring records it. §6.1's SLA-today has no
+    # envelope equivalent the planner can express — `plan` holds no reference
+    # date to compare §9.1's `sla_date` against, and by the same D/D+1
+    # reasoning an envelope due *today* cannot be served by a line-haul
+    # arriving tomorrow morning either. Whether the row's wording should
+    # follow v0.16 the way the spec did is Luis's call, not this test's.
+    #
+    # The pair differs in the deadline and nothing else: same weight, same
+    # score, deliberately below every envelope's. The soft twin loses its seat
+    # and the hard inclusion keeps it, so the deadline is what carried it.
+    low = min((t for t in FX.requests if t.from_facility_id == "D1"),
+              key=lambda t: t.priority)
+    twin = replace(low, weight_g=10_000, priority=0.5)
+    inclusion = replace(twin, deadline=twin.deadline - timedelta(hours=1))
+    rest = [t for t in FX.requests if t.transfer_id != low.transfer_id]
+
+    # Fifty is the tight fit: exactly 500 kg of envelopes, so whether the
+    # transfer rides is decided by the deadline and not by leftover room.
+    seats = scored[:50]
+    with_hard = _night(envelopes=seats, transfers=[inclusion, *rest])
+    with_soft = _night(envelopes=seats, transfers=[twin, *rest])
+
+    assert low.transfer_id in {tid for trip in with_hard.trips
+                               for tid in trip.transfer_ids}, (
+        "a hard inclusion rides even scoring below every envelope aboard"
+    )
+    assert {d.transfer_id: d.reason for d in with_soft.declined}[
+        low.transfer_id] == linehaul.OVER_CAPACITY, (
+        "its soft twin loses the same seat — otherwise the van was never "
+        "short and the hard inclusion was never tested"
+    )
+
 
 def test_b5():
     """E2E-2 §8 row B5, e2e-2-hub-to-depots.md.

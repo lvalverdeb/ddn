@@ -34,10 +34,11 @@ from typing import Any
 from ddn.linehaul.circuit import (
     DAY,
     NO_VAN_LEG,
+    OVER_CAPACITY,
     Declined,
     Leg,
     Transit,
-    choose,
+    compete,
     legs_for,
     sequence_departure,
 )
@@ -258,23 +259,32 @@ def plan(facilities: Sequence[dict[str, Any]],
         # §5.3.2: transfers waiting at the depot this van is already visiting.
         mine = [t for t in waiting_transfers
                 if t.from_facility_id == facility_id]
-        aboard_all = [e for e in pool]
-        aboard_g = sum(int(e.get("weight_g", 200))
-                       for e in aboard_all)
-        # §7.1 counts returns against the same 500 kg, so a van already
-        # full of them has no room for a transfer. Only this depot's are
-        # known yet -- `choose` may add stops, and their returns join the
-        # load further down, which is why the leg check below is the one
-        # that binds.
+        # §7.1 counts returns against the same 500 kg, and §5.3.2 does not rank
+        # them against anything -- they ride back whatever else competes. Only
+        # this depot's are known yet; `compete` may add stops, and their returns
+        # join the load further down, which is why the leg check below binds.
         homebound_g = sum(int(e.get("weight_g", 200))
                           for e in homebound.get(facility_id, ()))
-        stops, carried, refused = choose(
-            [facility_id], mine, transit=transit, hub_transit=hub_transit,
-            release_of=releases, unload_seconds=unload_seconds,
-            earliest_departure=_released_at(chosen),
-            carried_g=aboard_g + homebound_g)
-        declined.extend(refused)
-        settled = {d.transfer_id for d in refused} | {t.transfer_id for t in carried}
+
+        # Readiness filters before the competition: an envelope that is not
+        # ready cannot board however it scores (§7.1), so it must not take a
+        # seat from one that can. `deadline` is the bound rather than the
+        # departure, because the departure is not known until the circuit is --
+        # and a circuit that gains a stop only ever leaves earlier, so every
+        # envelope that makes the departure is in this set. The ones this
+        # over-admits are split out again below, once the departure is known.
+        ready = [e for e in pool if int(e["expected_ready_at"]) <= deadline]
+        too_late = [e for e in pool if int(e["expected_ready_at"]) > deadline]
+
+        loaded = compete(
+            [facility_id], ready, mine, transit=transit,
+            hub_transit=hub_transit, release_of=releases,
+            unload_seconds=unload_seconds,
+            earliest_departure=_released_at(chosen), reserved_g=homebound_g)
+        stops, carried = loaded.stops, loaded.carried
+        declined.extend(loaded.declined)
+        settled = ({d.transfer_id for d in loaded.declined}
+                   | {t.transfer_id for t in carried})
         waiting_transfers = [t for t in waiting_transfers
                              if t.transfer_id not in settled]
 
@@ -284,8 +294,11 @@ def plan(facilities: Sequence[dict[str, Any]],
             stops, hub_transit=hub_transit, transit=transit,
             release_of=releases, unload_seconds=unload_seconds))
 
-        aboard = [e for e in pool if int(e["expected_ready_at"]) <= departure]
-        missed = [e for e in pool if int(e["expected_ready_at"]) > departure]
+        aboard = [e for e in loaded.boarded
+                  if int(e["expected_ready_at"]) <= departure]
+        late = [e for e in loaded.boarded
+                if int(e["expected_ready_at"]) > departure]
+        missed = too_late + late
         aboard_g = sum(int(e.get("weight_g", 200)) for e in aboard)
 
         timed = legs_for(stops, departure, hub_id=hub_id,
@@ -328,9 +341,21 @@ def plan(facilities: Sequence[dict[str, Any]],
             legs=tuple(legs),
             transfer_ids=tuple(t.transfer_id for t in carried),
         ))
-        if missed:
-            rolled[facility_id] = tuple(e["package_id"] for e in missed)
-            reasons[facility_id] = NOT_READY_IN_TIME
+        # §9.2 asks for a reason per unassigned envelope; `rolled`/`reasons` is
+        # per *facility*, which predates this step. A depot that rolls for both
+        # causes at once can therefore report only one.
+        #
+        # Capacity wins that tie. A bumped envelope was *ready* -- it lost its
+        # seat to a higher score -- so `NOT_READY_IN_TIME` is not merely vaguer
+        # for it, it is false. `OVER_CAPACITY` is true of at least one envelope
+        # in every tuple it labels, which is the most a per-facility field can
+        # promise. `docs/spec-proposals/v0.17-per-envelope-reason.md` records
+        # the narrowing rather than leaving it implied.
+        if missed or loaded.bumped:
+            rolled[facility_id] = tuple(e["package_id"]
+                                        for e in missed + loaded.bumped)
+            reasons[facility_id] = (OVER_CAPACITY if loaded.bumped
+                                    else NOT_READY_IN_TIME)
 
     # Anything still waiting had no circuit that reached its origin (§9.2).
     declined.extend(Declined(t.transfer_id, NO_VAN_LEG)

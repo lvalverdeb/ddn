@@ -584,16 +584,27 @@ def test_the_day_reports_the_seven_one_breach_it_causes(inputs):
     the only place the night's circuits, the vans' return times and the day's
     transfers exist together rather than as counts on a report.
 
-    A kilo an envelope puts D1's share over 500 kg on its first leg, which is
-    §7.1's combined-load bullet and nothing else.
+    The breach is built from §5.5's return queue: depot rejects waiting at D1,
+    a kilo each, riding home on tonight's circuit. It used to be built by
+    inflating the day's inflow, but §5.3.2's competition now holds hub-origin
+    load to the 500 kg itself, so that route yields a capped leg and a rolled
+    remainder rather than a violation. Returns are what the planner cannot
+    refuse -- §5.3.2 ranks hub-origin loads against transfers and says nothing
+    about returns -- so they are the honest way to a §7.1 breach.
     """
     kwargs = dict(inputs)
     for key in [k for k in kwargs if k.startswith("_")]:
         del kwargs[key]
-    kwargs["inflow"] = [dict(e, weight_g=1000) for e in inputs["inflow"]]
     day = inputs["_day"]
+    # The customer site rides along: §5.5 returns to the sender, and `_return_run`
+    # refuses to guess it for an envelope that arrives home without one.
+    waiting = tuple({"package_id": f"RET-{n}", "facility_id": "D1",
+                     "weight_g": 1000, "customer_id": "C-RET",
+                     "customer_lat": 40.4, "customer_lon": -3.7}
+                    for n in range(600))
 
-    report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+    report, _ = run_day(State(day=day.delivery_day, pools=inputs["_pools"],
+                              returns_queue=waiting),
                         seed=7, **kwargs)
 
     bullets = {v.bullet for v in report.violations}
