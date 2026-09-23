@@ -34,7 +34,7 @@ from ddn.model.lifecycle import (
 )
 
 __all__ = ["Attempt", "Recorded", "arrived", "for_retry", "in_transfer",
-           "record", "transfer_requested"]
+           "postponed", "record", "transfer_requested"]
 
 #: §6's outcome for an envelope refused at the doorstep for the recipient's
 #: own reason, as `records.Outcome` spells them. Named here because this module
@@ -93,11 +93,24 @@ class Recorded:
                    and int(a.record.get("attempt_number", 0)) == 0)
 
 
-def for_retry(envelope: Mapping[str, Any], reason: str) -> dict[str, Any]:
-    """§6: a postponed envelope is held Ready at its facility for another go."""
-    return dict(envelope, status="Ready", previous_outcome=POSTPONED,
-                postponed_reason=reason,
+def postponed(envelope: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    """§6: the attempt was not completed. Records it and stops there.
+
+    **Stops there on purpose.** §5.2.6 draws two edges out of Postponed --
+    back to Ready for another go, or to Transfer requested when the address
+    correction moved the facility -- and only the caller knows which. Writing
+    `Ready` here, as this used to, took one of them before the question had
+    been asked, and the other then had no legal path: §5.2.6 draws no
+    `Ready -> Transfer requested`.
+    """
+    return dict(envelope, status=str(after_attempt(POSTPONED)),
+                previous_outcome=POSTPONED, postponed_reason=reason,
                 attempt_number=int(envelope.get("attempt_number", 0)) + 1)
+
+
+def for_retry(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """§5.2.6: "Postponed: back to Ready for next attempt"."""
+    return _move(envelope, Status.READY)
 
 
 def _move(envelope: Mapping[str, Any], target: Status) -> dict[str, Any]:
@@ -198,7 +211,7 @@ def record(attempted: Sequence[Mapping[str, Any]],
         `postponed`, stamped so `returns.goes_back` recognises it.
     """
     attempts: list[Attempt] = []
-    postponed: list[dict[str, Any]] = []
+    held: list[dict[str, Any]] = []
     going_back: list[dict[str, Any]] = [expired(e) for e in swept]
     counts: dict[str, int] = {}
     spent = 0
@@ -209,9 +222,12 @@ def record(attempted: Sequence[Mapping[str, Any]],
         status = after_attempt(what)
 
         if what == POSTPONED:
-            became = for_retry(envelope, reason(envelope))
+            # No transfer step in this slice -- e2e-3 raises requests and
+            # E2E-2 carries them -- so the postponement takes §5.2.6's other
+            # edge straight away.
+            became = for_retry(postponed(envelope, reason(envelope)))
             if retryable is None or retryable(envelope):
-                postponed.append(became)
+                held.append(became)
             else:
                 # §6.1: "an envelope may be retried until its SLA date; after
                 # that it is returned to the customer via the return run". A
@@ -230,5 +246,5 @@ def record(attempted: Sequence[Mapping[str, Any]],
 
         attempts.append(Attempt(envelope["package_id"], what, status, became))
 
-    return Recorded(tuple(attempts), tuple(postponed), tuple(going_back),
+    return Recorded(tuple(attempts), tuple(held), tuple(going_back),
                     counts, spent)

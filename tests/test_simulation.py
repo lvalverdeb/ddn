@@ -472,9 +472,10 @@ def test_a_correction_that_cannot_arrive_in_time_sends_the_envelope_back():
     expired = {"package_id": "PKG-1", "facility_id": "D1",
                "previous_outcome": "Postponed",
                "postponed_reason": "incorrect address",
-               "sla_date": "2026-09-16", "lat": 9.99, "lon": -84.11}
+               "sla_date": "2026-09-16", "lat": 9.99, "lon": -84.11,
+               "status": "Postponed"}
 
-    raised, refused = _raise_transfers(
+    raised, refused, staying = _raise_transfers(
         _Doorstep({}, {}, [expired], [], 0, 0),
         [{"id": "D3", "route_release_time": 7 * 3600}],
         today=date(2026, 9, 16), regeocode=lambda _envelope: "D3")
@@ -485,6 +486,8 @@ def test_a_correction_that_cannot_arrive_in_time_sends_the_envelope_back():
         "§5.5's gate reads this; without it the envelope reaches the return "
         "run and is filtered straight back out")
     assert returns.goes_back(refused[0])
+    assert staying == [], (
+        "an envelope going back must leave the pool; it used to be in both")
 
 
 def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
@@ -624,10 +627,11 @@ def test_a_facility_that_states_no_release_falls_back_to_the_registry():
     moved = {"package_id": "PKG-1", "facility_id": "D1",
              "previous_outcome": "Postponed",
              "postponed_reason": "incorrect address",
-             "sla_date": "2026-09-30", "lat": 9.99, "lon": -84.11}
+             "sla_date": "2026-09-30", "lat": 9.99, "lon": -84.11,
+             "status": "Postponed"}
     doorstep = _Doorstep({}, {}, [moved], [], 0, 0)
 
-    raised, _ = _raise_transfers(
+    raised, _, _ = _raise_transfers(
         doorstep, [{"id": "D3"}], today=date(2026, 9, 16),
         regeocode=lambda _envelope: "D3")
 
@@ -962,3 +966,75 @@ def test_a_waiting_transfer_is_offered_to_the_next_nights_plan(inputs):
             + len(report.transfers_declined)) >= 1, (
         "the held request reached tonight's plan as carried or declined; "
         "neither means State.transfers is not being seeded")
+
+
+# ---------------------- §5.2.6's transfer edges, taken where the diagram draws
+
+@pytest.fixture(scope="module")
+def corrected_day(inputs):
+    """§10's day with every postponed address re-geocoded to D3.
+
+    `regeocode` is the caller's — the simulator has no ground truth to correct
+    *to* — so this is what a day with corrections looks like, and it is the
+    only path on which §5.3.2's first trigger fires at all.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+    return run_day(State(day=day.delivery_day, pools=inputs["_pools"]), seed=7,
+                   regeocode=lambda e: "D3" if e["facility_id"] != "D3" else None,
+                   **kwargs)
+
+
+def test_a_declined_transfer_leaves_its_envelope_not_routable(corrected_day):
+    """§7.1: "an envelope in transfer is not routable until it arrives".
+
+    That is a statement about status, and until §5.2.6's edge was taken there
+    was nothing for a check to read — the envelope sat in tomorrow's pool
+    stamped `Ready`, indistinguishable from one whose depot is correct. Now a
+    transfer no circuit carried leaves it `Transfer requested`, which
+    `postcheck._across_the_day` refuses on sight.
+    """
+    report, tomorrow = corrected_day
+    pool = [e for facility in tomorrow.pools.values() for e in facility]
+    waiting = [e for e in pool if e.get("status") == "Transfer requested"]
+
+    assert report.transfers_raised > report.transfers_carried, (
+        "every transfer was carried, so nothing is left waiting to check")
+    assert waiting, "a declined transfer left its envelope routable"
+    assert len(waiting) == report.transfers_raised - report.transfers_carried
+
+
+def test_a_carried_transfer_arrives_ready_at_the_new_depot(corrected_day):
+    """§5.2.6 ends a transfer at "Ready (at new depot)", and §7.1 makes it
+    routable the moment it arrives — so the facility and the status move
+    together, never the facility alone."""
+    _, tomorrow = corrected_day
+    arrived = [e for e in tomorrow.pools.get("D3", ())
+               if e.get("previous_outcome") == "Postponed"
+               and e.get("status") == "Ready"]
+
+    assert arrived, "nothing reached D3"
+    assert all("Transfer requested" != e.get("status") for e in arrived)
+
+
+def test_an_envelope_going_back_is_not_also_in_tomorrows_pool(inputs):
+    """The double-count the branch closed.
+
+    `_raise_transfers` returned the envelopes it refused *and* left them in
+    `doorstep.postponed`, which `_handover` then placed — so one envelope was
+    in tonight's return load and tomorrow's pool at once. §10's day never hits
+    the branch, because `regeocode` is `None` there, so nothing caught it.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+
+    _, tomorrow = run_day(
+        State(day=day.delivery_day, pools=inputs["_pools"]), seed=7,
+        regeocode=lambda e: "D3" if e["facility_id"] != "D3" else None,
+        **kwargs)
+
+    in_pool = {e["package_id"] for facility in tomorrow.pools.values()
+               for e in facility}
+    going_back = {e["package_id"] for e in tomorrow.returns_queue}
+
+    assert not in_pool & going_back
