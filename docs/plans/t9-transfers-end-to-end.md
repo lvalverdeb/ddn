@@ -251,6 +251,11 @@ hub"* — apply it at decline time, not only at raise time. Until this exists,
 - Old names accepted for one release. **The deprecation must be observable**:
   a `Deprecation: true` response header (plus `Sunset`), which the test client
   can assert. `warnings.warn` inside a handler is invisible to it.
+  *Built without `Sunset`: RFC 8594 types it as an HTTP-date, and this
+  repository's only release marker is the spec's draft version -- a version
+  string there is malformed, which is worse than absent -- so the release was
+  named in a `Link; rel="sunset"` instead. Both headers are gone now; see
+  question 3 below.*
 - `tests/test_api_contract.py` parses §13.2's **paths**, not its event names
   (`paths_in_section_13_2`, line 28) — so event-name drift needs its own pin
   or this hole reopens exactly the way v0.12's Transfers resource did.
@@ -361,5 +366,9 @@ spans four. One commit per step:
    The document then outran the driver app: three v0.17 proposals were queued
    against v0.16 at once, and the bump that closed this window was §5.1.1's
    late-file exception (56e5aee) — nothing to do with line-haul vocabulary.
-   `SUNSET` is at `(0, 18)` as a labelled stopgap; retiring the trip-level
-   names is Luis's call, not a side effect of an unrelated spec bump.
+   `SUNSET` went to `(0, 18)` as a labelled stopgap, and Luis then made the
+   call the stopgap was holding open: delete. `TRIP_MOVES`, `SUNSET` and the
+   three open-side tests are gone, and with them the coupling that made a
+   document edit change what the API accepts — nothing now branches on
+   `request.app.version`. §13.2's per-leg names are the only ones the service
+   knows, which is what v0.16 published and what `(0, 17)` promised.

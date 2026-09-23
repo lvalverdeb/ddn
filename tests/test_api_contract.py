@@ -137,10 +137,13 @@ def test_the_event_names_are_the_ones_section_13_2_writes(path, served):
     parenthetical, and every test in this file stayed green while the service
     went on answering 422 to both of the names the document now lists.
 
-    Trip-level `departed`/`arrived` are deliberately *not* in `LEG_MOVES`:
-    they are accepted for one release (T9) while §13.2 has already stopped
-    listing them, which is precisely what a deprecation window is.
-    `tests/test_api_behaviour.py` holds both of its sides.
+    Trip-level `departed`/`arrived` were accepted for one release after §13.2
+    stopped listing them (T9's deprecation window) and are now gone from the
+    handler as well. This assertion was equally true throughout -- the window
+    lived beside `LEG_MOVES`, never in it -- so the test that catches a
+    regression re-adding them is
+    `tests/test_api_behaviour.py::test_the_retired_trip_level_names_are_refused`,
+    not this one.
     """
     assert events_in_section_13_2(path) == set(served)
 

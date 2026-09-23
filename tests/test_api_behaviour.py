@@ -785,9 +785,6 @@ async def test_a_leg_event_names_the_leg_that_moved(client, store):
     assert response.status_code == 200
     assert response.json() == {"plan_id": "JOB-1", "event": "leg departed",
                                "leg": 1}
-    # The current spelling is not deprecated. Asserted here because a handler
-    # that set the header unconditionally would pass every test below.
-    assert "Deprecation" not in response.headers
     assert next(store.audit_for("JOB-1")).action == "linehaul:leg departed"
 
 
@@ -822,92 +819,21 @@ async def test_an_unknown_linehaul_event_is_refused(client):
     assert "leg arrived, leg departed" in response.json()["detail"]
 
 
-async def test_the_trip_level_names_are_still_accepted_and_say_so(client):
-    """T9: the old names keep working for one release, with a warning.
+async def test_the_retired_trip_level_names_are_refused(client):
+    """`departed` and `arrived` were §13.2's spelling before v0.16, and this
+    service went on accepting them for one release so that a driver app on a
+    slower cycle than the document was not broken by a document edit. That
+    window is closed: the handler no longer knows the names.
 
-    The warning is a response header and not `warnings.warn`, because the
-    caller this protects is a driver app over HTTP: a Python warning raised
-    inside the handler is invisible to it and to this test.
+    Written as its own test rather than another row in
+    `test_an_unknown_linehaul_event_is_refused` because these two are not
+    unknown by accident. They were published and then retired by decision, and
+    this is what fails if they come back.
     """
     response = await client.post(
         "/linehaul/plans/JOB-1/events",
         json={"event": "departed", "actor": "ops-anna"},
-        headers={"Idempotency-Key": "old-1"})
-
-    assert response.status_code == 200
-    assert response.json() == {"plan_id": "JOB-1", "event": "departed"}
-    assert response.headers["Deprecation"] == "true"
-    assert 'rel="sunset"' in response.headers["Link"]
-    assert "0.18" in response.headers["Link"]
-
-
-async def test_a_trip_level_name_is_recorded_as_itself(client, store):
-    """Accepted, not translated.
-
-    Trip-level `departed` means the first leg left and `arrived` the last one
-    landed -- but *which* leg that is lives in the plan, and this handler
-    holds the store. Writing a leg index the caller never sent would put a
-    number in §13.1's audit trail that nobody stands behind, so the audit says
-    what arrived.
-    """
-    await client.post("/linehaul/plans/JOB-1/events",
-                      json={"event": "arrived", "actor": "ops-anna"},
-                      headers={"Idempotency-Key": "old-2"})
-
-    entry = next(store.audit_for("JOB-1"))
-    assert entry.action == "linehaul:arrived"
-    assert "leg" not in store.plans["JOB-1"]["events"][0]
-
-
-async def test_a_replayed_deprecated_event_is_still_deprecated(client):
-    """The second call is the one that would lose the warning.
-
-    `once` short-circuits on a replayed key and hands back the first call's
-    body, so a header set inside `produce` -- or on an injected `Response`,
-    which FastAPI merges only when the handler returns something it has to
-    serialise -- is absent here. A driver app retrying on a flaky connection
-    would be told once and then never again, which is the half of the window
-    that matters: retries are how it learns.
-    """
-    sent = {"event": "departed", "actor": "ops-anna"}
-    key = {"Idempotency-Key": "replayed"}
-
-    first = await client.post("/linehaul/plans/JOB-1/events", json=sent,
-                              headers=key)
-    again = await client.post("/linehaul/plans/JOB-1/events", json=sent,
-                              headers=key)
-
-    assert again.headers.get("Idempotent-Replay") == "true", "not a replay"
-    assert again.json() == first.json()
-    assert again.headers["Deprecation"] == "true"
-    assert "0.18" in again.headers["Link"]
-
-
-async def test_the_trip_level_names_go_when_the_published_version_arrives(pool):
-    """The other side of "one release", and what closes the window.
-
-    The window is measured against the app's own published version, which
-    `create_app` reads from the spec's `**Status:** Draft v…`. Pinned from
-    both sides because that is an unusual coupling -- a document edit changes
-    what the API accepts -- and an unusual coupling nobody asserted is one
-    that gets reverted by someone who thought it was a bug.
-
-    The number moved from 0.17 to 0.18 when v0.17 landed: the bump that would
-    have closed this window was §5.1.1's late-file exception, nothing to do
-    with line-haul vocabulary. `planning.SUNSET` carries that reasoning and
-    says it is a stopgap. Still written out rather than read from the constant
-    -- reading it would make this test agree with whatever the window says,
-    which is the one thing it is here not to do.
-    """
-    app = make_app(pool, Store())
-    app.version = "0.18"
-
-    async with AsyncClient(transport=ASGITransport(app=app),
-                           base_url="http://api") as sunset:
-        response = await sunset.post(
-            "/linehaul/plans/JOB-1/events",
-            json={"event": "departed", "actor": "ops-anna"},
-            headers={"Idempotency-Key": "past-sunset"})
+        headers={"Idempotency-Key": "retired"})
 
     assert response.status_code == 422
     assert "leg arrived, leg departed" in response.json()["detail"]
