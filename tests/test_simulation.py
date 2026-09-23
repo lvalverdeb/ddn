@@ -531,6 +531,41 @@ def test_a_correction_that_cannot_arrive_in_time_sends_the_envelope_back():
         "an envelope going back must leave the pool; it used to be in both")
 
 
+def test_the_sla_bound_is_the_end_of_the_date_and_not_its_start():
+    """§6.1's date is a day an envelope may be delivered on, not a moment.
+
+    The test above is the pair to this one and neither is redundant. An
+    envelope due *tomorrow* arrives at the corrected depot at tomorrow's 07:00
+    release and is delivered during tomorrow, inside its SLA. Read `sla_date`
+    as the instant the date *begins* and its expiry falls at tomorrow 00:00 --
+    seven hours before the arrival -- and §5.3.2 returns it to the customer
+    instead. Every other envelope gets the same verdict under both readings,
+    which is why `tests/fixtures/peak_day_transfers.py:187` took the end of the
+    date and `simulation/day.py` took the start for two whole tasks without a
+    single test going red. This is the one draw that tells them apart.
+    """
+    from ddn.simulation.day import _Doorstep, _raise_transfers
+
+    due_tomorrow = {"package_id": "PKG-2", "facility_id": "D1",
+                    "previous_outcome": "Postponed",
+                    "postponed_reason": "incorrect address",
+                    "sla_date": "2026-09-17", "lat": 9.99, "lon": -84.11,
+                    "status": "Postponed"}
+
+    raised, refused, staying = _raise_transfers(
+        _Doorstep({}, {}, [due_tomorrow], [], 0, 0),
+        [{"id": "D3", "route_release_time": 7 * 3600}],
+        today=date(2026, 9, 16), regeocode=lambda _envelope: "D3")
+
+    assert [t.package_id for t in raised] == ["PKG-2"], (
+        "due tomorrow, arriving tomorrow morning: inside its SLA")
+    assert refused == []
+    assert [e["status"] for e in staying] == [str(Status.TRANSFER_REQUESTED)]
+    assert raised[0].deadline == datetime.combine(date(2026, 9, 17), time(7)), (
+        "§9.1's min resolves to the release: the SLA runs to the end of the "
+        "17th and the arrival is 07:00 on the 17th, so the release binds")
+
+
 def test_a_transfer_no_circuit_reaches_is_declined_with_a_reason(inputs):
     """§5.3.2 rides the *existing* line-haul; it does not add a van run.
 

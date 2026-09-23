@@ -397,12 +397,32 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
 
         release = datetime.combine(today + timedelta(days=1), time()) + timedelta(
             seconds=int(releases.get(corrected, default_release)))
+        # §6.1 makes "SLA date = today" a must-deliver-*today* constraint, so
+        # the date names a day the envelope may still be delivered on and not a
+        # moment it expires at: the bound is the **end** of it.
+        # `tests/fixtures/peak_day_transfers.py:187` has always read it that
+        # way; this line read the start, and the two disagreed silently because
+        # every candidate on the peak day gets the same verdict either way.
         sla = envelope.get("sla_date")
-        deadline = min(release, datetime.combine(date.fromisoformat(sla), time())
-                       ) if sla else release
-        if deadline <= datetime.combine(today, time()):
+        expiry = (datetime.combine(date.fromisoformat(sla), time())
+                  + timedelta(days=1)) if sla else None
+        # §5.3.2 is a pair: "transferred if it can reach the correct depot
+        # before its SLA date; otherwise it is returned to the customer via the
+        # hub". Reaching happens at `release`, so that is what the SLA is asked
+        # about. The old test -- is the deadline behind *today* -- gave the same
+        # answer only while the bound was the start of the date; with the end of
+        # it, an envelope due today has a deadline of tonight's midnight, which
+        # is ahead of today and still behind any next-morning arrival.
+        # `>=` and not `>` so a depot releasing at 00:00 refuses rather than
+        # arriving at the instant the SLA date ends (§3.1's column is [TBD];
+        # `ddn/linehaul/circuit.py:130` records the same degeneracy).
+        if expiry is not None and release >= expiry:
             refused.append(dict(envelope, sla_expired=True))
             continue
+        # §9.1's formula as stated. It now always resolves to the release --
+        # see the guard above -- which is a consequence of the end-of-date
+        # bound worth knowing about, not an invariant to lean on.
+        deadline = min(release, expiry) if expiry else release
         staying.append(outcomes.transfer_requested(envelope))
 
         raised.append(TransferRequest(
