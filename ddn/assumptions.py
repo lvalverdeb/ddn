@@ -114,12 +114,16 @@ VAN_IDLE_RETURN_MIN = 45
 
 
 # §5.2.5 and Open Question 4: no throughput figure is supplied anywhere. These
-# three decide `expected_ready_at`, and through it what line-haul can carry, so
+# four decide `expected_ready_at`, and through it what line-haul can carry, so
 # a readiness result computed from them describes them rather than the
 # operation. Deliberately not fitted to §10's 700-of-900 assembly split.
 RECONCILE_PER_HOUR = 1200
 ASSEMBLY_PER_HOUR = 120
 SORT_PER_HOUR = 2400
+# §5.2.2 runs geocoding before the bag arrives in the usual case, where it costs
+# readiness nothing. §5.1.1's late-or-missing file is the case where it is on
+# the critical path, and this rate is what it costs there.
+GEOCODE_PER_HOUR = 900
 
 # §5.1.5's own illustration: "re-optimisation runs at a fixed cadence (e.g.
 # every 30 minutes)".

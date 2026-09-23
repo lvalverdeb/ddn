@@ -79,9 +79,20 @@ TRIP_MOVES = frozenset({"departed", "arrived"})
 #: "**Status:** Draft v…", so this window closes on its own rather than
 #: waiting for someone to remember this constant. That does mean a spec
 #: revision changes what the API accepts; it is the marker this repository
-#: has, and `tests/test_api_contract.py` pins both sides of the window so the
+#: has, and `tests/test_api_behaviour.py` pins both sides of the window so the
 #: change cannot be a surprise.
-SUNSET = (0, 17)
+#:
+#: **Moved from (0, 17) to (0, 18) when v0.17 landed, and this is a stopgap.**
+#: The window was "one release" for a driver app on a slower cycle than the
+#: document -- and the document then outran the app: three v0.17 proposals
+#: queued against v0.16 at once, so the bump that closed this window was the
+#: late-file exception (§5.1.1), nothing to do with line-haul vocabulary.
+#: Retiring the trip-level names is a decision about a published interface and
+#: is Luis's to make, not a side effect of a spec bump approved for something
+#: else. The alternative -- delete `TRIP_MOVES`, the branch below and the three
+#: open-side tests in `tests/test_api_behaviour.py` -- is what (0, 17)
+#: promised, and is the other half of the fork.
+SUNSET = (0, 18)
 SUNSET_LABEL = ".".join(str(part) for part in SUNSET)
 
 

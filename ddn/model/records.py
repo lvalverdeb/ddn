@@ -185,6 +185,10 @@ class Mailbag:
     expected_weight_g: int
     assembly_required_count: int
     seal_id: str
+    #: §9.1, v0.17. On the bag and not on the request: the upload file is a
+    #: bag's envelopes (§5.1.1), and §5.1.1's exception holds a bag back, not a
+    #: customer. Null says the file never came -- §5.1.1's "late **or missing**".
+    file_received_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

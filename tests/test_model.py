@@ -48,6 +48,12 @@ ILLEGAL = [
 
 #: Transcribed from §9.1's envelope table. "lat, lon" is one row and
 #: "time_window_start / end" is another; both are expanded here.
+#: **One row of §9.1 is deliberately absent: `late_ready` (v0.17).** Nothing
+#: writes it -- `ready_times` returns times, not envelopes, so §5.1.1's flag
+#: lives on `processing.Readiness` and reaches no `Envelope`. Whether it earns
+#: a place here at all is open: `docs/spec-proposals/v0.17-late-file.md` §8
+#: question 1. Adding it before there is a writer would be a field that is
+#: always null and a test that passes because of it.
 SECTION_9_1_ENVELOPE = {
     "package_id", "customer_id", "recipient_id", "package_type", "mailbag_id",
     "status", "expected_ready_at", "lat", "lon", "coord_source",

@@ -39,7 +39,8 @@ def run(scenario: Scenario) -> ReadyPool:
         travel=scenario.travel,
         cut_off=scenario.cut_off,
     )
-    ready_at = processing.ready_times(dispatch, scenario.inflow)
+    ready_at = processing.ready_times(dispatch, scenario.inflow,
+                                      scenario.requests)
     positioned = processing.at_facilities(scenario.facilities)
     processing.position(positioned, ready_at, scenario.requests, scenario.inflow)
     return ReadyPool.of(dispatch, positioned, scenario.inflow,

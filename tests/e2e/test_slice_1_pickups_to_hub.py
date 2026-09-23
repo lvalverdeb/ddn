@@ -312,21 +312,44 @@ def test_a9():
     Scenario: Upload file arrives *after* the bag (exception)
     Expected: Envelopes processed in the slower order; `expected_ready_at`
     later than a same-time bag with a file; flagged late-ready
+
+    **The comparison is controlled.** The two bags differ in one thing: whether
+    §5.1.1's file beat them to the hub. Same arrival second, same package type,
+    same priority, and each scheduled against its own idle hub, so the second
+    is not merely behind the first in a shared queue. Until v0.17 this test
+    compared a `finished` envelope against an `assembly` one and asserted the
+    later was later — true, §5.2.3's rule, and not A9's.
     """
     arrived = 8 * 3600
-    with_file = [{"package_id": "PKG-FILE", "package_type": "finished",
+    with_file = [{"package_id": "PKG-ON-TIME", "package_type": "finished",
                   "mailbag_id": "BAG-F", "priority": 500.0}]
-    without = [{"package_id": "PKG-LATE", "package_type": "assembly",
+    without = [{"package_id": "PKG-ON-TIME", "package_type": "finished",
                 "mailbag_id": "BAG-L", "priority": 500.0}]
 
-    early = processing.schedule(with_file, {"BAG-F": arrived})
-    late = processing.schedule(without, {"BAG-L": arrived})
+    early, = processing.schedule(with_file, {"BAG-F": arrived})
+    late, = processing.schedule(without, {"BAG-L": arrived},
+                                late_files={"BAG-L"})
 
-    assert early[0].ready_at < late[0].ready_at, (
-        "§5.2.3: an envelope that must pass the clean room is ready later "
-        "than one that need not, from the same arrival")
-    assert processing.requires_assembly(without[0])
-    assert not processing.requires_assembly(with_file[0])
+    # "processed in the slower order" — §5.1.1's open, key in, then geocode.
+    # The late envelope passes a stage the other does not, and passes it after
+    # reconciliation rather than before arrival (§5.2.2).
+    assert early.geocoded_at is None, (
+        "§5.2.2: with the file in hand, geocoding ran before the bag arrived "
+        "and costs readiness nothing")
+    assert late.geocoded_at is not None
+    assert late.reconciled_at < late.geocoded_at < late.sorted_at, (
+        "§5.1.1's slower order: open, key in, then geocode — the stage sits "
+        "between reconciliation and the sorter, and costs time in between")
+
+    # "`expected_ready_at` later than a same-time bag with a file" — the
+    # clause that discriminates. Both bags arrived at the same second.
+    assert early.ready_at < late.ready_at, (
+        "§5.2.5: geocoding is on the critical path for a late-file bag, so "
+        "its envelopes are ready later than an identical bag whose file came")
+
+    # "flagged late-ready" — §5.1.1 puts the flag on the envelope.
+    assert late.late_ready
+    assert not early.late_ready
 
 
 @pytest.mark.parametrize("row_id", sorted(r for r in rows.ROWS

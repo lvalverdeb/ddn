@@ -116,6 +116,11 @@ class Mailbag(Strict):
     pickup_window_start: datetime | None = None
     pickup_window_end: datetime | None = None
     seal_id: str
+    file_received_at: datetime | None = Field(
+        default=None,
+        description=("§9.1: when the customer's upload file arrived. Null where"
+                     " it never did -- §5.1.1's \"late **or missing**\", which"
+                     " puts geocoding on the critical path (§5.2.2)."))
 
 
 class EnvelopeEvent(Strict):

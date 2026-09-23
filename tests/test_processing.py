@@ -95,6 +95,89 @@ def test_requires_assembly_reads_package_type():
     assert not requires_assembly(envelope("P1"))
 
 
+def test_a_late_file_puts_geocoding_on_the_critical_path():
+    """§5.1.1's slower order, against the same bag on the usual path.
+
+    One envelope, one arrival, one difference: whether the file beat the bag.
+    §5.2.2 says geocoding "runs before arrival in the usual case, so geocoding
+    is off the critical path", and §5.1.1 names the case where it is on it.
+    """
+    usual = schedule([envelope("P1")], {"BAG-1": 10 * HOUR})[0]
+    late = schedule([envelope("P1")], {"BAG-1": 10 * HOUR},
+                    late_files={"BAG-1"})[0]
+
+    assert usual.geocoded_at is None and not usual.late_ready
+    assert late.reconciled_at == usual.reconciled_at, (
+        "reconciliation is unchanged: §5.1.1 adds a stage after it, not before")
+    assert late.ready_at > usual.ready_at
+    assert late.ready_at - usual.ready_at == pytest.approx(
+        3600 / assumptions.GEOCODE_PER_HOUR, abs=1), (
+        "the whole of the difference is the geocoding stage")
+
+
+def test_only_the_bags_named_late_take_the_slower_order():
+    """A late bag does not slow down the bag beside it.
+
+    Both arrive at the same second; only one is named. §5.2.2 has already
+    geocoded the other, before it arrived.
+    """
+    pool = [envelope("P1", bag="BAG-1"), envelope("P2", bag="BAG-2")]
+    by_id = {r.package_id: r
+             for r in schedule(pool, {"BAG-1": 10 * HOUR, "BAG-2": 10 * HOUR},
+                               late_files={"BAG-2"})}
+
+    assert by_id["P1"].geocoded_at is None
+    assert by_id["P2"].geocoded_at is not None
+    assert by_id["P1"].late_ready is False
+    assert by_id["P2"].late_ready is True
+
+
+def test_geocoding_is_a_queue_like_every_other_step_in_section_5_2():
+    """A throughput is a server, not a per-envelope delay — here too.
+
+    Ten envelopes off one late bag do not geocode simultaneously. This is the
+    same modelling decision reconciliation and the clean room make, and it is
+    asserted here because a stage added later is exactly where it would be
+    forgotten.
+    """
+    pool = [envelope(f"P{i}", bag="BAG-1") for i in range(10)]
+    done = schedule(pool, {"BAG-1": 10 * HOUR}, late_files={"BAG-1"},
+                    geocode_per_hour=60)
+
+    stamps = sorted(r.geocoded_at for r in done)
+    assert stamps[-1] - stamps[0] == pytest.approx(9 * 60, abs=1), (
+        "at 60 an hour the tenth envelope clears nine minutes after the first")
+
+
+def test_a_late_bag_reaches_the_clean_room_after_geocoding_not_before():
+    """§5.2.5's order: reconciliation, geocoding, then the assembly queue."""
+    late = schedule([envelope("P1", kind="assembly")], {"BAG-1": 10 * HOUR},
+                    late_files={"BAG-1"})[0]
+
+    assert late.reconciled_at < late.geocoded_at <= late.assembled_at, (
+        "an envelope cannot enter the clean room before it has been keyed in")
+
+
+def test_a_geocoding_throughput_of_zero_is_refused():
+    """The same refusal the other three rates get, for the same reason."""
+    with pytest.raises(ValueError, match="processes nothing"):
+        schedule([envelope("P1")], {"BAG-1": 0}, late_files={"BAG-1"},
+                 geocode_per_hour=0)
+
+
+def test_naming_no_late_bags_schedules_exactly_as_before():
+    """Naming no bags and naming an empty set are the same schedule.
+
+    Narrow on purpose: this pins the default, not the fleet. That every
+    existing fixture keeps the times it had is `test_peak_day_baseline.py`'s
+    claim, and only that file is in a position to make it.
+    """
+    pool = [envelope("P1"), envelope("P2", kind="assembly")]
+    arrivals = {"BAG-1": 10 * HOUR}
+    assert schedule(pool, arrivals) == schedule(pool, arrivals,
+                                                late_files=frozenset())
+
+
 def test_readiness_is_ordered_by_when_the_hub_finishes():
     pool = [envelope(f"P{i}") for i in range(5)]
     done = schedule(pool, {"BAG-1": 0}, reconcile_per_hour=5)
@@ -273,6 +356,69 @@ def test_ready_times_covers_the_bags_that_came_back_and_no_others():
 
     assert set(ready_at) == {"P-1"}
     assert ready_at["P-1"] > 9 * 3600, "ready is after the bag got back, not at"
+
+
+def test_late_file_bags_reads_section_9_1s_field_both_ways():
+    """§5.1.1's "late **or missing**" — two facts, and §9.1 keeps them apart.
+
+    A null says the file never came; a time after the bag's arrival says it
+    came too late to have run ahead of it (§5.2.2). A time before it is the
+    usual case and not late at all.
+    """
+    arrival_of = {"BAG-NULL": 9 * HOUR, "BAG-LATE": 9 * HOUR,
+                  "BAG-EARLY": 9 * HOUR, "BAG-ABSENT": 9 * HOUR}
+    requests = [{"mailbag_id": "BAG-NULL", "file_received_at": None},
+                {"mailbag_id": "BAG-LATE", "file_received_at": 9 * HOUR + 1},
+                {"mailbag_id": "BAG-EARLY", "file_received_at": 7 * HOUR},
+                {"mailbag_id": "BAG-ABSENT"}]
+
+    assert processing.late_file_bags(requests, arrival_of) == {
+        "BAG-NULL", "BAG-LATE"}
+
+
+def test_a_request_that_never_mentions_the_file_is_not_treated_as_missing():
+    """§9.1 makes `file_received_at` optional, and absent is not null.
+
+    A record that does not carry the field records nothing about the file;
+    reading that as "no file came" would put every bag written before v0.17
+    onto §5.1.1's slower order and rewrite a day that already happened. §9.1
+    says "Null where it never did" — the null is the claim, not the silence.
+    """
+    arrival_of = {"BAG-1": 9 * HOUR}
+    assert processing.late_file_bags([{"mailbag_id": "BAG-1"}], arrival_of) == set()
+    assert processing.late_file_bags(
+        [{"mailbag_id": "BAG-1", "file_received_at": None}], arrival_of) == {"BAG-1"}
+
+
+def test_ready_times_carries_a_late_file_through_to_the_ready_time():
+    """The §13 ingest field reaches §5.2.5, which is the point of carrying it.
+
+    Without this, `file_received_at` would be a field the API accepts and
+    nothing reads.
+    """
+    inflow = [{"package_id": "P-1", "mailbag_id": "BAG-1",
+               "package_type": "finished"}]
+    dispatch = _Dispatch(collected={"BAG-1"}, routes={"VAN-1": ["BAG-1"]},
+                         returned_at={"VAN-1": 9 * HOUR})
+
+    on_time = processing.ready_times(
+        dispatch, inflow, [{"mailbag_id": "BAG-1",
+                            "file_received_at": 7 * HOUR}])
+    late = processing.ready_times(
+        dispatch, inflow, [{"mailbag_id": "BAG-1", "file_received_at": None}])
+
+    assert late["P-1"] > on_time["P-1"]
+
+
+def test_ready_times_without_requests_schedules_the_usual_way():
+    """`requests` defaults empty, so a caller that has none is not made late."""
+    inflow = [{"package_id": "P-1", "mailbag_id": "BAG-1",
+               "package_type": "finished"}]
+    dispatch = _Dispatch(collected={"BAG-1"}, routes={"VAN-1": ["BAG-1"]},
+                         returned_at={"VAN-1": 9 * HOUR})
+
+    assert (processing.ready_times(dispatch, inflow)
+            == processing.ready_times(dispatch, inflow, []))
 
 
 def test_ready_times_takes_a_dispatch_without_importing_pickups():

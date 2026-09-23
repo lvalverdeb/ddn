@@ -1,6 +1,6 @@
 # Document Delivery Network — VRP Problem Definition
 
-**Status:** Draft v0.16
+**Status:** Draft v0.17
 **Date:** 23 September 2026
 **Owner:** [TBD]
 **Audience:** Operations, IT integration team, VRP solution vendor/maintainers
@@ -196,7 +196,7 @@ The bag is opened and its contents tallied against the manifest. Discrepancies (
 
 #### 5.2.2 Geocoding (where needed)
 
-Envelopes whose upload file carried only a zip-code centroid have their delivery address geocoded. Because the file normally precedes the bag, this step runs **before arrival** in the usual case, so geocoding is off the critical path. Low-confidence results are held and flagged (§3.2).
+Envelopes whose upload file carried only a zip-code centroid have their delivery address geocoded. Because the file normally precedes the bag, this step runs **before arrival** in the usual case, so geocoding is off the critical path. Where the file is late or missing (§5.1.1) it runs after reconciliation instead, and is on the critical path. Low-confidence results are held and flagged (§3.2).
 
 #### 5.2.3 Assembly (some package types only)
 
@@ -214,12 +214,12 @@ An envelope is **ready** when it has cleared all applicable steps. The hub must 
 - next-day delivery routing at the hub and at each depot is built on the envelopes that will be there by morning;
 - allocation planning can forecast tomorrow's ready volume per facility.
 
-Processing throughput per hour for reconciliation, geocoding, assembly and sorting are needed to compute expected ready times. *[Open Question 4.]* With the upload file in hand before arrival, the expected ready time for each envelope can be computed at request time as: van's expected return to hub + reconciliation time + (assembly queue time if required) + sorting time. Envelopes not ready by a depot's latest van departure miss that day's line-haul and travel the following day; hub-direct envelopes not ready by end of processing join the following day's hub routes instead of tomorrow's. Assembled envelopes follow the same rule as any other: once ready and sorted they go on today's line-haul if depot-bound, or into tomorrow's hub routes if hub-direct.
+Processing throughput per hour for reconciliation, geocoding, assembly and sorting are needed to compute expected ready times. *[Open Question 4.]* With the upload file in hand before arrival, the expected ready time for each envelope can be computed at request time as: van's expected return to hub + reconciliation time + (assembly queue time if required) + sorting time. Where the file is late or missing (§5.1.1), geocoding cannot have run ahead of the bag and joins the sequence after reconciliation, in §5.1.1's order — open, key in, then geocode: van's expected return to hub + reconciliation time + geocoding time + (assembly queue time if required) + sorting time. Such an envelope cannot be computed at request time, only on arrival. Envelopes not ready by a depot's latest van departure miss that day's line-haul and travel the following day; hub-direct envelopes not ready by end of processing join the following day's hub routes instead of tomorrow's. Assembled envelopes follow the same rule as any other: once ready and sorted they go on today's line-haul if depot-bound, or into tomorrow's hub routes if hub-direct.
 
 #### 5.2.6 Envelope status lifecycle
 
 ```
-Requested (upload file received; geocoded and pre-sorted) → Collected → Received at hub → Reconciled → [Assembled] → Sorted → Ready
+Requested (usually: upload file received, geocoded and pre-sorted — §5.1.1's exception defers both to after Reconciled) → Collected → Received at hub → Reconciled → [Assembled] → Sorted → Ready
    → (Line-haul → At depot) → Dispatched → {Delivered | Rejected | Returned | Postponed}
    → Postponed: back to Ready for next attempt, until SLA date
    → Postponed with facility change, or misassignment found: Transfer requested → In transfer → Ready (at new depot)
@@ -403,7 +403,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | package_type | enum | From upload file; determines whether assembly is required |
 | mailbag_id | string | Bag the envelope arrived in |
 | status | enum | Lifecycle state (§5.2.6) |
-| expected_ready_at | datetime | Computed at upload-file receipt; refined as the envelope progresses; actual time once Ready |
+| expected_ready_at | datetime | Computed at upload-file receipt, or on arrival where the file was late or missing (§5.1.1); refined as the envelope progresses; actual time once Ready |
 | lat, lon | float | Delivery coordinates |
 | coord_source | enum | actual / geocoded_address / zip_centroid |
 | geocode_confidence | enum | high / medium / low |
@@ -417,6 +417,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | previous_outcome | enum, optional | Postponed + sub-reason |
 | locked_vehicle_id | string, optional | Operations override: force in, onto this vehicle |
 | excluded_by_ops | boolean, optional | Operations override: force out. Not offered to the solver; reported unassigned |
+| late_ready | boolean, optional | §5.1.1: the bag's file was late or missing, so geocoding was on the critical path for this envelope |
 
 **Mailbags / pickup requests** (arrive incrementally)
 | Field | Type | Notes |
@@ -430,6 +431,7 @@ Two capacity checks should be made before the solver is expected to meet SLA tar
 | assembly_required_count | integer | Envelopes needing clean-room assembly, from package_type |
 | pickup_window_start / end | datetime, optional | |
 | seal_id | string | Safety device identifier |
+| file_received_at | datetime, optional | When the customer's upload file arrived. Null where it never did — §5.1.1's "late **or missing**" |
 
 **Transfer requests**
 | Field | Type | Notes |

@@ -72,9 +72,13 @@ guesses.
 | `RECONCILE_PER_HOUR` | 1200 | §5.2.1, §5.2.5 | **invented** |
 | `ASSEMBLY_PER_HOUR` | 120 | §5.2.3; §8.3 calls the clean room the likely bottleneck | **invented.** The one that decides how much rolls to tomorrow |
 | `SORT_PER_HOUR` | 2400 | §5.2.4 | **invented** |
+| `GEOCODE_PER_HOUR` | 900 | §5.2.2, §5.2.5 | **invented.** Costs readiness nothing in the usual case; it is §5.1.1's late-or-missing file that puts it on the critical path. Slower than reconciliation because §5.2.2 holds low-confidence results for review, faster than the clean room. **Sensitivity:** it moves `expected_ready_at` for late-file bags only, and nothing else — no envelope on today's usual path passes this stage, so the peak-day baseline is independent of it |
 
-Geocoding has no rate here: §5.2.2 puts it before the bag arrives in the usual
-case, so it is off the critical path for readiness.
+Geocoding earns its rate from the exception, not the rule: §5.2.2 puts it before
+the bag arrives in the usual case, so it is off the critical path for readiness
+there. §5.1.1's late-or-missing file is the case where it is on it — the bag is
+processed in the slower order (open, key in, then geocode), and `GEOCODE_PER_HOUR`
+is what that order costs.
 
 ## Pickups (§5.1.5, §3.2)
 

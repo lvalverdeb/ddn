@@ -269,3 +269,45 @@ async def test_the_pickup_worker_publishes_the_plan_the_endpoint_reads(
     assert published["cycle"] == 1
     assert published["routes"] == plan["routes"]
     assert sum(len(r) for r in published["routes"].values()) == plan["visits"]
+
+
+async def test_the_ingest_carries_the_upload_files_arrival(client, store):
+    """§13's ingest records §9.1's `file_received_at` (v0.17).
+
+    `Mailbag` is `Strict`, so before §9.1 had the row this body was a 422 and
+    the operation had no way to say the file was late. §5.1.1's exception is
+    unreachable without it: `processing.late_file_bags` compares this against
+    the bag's arrival, and nothing else in §9.1 is the file's time --
+    `requested_at` is the customer's call.
+    """
+    body = {"mailbag_id": "BAG-LATE", "customer_id": "CUST-1",
+            "lat": 9.93, "lon": -84.08, "requested_at": "2026-09-16T08:00:00",
+            "envelope_count": 12, "expected_weight_g": 3000,
+            "seal_id": "SEAL-9001",
+            "file_received_at": "2026-09-16T11:45:00"}
+    created = await client.post("/pickups", json=body,
+                                headers={"Idempotency-Key": "bag-late"})
+
+    assert created.status_code == 201
+    assert store.mailbags["BAG-LATE"]["file_received_at"] == (
+        "2026-09-16T11:45:00")
+
+
+async def test_the_ingest_accepts_a_bag_whose_file_never_came(client, store):
+    """§5.1.1's "late **or missing**" -- the second case, explicitly null.
+
+    The store keeps `model_dump(mode="json")`, which renders an omitted field
+    and an explicit null alike, so *this surface* cannot tell them apart. The
+    distinction §5.1.1 needs survives where it is read: `late_file_bags` takes
+    the request mappings, where an absent key and a null are different facts
+    (`tests/test_processing.py`). Asserted here rather than assumed.
+    """
+    for key, body in (("absent", {}), ("null", {"file_received_at": None})):
+        created = await client.post(
+            "/pickups", headers={"Idempotency-Key": f"bag-{key}"},
+            json={"mailbag_id": f"BAG-{key.upper()}", "customer_id": "CUST-1",
+                  "lat": 9.93, "lon": -84.08,
+                  "requested_at": "2026-09-16T08:00:00", "envelope_count": 4,
+                  "expected_weight_g": 1000, "seal_id": f"SEAL-{key}", **body})
+        assert created.status_code == 201
+        assert store.mailbags[f"BAG-{key.upper()}"]["file_received_at"] is None

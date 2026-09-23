@@ -838,7 +838,7 @@ async def test_the_trip_level_names_are_still_accepted_and_say_so(client):
     assert response.json() == {"plan_id": "JOB-1", "event": "departed"}
     assert response.headers["Deprecation"] == "true"
     assert 'rel="sunset"' in response.headers["Link"]
-    assert "0.17" in response.headers["Link"]
+    assert "0.18" in response.headers["Link"]
 
 
 async def test_a_trip_level_name_is_recorded_as_itself(client, store):
@@ -880,7 +880,7 @@ async def test_a_replayed_deprecated_event_is_still_deprecated(client):
     assert again.headers.get("Idempotent-Replay") == "true", "not a replay"
     assert again.json() == first.json()
     assert again.headers["Deprecation"] == "true"
-    assert "0.17" in again.headers["Link"]
+    assert "0.18" in again.headers["Link"]
 
 
 async def test_the_trip_level_names_go_when_the_published_version_arrives(pool):
@@ -891,9 +891,16 @@ async def test_the_trip_level_names_go_when_the_published_version_arrives(pool):
     both sides because that is an unusual coupling -- a document edit changes
     what the API accepts -- and an unusual coupling nobody asserted is one
     that gets reverted by someone who thought it was a bug.
+
+    The number moved from 0.17 to 0.18 when v0.17 landed: the bump that would
+    have closed this window was §5.1.1's late-file exception, nothing to do
+    with line-haul vocabulary. `planning.SUNSET` carries that reasoning and
+    says it is a stopgap. Still written out rather than read from the constant
+    -- reading it would make this test agree with whatever the window says,
+    which is the one thing it is here not to do.
     """
     app = make_app(pool, Store())
-    app.version = "0.17"
+    app.version = "0.18"
 
     async with AsyncClient(transport=ASGITransport(app=app),
                            base_url="http://api") as sunset:

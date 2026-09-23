@@ -573,7 +573,7 @@ def _collect(facilities: Sequence[dict[str, Any]],
     dispatch = pickups.run(
         requests, vans, next(f for f in facilities if f["id"] == hub_id),
         travel=travel, cut_off=_seconds(assumptions.PROCESSING_CUTOFF))
-    ready_at = processing.ready_times(dispatch, inflow)
+    ready_at = processing.ready_times(dispatch, inflow, requests)
     processing.position(positioned, ready_at, requests, inflow)
 
     # Before `strip_rolled`, and reused: the counterfactual has to be planned
