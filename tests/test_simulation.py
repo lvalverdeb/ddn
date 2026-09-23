@@ -954,6 +954,125 @@ def test_a_transfer_that_cannot_meet_its_deadline_is_not_queued_for_ever():
     assert RETRIABLE_DECLINES == {circuit.NO_VAN_LEG, circuit.OVER_CAPACITY}
 
 
+def test_a_transfer_no_night_can_carry_goes_back_to_the_customer(inputs):
+    """§5.3.2: "otherwise it is returned to the customer via the hub".
+
+    The rule was applied at raising and not at declining, so a request the
+    plan refused for `MISSES_DEADLINE` dropped out of the queue and left its
+    envelope at the depot it does not belong to — for ever, since §9.1 fixes
+    the deadline at raising and no later night can beat one tonight missed.
+    """
+    from ddn.simulation.day import _refused_transfers, _still_waiting
+
+    day = inputs["_day"]
+
+    def request(suffix: str, package: str) -> TransferRequest:
+        return TransferRequest(
+            transfer_id=f"TR-{suffix}", package_id=package,
+            from_facility_id="D1", to_facility_id="D2",
+            reason=TransferReason.ADDRESS_CORRECTION,
+            created_at=datetime.combine(day.collection_day, time()),
+            deadline=datetime.combine(day.delivery_day, time()),
+            priority=100.0)
+
+    late, waiting = request("LATE", "PKG-L"), request("WAIT", "PKG-W")
+    tomorrow = {"D1": ({"package_id": "PKG-L"}, {"package_id": "PKG-W"}),
+                "D2": ({"package_id": "PKG-O"},)}
+
+    class _Night:
+        declined = (Declined("TR-LATE", circuit.MISSES_DEADLINE),
+                    Declined("TR-WAIT", circuit.NO_VAN_LEG))
+
+    kept, going_back = _refused_transfers(tomorrow, [late, waiting], _Night())
+
+    assert [e["package_id"] for e in going_back] == ["PKG-L"]
+    assert going_back[0]["sla_expired"] is True, (
+        "§6.1's flag is what `returns.goes_back` reads; without it the "
+        "envelope reaches the return run and is filtered straight back out")
+    assert kept == {"D1": ({"package_id": "PKG-W"},),
+                    "D2": ({"package_id": "PKG-O"},)}, (
+        "it left tomorrow's pool and nothing else moved — in tonight's return "
+        "load and in tomorrow's pool at once is the defect `_handover` "
+        "already records having had once"
+    )
+    assert _still_waiting([late, waiting], _Night()) == (waiting,), (
+        "the two halves of §5.3.2's sentence partition tonight's declines: "
+        "what tomorrow can answer waits, the rest goes home")
+
+
+@pytest.fixture(scope="module")
+def refused(inputs):
+    """§10's day run twice, differing only in whether §3.1's table exists.
+
+    `circuit.choose` refuses every transfer when no inter-depot transit is
+    supplied, and that refusal is not retriable: tomorrow has the same table,
+    which is none. So this is the decline §5.3.2's "otherwise" is for, and it
+    is reachable without bending the fixture -- `run_day`'s `transit` defaults
+    to `None`, so a deployment that has not wired the gateway is *already*
+    here, raising transfers every night and refusing every one of them.
+
+    The run *with* the table is the control, not decoration: it carries the
+    same envelopes to the same depot, so the difference between the two runs
+    is the decline and nothing else about the day.
+    """
+    day = inputs["_day"]
+    kwargs = {k: v for k, v in inputs.items() if not k.startswith("_")}
+
+    def moved(envelope):
+        """One depot's corrections, so the transfers are the day's own."""
+        return "D2" if envelope["facility_id"] == "D1" else None
+
+    def go(**override):
+        return run_day(State(day=day.delivery_day, pools=inputs["_pools"]),
+                       seed=7, **{**kwargs, **override}, regeocode=moved)
+
+    return go(transit=None), go()
+
+
+def test_a_refused_transfer_leaves_the_pool_and_queues_for_the_return_run(
+        refused):
+    """Both halves, because either alone is the bug the other one is.
+
+    §5.5 puts it in the queue and not on tonight's stops: it is at a depot,
+    and `returns.sites` returns what is at the hub. It rides in tomorrow.
+    """
+    (report, tomorrow), (control, carried_on) = refused
+
+    assert report.transfers_raised and not report.transfers_carried
+    assert len(report.transfers_declined) == report.transfers_raised
+    assert set(report.transfers_declined.values()) == {
+        ("no inter-depot transit supplied; §3.1 gives none and this planner "
+         "guesses none")}
+    assert control.transfers_carried == control.transfers_raised, (
+        "the control must differ by the decline alone; if the table-less run "
+        "is not the only one refusing, this test is measuring something else")
+
+    stranded = {e["package_id"] for pool in carried_on.pools.values()
+                for e in pool} - {e["package_id"]
+                                  for pool in tomorrow.pools.values()
+                                  for e in pool}
+    assert len(stranded) == report.transfers_raised, (
+        "every refused envelope left tomorrow's pool, and only those")
+
+    going_home = {e["package_id"] for e in tomorrow.returns_queue}
+    assert stranded <= going_home, (
+        "absent from the pool and absent from the queue is an envelope "
+        "destroyed rather than returned")
+    assert all(e["sla_expired"] is True for e in tomorrow.returns_queue
+               if e["package_id"] in stranded), (
+        "§6.1's flag is what `returns.goes_back` reads; without it the "
+        "envelope reaches the return run and is filtered straight back out")
+    assert not stranded & {t.package_id for t in tomorrow.transfers}, (
+        "§9.1 fixes the deadline at raising; requeueing it builds a queue "
+        "that never empties")
+
+    assert carried_on.pool_size - tomorrow.pool_size == len(stranded), (
+        "exactly those envelopes left the operation by this route")
+    assert (len(going_home)
+            - len({e["package_id"] for e in carried_on.returns_queue})
+            == len(stranded)), "and exactly those joined the return queue"
+
+
 def test_a_waiting_transfer_is_offered_to_the_next_nights_plan(inputs):
     """The queue is seeded into tomorrow, ahead of what tomorrow raises.
 

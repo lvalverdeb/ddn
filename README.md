@@ -33,7 +33,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 1044 tests, no xfail: every e2e row built, no services needed
+make test       # 1046 tests, no xfail: every e2e row built, no services needed
 make check      # lint and tests
 ```
 

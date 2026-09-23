@@ -487,6 +487,57 @@ def _handover(pools: Mapping[str, list[dict[str, Any]]],
         for facility, yesterdays in pools.items()}
 
 
+def _refused_transfers(
+        tomorrow: Mapping[str, tuple[dict[str, Any], ...]],
+        transfers: Sequence[TransferRequest], night: Any
+) -> tuple[dict[str, tuple[dict[str, Any], ...]], list[dict[str, Any]]]:
+    """§5.3.2: "otherwise it is returned to the customer via the hub".
+
+    `_still_waiting` keeps the declines tomorrow can answer; this is the other
+    half of the same sentence, and the two partition tonight's declines so that
+    no request can evaporate between them. The rule is the complement of
+    `RETRIABLE_DECLINES` rather than a list of final reasons, because a reason
+    in neither set is a request that leaves no trace -- its envelope stranded
+    at a depot it does not belong to, waiting for a correction nobody would
+    raise a second time.
+
+    Two reasons reach here. `MISSES_DEADLINE` is final because §9.1 fixes the
+    deadline when the transfer is raised, so no later night beats one tonight
+    missed. `circuit.choose`'s refusal when no inter-depot transit is supplied
+    is final for a duller reason: tomorrow has the same table, which is none --
+    and since `run_day`'s `transit` defaults to `None`, that is the decline an
+    operation without §3.1's table meets every single night.
+
+    Reads tomorrow's pools rather than today's postponed envelopes, because
+    that is the one place the day still holds one. The case that forces it is a
+    request carried over from yesterday: its envelope was not postponed today,
+    it sat in `pools` and may have been attempted since. Anything that left the
+    operation today is not in tomorrow's pools either, so nothing is sent back
+    twice and nothing is both in tonight's return load and in tomorrow's pool
+    -- the disjointness `_handover` records having lost once already.
+
+    They carry `sla_expired` and no new status. The flag is `_raise_transfers`'
+    argument at raising, unchanged by the decline coming later: §6 has no
+    "transfer refused" outcome and inventing one is a change to §9.2 first, for
+    which `docs/spec-proposals/v0.16-depot-capacity.md` carries the request.
+    §5.2.6 does draw `Transfer requested -> Return run`, but every other
+    envelope in `going_back` travels on a flag alone, including the rejects and
+    the expiries that are unambiguously bound for the return run; stamping the
+    status here and nowhere else would make this one look special.
+
+    Returns:
+        Tomorrow's pools without those envelopes, and the envelopes.
+    """
+    refused = {d.transfer_id for d in night.declined
+               if d.reason not in RETRIABLE_DECLINES}
+    leaving = {t.package_id for t in transfers if t.transfer_id in refused}
+    return ({facility: tuple(e for e in pool
+                             if e["package_id"] not in leaving)
+             for facility, pool in tomorrow.items()},
+            [outcomes.expired(e) for pool in tomorrow.values() for e in pool
+             if e["package_id"] in leaving])
+
+
 def _count(state: State, attempt: _Attempted, doorstep: _Doorstep,
            collection: _Collection, requests: Sequence[dict[str, Any]],
            inflow: Sequence[dict[str, Any]],
@@ -580,7 +631,6 @@ def run_day(
     # §5.3.2: yesterday's undelivered requests are tonight's, ahead of the
     # ones raised today, because they have already waited a day.
     transfers = [*state.transfers, *raised]
-    going_back = [*doorstep.going_back, *unreachable]
     # §5.5: yesterday's depot rejects ride tonight's circuits home. The
     # line-haul plan is built before the return run is solved, which is the
     # order the operation runs in and the reason this works in one day.
@@ -590,9 +640,15 @@ def run_day(
     rode_home = set(collection.night.returned)
     arrived = [dict(e, facility_id=hub_id) for e in state.returns_queue
                if e["package_id"] in rode_home]
-    stops = _return_run([*going_back, *arrived], hub_id)
+    # The hand-over is built before the return run, not after it: §5.3.2's
+    # "otherwise" needs tomorrow's pools, because that is the one place the day
+    # still holds the envelope of a transfer no circuit will ever carry.
     tomorrow = _handover(pools, collection, staying, attempt.unassigned,
                          transfers)
+    tomorrow, refused = _refused_transfers(tomorrow, transfers,
+                                           collection.night)
+    going_back = [*doorstep.going_back, *unreachable, *refused]
+    stops = _return_run([*going_back, *arrived], hub_id)
 
     dispatch, night = collection.dispatch, collection.night
     tally = _count(state, attempt, doorstep, collection, requests, inflow,
