@@ -9,7 +9,8 @@ from ddn.allocation.fleet import (
     place,
     vans,
 )
+from ddn.allocation.rebalance import Arm, Decision, decide
 
-__all__ = ["EFFECTIVE_PER_BIKE", "Allocation", "FleetPlan", "allocate",
-           "capacity_for", "place",
+__all__ = ["EFFECTIVE_PER_BIKE", "Allocation", "Arm", "Decision", "FleetPlan",
+           "allocate", "capacity_for", "decide", "place",
            "vans"]

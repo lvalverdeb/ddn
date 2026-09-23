@@ -20,7 +20,7 @@ Where the spec says `[TBD]`, use the values in `docs/assumptions.md` and referen
 ## Architecture (from §5)
 One module per stage, plus shared model and solver adapter:
 - `model/` — entities and lifecycle from §9 and §5.2.6
-- `allocation/` — daily fleet split across facilities and van duty (§4.2), upstream of the solver
+- `allocation/` — daily fleet split across facilities and van duty (§4.2), upstream of the solver; also §5.3.2's rebalancing choice, since moving envelopes against moving motorbikes is a cost comparison the allocation step makes
 - `pickups/` — dynamic mailbag pickup routing, van-only (§5.1)
 - `processing/` — hub readiness: expected-ready-time computation only; we do not implement reconciliation/assembly themselves (§5.2)
 - `linehaul/` — van circuits between facilities: hub → depot loads, inter-depot transfers, returns, against morning release times (§5.3)
@@ -37,7 +37,7 @@ API rules (§13): solver-invoking endpoints are async jobs returning 202; never 
 ## Commands
 
 ```sh
-make test       # 1026 tests, no xfail: every e2e row built; no gateway, no Redis, no routing data
+make test       # 1044 tests, no xfail: every e2e row built; no gateway, no Redis, no routing data
 make check      # and ruff
 make bootstrap  # §13's stack: redis, the API, an Arq worker
 ```
