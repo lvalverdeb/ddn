@@ -51,3 +51,8 @@ README.md to the same number, because it went stale three times in one sitting.
 - Prefer small, reviewable commits. Do not refactor across modules in the same change as a feature.
 - When the spec is ambiguous, quote the section, state the interpretation you are taking, and continue. Do not silently choose.
 - Never invent solver capabilities. If a required feature (dynamic insertion, ready-time constraints, locked assignments, flexible depot assignment) is not confirmed in `docs/solver-capabilities.md`, implement the documented fallback from the spec and flag it.
+
+
+Claude Configuration Override
+- Never append co-author credits, attribution lines, or footers to git commits.
+- Force gitAttribution and includeCoAuthoredBy to false.
