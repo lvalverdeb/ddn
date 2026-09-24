@@ -12,6 +12,7 @@ by existing it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import nbformat
@@ -50,3 +51,42 @@ def test_the_notebook_ships_without_outputs(path: Path):
             assert cell.get("execution_count") is None, (
                 f"cell {number} of {path.name} was executed and saved. "
                 "Run `make nb-clean` before committing.")
+
+
+#: Both READMEs say how many notebooks there are, in words. The number is the
+#: part that goes stale -- `tests/test_front_doors.py` exists because a count
+#: in a sentence drifted three times in one sitting -- so it is read here
+#: rather than trusted. Extend the map if a count outgrows it, or write the
+#: digit, which `CLAIM` also matches.
+NUMERALS = {word: number for number, word in enumerate((
+    "zero", "one", "two", "three", "four", "five", "six", "seven",
+    "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"))}
+
+#: "six notebooks", "Six notebooks". Anchored on the noun so that the numeral
+#: checked is the one making the claim -- README.md counts depots and vehicles
+#: in the same file, and a test that accepted any number in it would agree
+#: with a sentence that had gone wrong.
+CLAIM = re.compile(r"\b(\w+) notebooks\b", re.IGNORECASE)
+
+ROOT = Path(__file__).resolve().parent.parent
+READMES = (ROOT / "README.md", ROOT / "notebooks" / "README.md")
+
+
+@pytest.mark.parametrize("readme", READMES, ids=lambda p: f"{p.parent.name}/")
+def test_the_readme_counts_the_notebooks_that_exist(readme: Path):
+    """A numeral in a sentence is a claim about a directory listing."""
+    claimed = []
+    for word in CLAIM.findall(readme.read_text(encoding="utf-8")):
+        if word.isdigit():
+            claimed.append(int(word))
+        elif word.lower() in NUMERALS:
+            claimed.append(NUMERALS[word.lower()])
+
+    assert claimed, (
+        f"{readme.name} no longer counts the notebooks. If that is "
+        "deliberate, delete this test rather than leaving it matching "
+        "nothing.")
+    assert set(claimed) == {len(NOTEBOOKS)}, (
+        f"{readme.name} says {sorted(set(claimed))} and notebooks/ holds "
+        f"{len(NOTEBOOKS)}.")

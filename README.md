@@ -33,7 +33,7 @@ two claims sat in the repository together until a CI run made someone check.
 
 ```sh
 make            # what there is
-make test       # 1087 tests, no xfail: every e2e row built, no services needed
+make test       # 1095 tests, no xfail: every e2e row built, no services needed
 make check      # lint and tests
 ```
 
@@ -107,9 +107,11 @@ platform's own tooling finds models it did not ship.
 
 ## Worked examples
 
-[`notebooks/`](notebooks/) has three: a complete day, the stages one at a time,
-and the same work over §13's API. The suite executes all three, because a
-notebook nobody runs is documentation that agrees with itself.
+[`notebooks/`](notebooks/) holds six notebooks: a complete day, the stages one at
+a time, the same work over §13's API, §5.3.2's transfer-or-reallocate choice, the
+late file's cost, and the §5.2.6 lifecycle read through what it refuses. The
+suite executes every one, because a notebook nobody runs is documentation that
+agrees with itself.
 
 ```sh
 make notebooks     # open them
