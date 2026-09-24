@@ -82,7 +82,7 @@ def test_section_10_cannot_clear_its_other_depots(simulated):
     # bikes. Per depot the shortfall is 170, because D2's 38 envelopes of
     # slack and D3's 2 cannot reach D4, D5 and D6 — §4.2 fixes a bike's depot
     # before the solve, which is the whole reason it is two-stage.
-    # `docs/spec-proposals/v0.16-depot-capacity.md` proposes the correction.
+    # `docs/spec-proposals/v0.18-depot-capacity.md` proposes the correction.
     per_depot = sum(max(peak_day.MORNING_BY_FACILITY[d]
                         - peak_day.BIKE_ALLOCATION[d] * EFFECTIVE_PER_BIKE, 0)
                     for d in depots)

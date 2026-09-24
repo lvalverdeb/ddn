@@ -97,9 +97,11 @@ cannot be pre-sorted, so its assembly demand is not known until geocoding ends.
   one clause; §5.2.6's first-node annotation is corrected, adding no state and
   no edge.
 
-Two v0.17 proposals are already pending against Draft v0.16
-(`v0.17-per-envelope-reason.md` and the transfer-record one from `1ec4595`),
-so this joins a queue; Luis may want to apply them together.
+Two proposals were pending against Draft v0.16 when this was written — the
+per-envelope reason one and the transfer-record one from `1ec4595` — so this
+joins a queue; Luis may want to apply them together. Since then the
+transfer-record one landed as v0.16 and the other is still open, renamed
+`v0.18-per-envelope-reason.md` for the version it now targets.
 
 **Steps 2–5 do not start until this is approved.** CLAUDE.md: no field added,
 renamed or dropped without updating the spec first.

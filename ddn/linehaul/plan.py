@@ -361,7 +361,7 @@ def plan(facilities: Sequence[dict[str, Any]],
         # seat to a higher score -- so `NOT_READY_IN_TIME` is not merely vaguer
         # for it, it is false. `OVER_CAPACITY` is true of at least one envelope
         # in every tuple it labels, which is the most a per-facility field can
-        # promise. `docs/spec-proposals/v0.17-per-envelope-reason.md` records
+        # promise. `docs/spec-proposals/v0.18-per-envelope-reason.md` records
         # the narrowing rather than leaving it implied.
         if missed or loaded.bumped:
             rolled[facility_id] = tuple(e["package_id"]

@@ -361,7 +361,7 @@ def _raise_transfers(doorstep: _Doorstep, facilities: Sequence[dict[str, Any]],
     an exact one: the envelope cannot reach a facility that could deliver it
     in time, which is an SLA failure in substance. §6 has no "transfer
     refused" outcome and inventing one here would be inventing a §9.2
-    vocabulary entry; `docs/spec-proposals/v0.16-depot-capacity.md` carries the
+    vocabulary entry; `docs/spec-proposals/v0.18-depot-capacity.md` carries the
     request.
 
     **The third return value is §5.2.6's branch, taken once.** Postponed
@@ -692,7 +692,7 @@ def _refused_transfers(
     They carry `sla_expired` and no new status. The flag is `_raise_transfers`'
     argument at raising, unchanged by the decline coming later: §6 has no
     "transfer refused" outcome and inventing one is a change to §9.2 first, for
-    which `docs/spec-proposals/v0.16-depot-capacity.md` carries the request.
+    which `docs/spec-proposals/v0.18-depot-capacity.md` carries the request.
     §5.2.6 does draw `Transfer requested -> Return run`, but every other
     envelope in `going_back` travels on a flag alone, including the rejects and
     the expiries that are unambiguously bound for the return run; stamping the
