@@ -27,9 +27,12 @@ finding the number without that framing leads exactly the wrong way.
 ```
 
 Nothing else is needed to clone it. This README said for a long time that you
-needed read access to *two private repositories* — `osrm-microservice` is
-public, as the Disclosure section of `CLAUDE.md` says in so many words, and the
-two claims sat in the repository together until a CI run made someone check.
+needed read access to *two private repositories*. Both are public — this one
+and `osrm-microservice` — and the two claims sat in the repository together
+until a CI run made someone check. The sentence then cited a Disclosure section
+of `CLAUDE.md` for the second half; there is no such section, and CLAUDE.md
+does not mention public or private at all. Whatever governs what may be
+published here is not written down in this repository.
 
 ```sh
 make            # what there is
